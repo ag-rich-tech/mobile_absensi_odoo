@@ -1,24 +1,25 @@
-## Screenshots
+## Screenshots App
 <div align="center">
   <img src="public/images/screenshoots_app/dashboard.png" alt="Dashboard" />
 </div>
 
-## React Compiler
-The React Compiler is not enabled on this template because of its impact on dev & build performances. To add it, see [this documentation](https://react.dev/learn/react-compiler/installation).
+## How to Compile
 
-## Compile
-
-First compile for folder /dist
+1. First compile for folder /dist
 ```bash  
    npm run build  
 ``` 
 
-Compile & sync android
+2. Compile & sync android
 ```bash  
    npx cap sync android  
 ```
 
-Build apk
+3. Build apk
 ```bash  
    cd android; .\gradlew.bat assembleDebug  
+```
+Folder output app
+```bash
+android\app\build\outputs\apk\debug\app-debug.apk
 ```
