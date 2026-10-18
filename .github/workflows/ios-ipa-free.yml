@@ -26,10 +26,18 @@ jobs:
       - name: Sync iOS
         shell: bash
         run: |
-          if [ ! -d ios/App ]; then
+          if [ ! -d ios/App/App.xcworkspace ] && [ ! -d ios/App/App.xcodeproj ]; then
+            rm -rf ios
             npx cap add ios
           fi
           npx cap sync ios
+
+      - name: Pod install (generate .xcworkspace)
+        shell: bash
+        run: |
+          cd ios/App
+          pod install
+          ls -d App.xcworkspace
 
       - name: Build for device (no signing)
         shell: bash
