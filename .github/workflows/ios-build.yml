@@ -1,4 +1,3 @@
-
 name: Build Capacitor iOS
 
 on:
@@ -31,22 +30,55 @@ jobs:
         run: npm ls @capacitor/core @capacitor/cli @capacitor/ios
 
       - name: Sync iOS
+        shell: bash
         run: |
           if [ ! -d ios/App ]; then
             npx cap add ios
           fi
+
           npx cap sync ios
 
-      - name: Build iOS Simulator
+      - name: Inspect iOS project
+        shell: bash
         run: |
-          xcodebuild \
-            -workspace ios/App/App.xcworkspace \
-            -scheme App \
-            -sdk iphonesimulator \
-            -configuration Debug \
-            -derivedDataPath build/DerivedData \
-            CODE_SIGNING_ALLOWED=NO \
-            build
+          echo "Available Xcode projects:"
+          find ios -maxdepth 4 \
+            \( -name "*.xcodeproj" -o -name "*.xcworkspace" \) \
+            -print
+
+      - name: Build iOS Simulator
+        shell: bash
+        run: |
+          DERIVED_DATA="$PWD/build/DerivedData"
+
+          if [ -d ios/App/App.xcworkspace ]; then
+            echo "Using App.xcworkspace"
+
+            xcodebuild \
+              -workspace ios/App/App.xcworkspace \
+              -scheme App \
+              -sdk iphonesimulator \
+              -configuration Debug \
+              -derivedDataPath "$DERIVED_DATA" \
+              CODE_SIGNING_ALLOWED=NO \
+              build
+
+          elif [ -d ios/App/App.xcodeproj ]; then
+            echo "Using App.xcodeproj"
+
+            xcodebuild \
+              -project ios/App/App.xcodeproj \
+              -scheme App \
+              -sdk iphonesimulator \
+              -configuration Debug \
+              -derivedDataPath "$DERIVED_DATA" \
+              CODE_SIGNING_ALLOWED=NO \
+              build
+
+          else
+            echo "ERROR: Xcode project or workspace not found."
+            exit 1
+          fi
 
       - name: Upload simulator build
         uses: actions/upload-artifact@v4
