@@ -1,0 +1,89 @@
+name: Build Capacitor iOS
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+
+jobs:
+  build-ios:
+    runs-on: macos-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build web application
+        run: npm run build
+
+      - name: Check Capacitor iOS package
+        run: npm ls @capacitor/core @capacitor/cli @capacitor/ios
+
+      - name: Sync iOS
+        shell: bash
+        run: |
+          if [ ! -d ios/App ]; then
+            npx cap add ios
+          fi
+
+          npx cap sync ios
+
+      - name: Inspect iOS project
+        shell: bash
+        run: |
+          echo "Available Xcode projects:"
+          find ios -maxdepth 4 \
+            \( -name "*.xcodeproj" -o -name "*.xcworkspace" \) \
+            -print
+
+      - name: Build iOS Simulator
+        shell: bash
+        run: |
+          DERIVED_DATA="$PWD/build/DerivedData"
+
+          if [ -d ios/App/App.xcworkspace ]; then
+            echo "Using App.xcworkspace"
+
+            xcodebuild \
+              -workspace ios/App/App.xcworkspace \
+              -scheme App \
+              -sdk iphonesimulator \
+              -configuration Debug \
+              -derivedDataPath "$DERIVED_DATA" \
+              CODE_SIGNING_ALLOWED=NO \
+              build
+
+          elif [ -d ios/App/App.xcodeproj ]; then
+            echo "Using App.xcodeproj"
+
+            xcodebuild \
+              -project ios/App/App.xcodeproj \
+              -scheme App \
+              -sdk iphonesimulator \
+              -configuration Debug \
+              -derivedDataPath "$DERIVED_DATA" \
+              CODE_SIGNING_ALLOWED=NO \
+              build
+
+          else
+            echo "ERROR: Xcode project or workspace not found."
+            exit 1
+          fi
+
+      - name: Upload simulator build
+        uses: actions/upload-artifact@v4
+        with:
+          name: mobile-absensi-ios-simulator
+          path: build/DerivedData/Build/Products/Debug-iphonesimulator/App.app
+          if-no-files-found: error
+          retention-days: 7
