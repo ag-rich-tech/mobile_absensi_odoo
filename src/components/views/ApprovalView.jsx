@@ -88,10 +88,15 @@ export default function ApprovalView({ onBack }) {
     setActionModal(prev => ({ ...prev, isSubmitting: true, errorMessage: '' }));
 
     try {
-      const res = await api.submitApprovalAction(actionModal.item.id, {
-        aksi: actionModal.type,
-        catatan: actionModal.catatan.trim() || (actionModal.type === 'setuju' ? 'Disetujui' : 'Ditolak'),
-      });
+      let res;
+      if (actionModal.item.modul === 'reimbursement') {
+        res = await api.approveReimbursement(actionModal.item.id, actionModal.type, actionModal.catatan.trim() || null);
+      } else {
+        res = await api.submitApprovalAction(actionModal.item.id, {
+          aksi: actionModal.type,
+          catatan: actionModal.catatan.trim() || (actionModal.type === 'setuju' ? 'Disetujui' : 'Ditolak'),
+        });
+      }
 
       if (res.success) {
         setSuccessToast(res.message || 'Persetujuan pengajuan berhasil diproses.');

@@ -232,7 +232,7 @@ export function clearFeatureFlagsCache() {
 // ---------------------------------------------------------------------------
 // JSON-RPC caller Odoo
 // ---------------------------------------------------------------------------
-async function odooCall(path, params = {}, { auth = true, timeoutMs = 30000 } = {}) {
+export async function odooCall(path, params = {}, { auth = true, timeoutMs = 30000 } = {}) {
   const token = getToken();
   const headers = {
     'Content-Type': 'application/json',
@@ -1052,6 +1052,7 @@ export const api = {
   getReimbursement: adapters.getReimbursement,
   ajukanReimbursement: adapters.ajukanReimbursement,
   getReimbursementDetail: adapters.getReimbursementDetail,
+  approveReimbursement: adapters.approveReimbursement,
   getTukarShiftCount: adapters.getTukarShiftCount,
   getTukarShiftInisiasi: adapters.getTukarShiftInisiasi,
   getTukarShiftJadwalRekan: adapters.getTukarShiftJadwalRekan,

@@ -1,8 +1,11 @@
 import {
   odooExecuteKw,
+  odooCall,
   getStoredUser,
   setStoredUser,
   setRpcPass,
+  getRpcUid,
+  getRpcPass,
   getServerDate,
   fmtTanggalId,
   fmtYMD,
@@ -91,29 +94,49 @@ export async function getCurrentEmployee() {
 // ---------------------------------------------------------------------------
 // 1. Kehadiran Bawahan (Berdasarkan Org Chart Odoo: child_ids / parent_id)
 // ---------------------------------------------------------------------------
+
+// Helper: cek apakah employee adalah bawahan langsung dari currentEmp
+function _isDirectReport(empEmployee, currentEmp) {
+  if (!empEmployee || !currentEmp) return false;
+  const mid = empEmployee.manager;
+  if (!mid) return false;
+  // manager bisa berupa objek {id, name} atau sekadar string nama
+  const mgrId = typeof mid === 'object' ? (mid.id || mid[0]) : null;
+  const mgrName = typeof mid === 'object' ? (mid.name || mid[1]) : mid;
+  return mgrId === currentEmp.id || mgrName === currentEmp.manager || mgrName === currentEmp.nama;
+}
+
 export async function getKehadiranBawahanStatus() {
   try {
     const emp = await getCurrentEmployee();
-    const empId = emp?.id;
-    if (emp) {
-      let total = Array.isArray(emp.child_ids) ? emp.child_ids.length : 0;
-      if (total === 0 && empId) {
-        total = await odooExecuteKw('hr.employee', 'search_count', [
-          [['parent_id', '=', empId]],
-        ]).catch(() => 0);
-      }
-      return { success: true, is_enabled: true, is_atasan: total > 0, total_bawahan: total };
+    if (!emp) {
+      return { success: false, message: 'Sesi tidak valid. Silakan login ulang.' };
     }
-  } catch {
-    // fallback
+
+    // Ambil semua karyawan → filter client-side berdasarkan manager
+    const res = await odooCall('/employee/list', { limit: 500 });
+    const allEmployees = (res?.data?.employees) || [];
+    const directReports = allEmployees.filter((e) => _isDirectReport(e, emp));
+
+    return {
+      success: true,
+      is_enabled: true,
+      is_atasan: directReports.length > 0,
+      total_bawahan: directReports.length,
+    };
+  } catch (err) {
+    console.error('getKehadiranBawahanStatus error:', err);
+    return { success: false, message: 'Gagal memuat status fitur: ' + (err?.message || String(err)) };
   }
-  return { success: true, is_enabled: true, is_atasan: true, total_bawahan: 0 };
 }
 
 export async function getKehadiranBawahanList(bulanParam) {
   const emp = await getCurrentEmployee();
-  const empId = emp?.id;
-  const childIds = (emp && Array.isArray(emp.child_ids)) ? emp.child_ids : [];
+  if (!emp) {
+    return { success: false, message: 'Sesi tidak valid. Silakan login ulang.' };
+  }
+
+  const hasRpc = !!(getRpcUid() && getRpcPass());
 
   const now = getServerDate();
   const [year, month] = (bulanParam || fmtYMD(now).slice(0, 7)).split('-').map(Number);
@@ -122,84 +145,48 @@ export async function getKehadiranBawahanList(bulanParam) {
   const endDate = `${year}-${pad2(month)}-${pad2(lastDay)} 23:59:59`;
 
   try {
-    let domain;
-    if (childIds.length > 0) {
-      domain = [['id', 'in', childIds]];
-    } else if (empId) {
-      domain = [['parent_id', '=', empId]];
-    } else {
-      domain = [];
-    }
-
-    let subs = await odooExecuteKw('hr.employee', 'search_read', [domain], {
-      fields: ['id', 'name', 'job_id', 'department_id', 'barcode', 'pin', 'work_email', 'image_128'],
-      order: 'name asc',
-      limit: 100,
-    });
+    // Ambil semua karyawan → filter client-side berdasarkan manager
+    const res = await odooCall('/employee/list', { limit: 500 });
+    const allEmployees = (res?.data?.employees) || [];
+    const subs = allEmployees.filter((e) => _isDirectReport(e, emp));
 
     if (!subs || subs.length === 0) {
-      subs = await odooExecuteKw('hr.employee', 'search_read', [empId ? [['id', '!=', empId]] : []], {
-        fields: ['id', 'name', 'job_id', 'department_id', 'barcode', 'pin', 'work_email', 'image_128'],
-        order: 'name asc',
-        limit: 10,
-      });
-    }
-
-    if (!subs || subs.length === 0) {
-      return { success: true, data: [] };
+      return { success: true, data: [], message: 'Belum ada bawahan yang terdaftar.' };
     }
 
     const subIds = subs.map((s) => s.id);
 
-    const [attendances, leaves] = await Promise.all([
-      odooExecuteKw('hr.attendance', 'search_read', [
-        [
-          ['employee_id', 'in', subIds],
-          ['check_in', '>=', startDate],
-          ['check_in', '<=', endDate],
-        ],
-      ], {
-        fields: ['employee_id', 'check_in', 'check_out'],
-        limit: 1000,
-      }).catch(() => []),
-      odooExecuteKw('hr.leave', 'search_read', [
-        [
-          ['employee_id', 'in', subIds],
-          ['state', '=', 'validate'],
-          ['date_from', '<=', endDate],
-          ['date_to', '>=', startDate],
-        ],
-      ], {
-        fields: ['employee_id', 'holiday_status_id', 'number_of_days'],
-        limit: 500,
-      }).catch(() => []),
-    ]);
+    // RPC attendance/leave (opsional, hanya bila credential tersedia)
+    let attendances = [];
+    let leaves = [];
+    if (hasRpc) {
+      const [attRes, leaveRes] = await Promise.all([
+        odooExecuteKw('hr.attendance', 'search_read', [
+          [['employee_id', 'in', subIds], ['check_in', '>=', startDate], ['check_in', '<=', endDate]],
+        ], { fields: ['employee_id', 'check_in', 'check_out'], limit: 1000 }).catch(() => []),
+        odooExecuteKw('hr.leave', 'search_read', [
+          [['employee_id', 'in', subIds], ['state', '=', 'validate'], ['date_from', '<=', endDate], ['date_to', '>=', startDate]],
+        ], { fields: ['employee_id', 'holiday_status_id', 'number_of_days'], limit: 500 }).catch(() => []),
+      ]);
+      attendances = attRes || [];
+      leaves = leaveRes || [];
+    }
 
     const data = subs.map((s) => {
-      const empAtts = attendances.filter((a) => (Array.isArray(a.employee_id) ? a.employee_id[0] : a.employee_id) === s.id);
-      const empLeaves = leaves.filter((l) => (Array.isArray(l.holiday_status_id) ? l.holiday_status_id[0] : l.holiday_status_id));
+      // Attendance matching (RPC format: employee_id is [id, name] tuple)
+      const empAtts = attendances.filter(
+        (a) => (Array.isArray(a.employee_id) ? a.employee_id[0] : a.employee_id) === s.id
+      );
 
       const nameParts = (s.name || '').trim().split(/\s+/).filter(Boolean);
       const inisial = nameParts.length > 1
         ? (nameParts[0][0] + nameParts[nameParts.length - 1][0]).toUpperCase()
         : (nameParts[0] ? nameParts[0].slice(0, 2).toUpperCase() : 'B');
 
-      const sakitCount = empLeaves
-        .filter((l) => {
-          const hId = Array.isArray(l.holiday_status_id) ? l.holiday_status_id[0] : l.holiday_status_id;
-          return hId === 2;
-        })
-        .reduce((acc, cur) => acc + (cur.number_of_days || 1), 0);
-
-      const izinCount = empLeaves
-        .filter((l) => {
-          const hId = Array.isArray(l.holiday_status_id) ? l.holiday_status_id[0] : l.holiday_status_id;
-          return hId !== 2;
-        })
-        .reduce((acc, cur) => acc + (cur.number_of_days || 1), 0);
-
-      const foto = s.image_128
-        ? (s.image_128.startsWith('data:') ? s.image_128 : `data:image/png;base64,${s.image_128}`)
+      const jobName = s.job && Array.isArray(s.job) ? s.job[1] : (s.job && s.job.name) || 'Staff';
+      const deptName = s.department && Array.isArray(s.department) ? s.department[1] : (s.department && s.department.name) || '';
+      const foto = s.photo
+        ? s.photo.startsWith('data:') ? s.photo : `data:image/png;base64,${s.photo}`
         : null;
 
       return {
@@ -207,23 +194,24 @@ export async function getKehadiranBawahanList(bulanParam) {
         nama: s.name,
         inisial,
         nip: s.barcode || s.pin || String(s.id),
-        jabatan: Array.isArray(s.job_id) ? s.job_id[1] : (s.job_id || 'Staff'),
-        departemen: Array.isArray(s.department_id) ? s.department_id[1] : (s.department_id || ''),
+        jabatan: jobName,
+        departemen: deptName,
         foto,
         summary: {
           hadir: empAtts.length,
           terlambat: 0,
           tidak_hadir: 0,
-          izin: Math.round(izinCount),
-          sakit: Math.round(sakitCount),
+          izin: leaves.length,
+          sakit: 0,
         },
       };
     });
 
     data.sort((a, b) => (a.nama || '').localeCompare(b.nama || ''));
     return { success: true, data };
-  } catch {
-    return { success: true, data: [] };
+  } catch (err) {
+    console.error('getKehadiranBawahanList error:', err);
+    return { success: false, message: 'Gagal memuat data bawahan: ' + (err?.message || String(err)) };
   }
 }
 
@@ -412,17 +400,11 @@ export async function getReimbursementJenis() {
 }
 
 export async function getReimbursement() {
-  const user = getStoredUser();
-  const empId = user?._odoo_employee?.id || user?.id;
   let list = [];
 
   try {
-    const records = await odooExecuteKw('ess.reimbursement', 'search_read', [
-      empId ? [['employee_id', '=', empId]] : [],
-    ], {
-      fields: ['id', 'name', 'category', 'amount', 'approved_amount', 'date_request', 'note', 'state', 'attachment', 'attachment_name', 'create_date'],
-      order: 'id desc',
-    });
+    const res = await odooCall('/reimbursement/list', {});
+    const rawList = res?.data?.list || [];
 
     const catMap = {
       transport: 'Transport / Bensin',
@@ -437,21 +419,30 @@ export async function getReimbursement() {
       approved: 'disetujui',
       rejected: 'ditolak',
       paid: 'dicairkan',
+      diajukan: 'menunggu',
     };
 
-    list = (records || []).map((r) => {
-      const st = stateMap[r.state] || 'menunggu';
+    list = rawList.map((r) => {
+      const rawState = r.state || r.code || 'diajukan';
+      const st = stateMap[rawState] || rawState;
       const labelState = st === 'disetujui' ? 'Disetujui' : (st === 'dicairkan' ? 'Dicairkan' : (st === 'ditolak' ? 'Ditolak' : 'Menunggu Approval'));
+
+      // product_id bisa tuple [id, nama] atau string kategori
+      let namaJenis = 'Klaim Operasional';
+      if (Array.isArray(r.product_id)) namaJenis = r.product_id[1] || r.product_id[0];
+      else if (typeof r.product_id === 'string') namaJenis = catMap[r.product_id] || r.product_id;
+      else namaJenis = r.nama_jenis || namaJenis;
+
       return {
         id: r.id,
         nomor_pengajuan: r.name || `RMB-${r.id}`,
-        nama_jenis: catMap[r.category] || r.category || 'Klaim Operasional',
-        tanggal_kuitansi: r.date_request || (r.create_date ? r.create_date.slice(0, 10) : ''),
-        nominal: r.amount || 0,
-        nominal_format: `Rp ${Number(r.amount || 0).toLocaleString('id-ID')}`,
-        nominal_disetujui: r.approved_amount || null,
-        nominal_disetujui_format: r.approved_amount ? `Rp ${Number(r.approved_amount).toLocaleString('id-ID')}` : null,
-        keterangan: r.note || '',
+        nama_jenis: namaJenis,
+        tanggal_kuitansi: r.date || (r.create_date ? r.create_date.slice(0, 10) : ''),
+        nominal: r.amount || r.nominal || 0,
+        nominal_format: `Rp ${Number(r.amount || r.nominal || 0).toLocaleString('id-ID')}`,
+        nominal_disetujui: r.approved_amount || r.nominal_disetujui || null,
+        nominal_disetujui_format: r.approved_amount || r.nominal_disetujui ? `Rp ${Number(r.approved_amount || r.nominal_disetujui).toLocaleString('id-ID')}` : null,
+        keterangan: r.note || r.description || r.keterangan || '',
         status: st,
         dokumen_nota_url: r.attachment ? `data:image/jpeg;base64,${r.attachment}` : null,
         approval: {
@@ -485,9 +476,6 @@ export async function getReimbursement() {
   };
 }
 export async function ajukanReimbursement(payload) {
-  const user = getStoredUser();
-  const empId = user?._odoo_employee?.id || user?.id;
-
   let jenis = 'operational';
   let tanggal = fmtYMD(getServerDate());
   let nominal = 0;
@@ -519,16 +507,15 @@ export async function ajukanReimbursement(payload) {
   }
 
   try {
-    await odooExecuteKw('ess.reimbursement', 'create', [{
-      employee_id: empId,
-      category: jenis,
+    await odooCall('/reimbursement/submit', {
+      name: `RMB-${tanggal}`,
       amount: nominal,
-      date_request: tanggal,
-      note: keterangan,
+      product_id: jenis,
+      date: tanggal,
+      description: keterangan,
       attachment: docBase64,
-      attachment_name: docName,
-      state: 'submitted',
-    }]);
+      filename: docName,
+    });
   } catch {
     const cached = JSON.parse(localStorage.getItem('mobile_absensi_reimbursement') || '[]');
     cached.unshift({
@@ -549,6 +536,16 @@ export async function ajukanReimbursement(payload) {
   }
 
   return { success: true, message: 'Pengajuan klaim reimbursement berhasil dikirim.' };
+}
+
+export async function approveReimbursement(sheetId, action, reason) {
+  const aksi = action === 'tolak' ? 'refuse' : 'approve';
+  await odooCall('/reimbursement/approve', {
+    sheet_id: sheetId,
+    action: aksi,
+    ...(reason ? { reason } : {}),
+  });
+  return { success: true, message: action === 'tolak' ? 'Pengajuan reimbursement ditolak.' : 'Persetujuan klaim reimbursement berhasil diproses.' };
 }
 
 export async function getReimbursementDetail(id) {
@@ -1056,28 +1053,20 @@ export async function changePassword({ password_baru }) {
 // ---------------------------------------------------------------------------
 export async function getDaftarKaryawan() {
   try {
-    const emps = await odooExecuteKw('hr.employee', 'search_read', [
-      [['active', '=', true]],
-    ], {
-      fields: ['id', 'name', 'job_id', 'department_id', 'barcode', 'pin', 'work_email', 'work_phone', 'image_128'],
-      order: 'name asc',
-      limit: 250,
-    });
-
-    const list = (emps || []).map((e) => {
+    const res = await odooCall('/employee/list', { limit: 100 });
+    const employees = (res && res.data && res.data.employees) || [];
+    const list = employees.map((e) => {
       const nameParts = (e.name || '').trim().split(/\s+/).filter(Boolean);
       const inisial = nameParts.length > 1
         ? (nameParts[0][0] + nameParts[nameParts.length - 1][0]).toUpperCase()
         : (nameParts[0] ? nameParts[0].slice(0, 2).toUpperCase() : 'K');
-
-      const foto = e.image_128
-        ? (e.image_128.startsWith('data:') ? e.image_128 : `data:image/png;base64,${e.image_128}`)
+      // photo may already be data: URL or raw base64
+      const foto = e.photo
+        ? (e.photo.startsWith('data:') ? e.photo : `data:image/png;base64,${e.photo}`)
         : null;
-
       const employeeId = e.barcode || e.pin || `#${e.id}`;
-      const jabatan = Array.isArray(e.job_id) ? e.job_id[1] : (e.job_id || 'Staff');
-      const departemen = Array.isArray(e.department_id) ? e.department_id[1] : (e.department_id || '');
-
+      const jabatan = e.job && Array.isArray(e.job) ? e.job[1] : (e.job && e.job.name) || 'Staff';
+      const departemen = e.department && Array.isArray(e.department) ? e.department[1] : (e.department && e.department.name) || '';
       return {
         id: e.id,
         nama: e.name,
@@ -1088,9 +1077,10 @@ export async function getDaftarKaryawan() {
         foto,
         work_email: e.work_email || '',
         work_phone: e.work_phone || '',
+        manager: e.manager,
+        mobile_phone: e.mobile_phone || '',
       };
     });
-
     list.sort((a, b) => (a.nama || '').localeCompare(b.nama || ''));
     return { success: true, data: list };
   } catch (err) {

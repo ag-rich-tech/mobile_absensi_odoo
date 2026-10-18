@@ -502,4 +502,17 @@ button:active,
   border-radius: 50%;
   background-color: var(--primary-600);
   margin-top: 1px;
+
+}
+
+/* Animasi Slide-Up Bottom Sheet */
+@keyframes slideUp {
+  from {
+    transform: translateY(100%);
+    opacity: 0;
+  }
+  to {
+    transform: translateY(0);
+    opacity: 1;
+  }
 }

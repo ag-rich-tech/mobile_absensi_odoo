@@ -22,6 +22,7 @@ export default function KehadiranBawahanView({ onBack }) {
   const [searchQuery, setSearchQuery] = useState('');
   const [isLoading, setIsLoading] = useState(true);
   const [isRefreshing, setIsRefreshing] = useState(false);
+  const [apiError, setApiError] = useState(null);
 
   // State tampilan kalender bawahan spesifik (ketika tombol 'Detail' diklik)
   const [selectedBawahan, setSelectedBawahan] = useState(null);
@@ -44,17 +45,30 @@ export default function KehadiranBawahanView({ onBack }) {
       const statusRes = await api.getKehadiranBawahanStatus();
       setStatusFitur(statusRes);
 
+      if (statusRes.message) {
+        setApiError(statusRes.message);
+        setIsLoading(false);
+        setIsRefreshing(false);
+        return;
+      }
+      setApiError(null);
+
       if (statusRes.success && statusRes.is_enabled && statusRes.is_atasan) {
         const bulanParam = formatBulanTahunParam(selectedBulan, selectedTahun);
         const listRes = await api.getKehadiranBawahanList(bulanParam);
-        if (listRes.success) {
+        if (listRes.message) {
+          setApiError(listRes.message);
+        } else if (listRes.success) {
           setDaftarBawahan(listRes.data || []);
+          setApiError(null);
         } else {
           setDaftarBawahan([]);
+          setApiError(listRes.message || 'Gagal memuat data bawahan.');
         }
       }
     } catch (err) {
       console.error('Gagal memuat data bawahan:', err);
+      setApiError(err.message || 'Terjadi kesalahan jaringan.');
     } finally {
       setIsLoading(false);
       setIsRefreshing(false);
@@ -639,7 +653,7 @@ export default function KehadiranBawahanView({ onBack }) {
           </div>
         </div>
 
-        {/* Modal Bottom Sheet Detail Harian Saat Tanggal Disentuh */}
+        {/* Modal Center Dialog Detail Harian Saat Tanggal Disentuh */}
         {selectedDayDetail && (
           <div style={{
             position: 'fixed',
@@ -648,32 +662,55 @@ export default function KehadiranBawahanView({ onBack }) {
             backdropFilter: 'blur(4px)',
             zIndex: 100,
             display: 'flex',
-            alignItems: 'flex-end',
+            alignItems: 'center',
             justifyContent: 'center',
-            padding: 0
-          }}>
+            padding: '20px'
+          }} className="animate-fade-in">
             <div style={{
               width: '100%',
-              maxWidth: '500px',
+              maxWidth: '400px',
               backgroundColor: '#ffffff',
-              borderTopLeftRadius: '24px',
-              borderTopRightRadius: '24px',
+              borderRadius: '24px',
               padding: '20px',
-              boxShadow: '0 -10px 25px rgba(0,0,0,0.2)',
+              paddingBottom: '28px',
+              boxShadow: '0 20px 40px rgba(0,0,0,0.25)',
               display: 'flex',
               flexDirection: 'column',
               gap: '14px',
-              animation: 'slideUp 0.25s cubic-bezier(0.16, 1, 0.3, 1)'
+              maxHeight: '85vh',
+              overflowY: 'auto',
+              overscrollBehavior: 'contain'
             }}>
               {/* Header Modal */}
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                <div>
-                  <span style={{ fontSize: '11px', fontWeight: '700', color: 'var(--text-muted)' }}>
-                    Rincian Kehadiran Tanggal
-                  </span>
-                  <h3 style={{ fontSize: '15px', fontWeight: '800', color: '#0f172a', margin: '2px 0 0' }}>
-                    {selectedDayDetail.nama_hari}, {selectedDayDetail.hari} {NAMA_BULAN[selectedBulan - 1]} {selectedTahun}
-                  </h3>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                  <button
+                    type="button"
+                    onClick={() => { setSelectedDayDetail(null); setSelectedBawahan(null); }}
+                    style={{
+                      width: '32px',
+                      height: '32px',
+                      borderRadius: '8px',
+                      backgroundColor: '#f1f5f9',
+                      border: 'none',
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      color: '#64748b',
+                      cursor: 'pointer',
+                      flexShrink: 0
+                    }}
+                  >
+                    <ChevronLeft size={18} />
+                  </button>
+                  <div>
+                    <span style={{ fontSize: '11px', fontWeight: '700', color: 'var(--text-muted)' }}>
+                      Rincian Kehadiran Tanggal
+                    </span>
+                    <h3 style={{ fontSize: '15px', fontWeight: '800', color: '#0f172a', margin: '2px 0 0' }}>
+                      {selectedDayDetail.nama_hari}, {selectedDayDetail.hari} {NAMA_BULAN[selectedBulan - 1]} {selectedTahun}
+                    </h3>
+                  </div>
                 </div>
                 <button
                   type="button"
@@ -880,6 +917,39 @@ export default function KehadiranBawahanView({ onBack }) {
         </button>
       </div>
 
+      {/* Error banner */}
+      {apiError && (
+        <div style={{
+          backgroundColor: '#fef2f2',
+          border: '1px solid #fecaca',
+          borderRadius: 'var(--radius-md)',
+          padding: '12px 14px',
+          display: 'flex',
+          alignItems: 'center',
+          gap: '10px',
+        }}>
+          <AlertCircle size={18} style={{ color: '#b91c1c', flexShrink: 0 }} />
+          <span style={{ fontSize: '12px', color: '#991b1b', flex: 1 }}>{apiError}</span>
+          <button
+            type="button"
+            onClick={() => loadDataBawahan(true)}
+            style={{
+              padding: '4px 10px',
+              borderRadius: '6px',
+              border: '1px solid #fca5a5',
+              backgroundColor: '#fff',
+              color: '#b91c1c',
+              fontSize: '11px',
+              fontWeight: '700',
+              cursor: 'pointer',
+              flexShrink: 0,
+            }}
+          >
+            重试
+          </button>
+        </div>
+      )}
+
       {/* Baris Pemilih Bulan & Input Pencarian */}
       <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
         {/* Switch Bulan */}
@@ -1014,119 +1084,148 @@ export default function KehadiranBawahanView({ onBack }) {
           </span>
         </div>
       ) : (
-        <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '0' }}>
+          {/* Header Baris Tabel */}
+          <div style={{
+            display: 'grid',
+            gridTemplateColumns: '44px 1fr repeat(5, 44px) 60px',
+            gap: '0',
+            padding: '8px 14px',
+            backgroundColor: '#f8fafc',
+            borderRadius: '12px 12px 0 0',
+            borderBottom: '1.5px solid var(--border-light)',
+            fontSize: '10px',
+            fontWeight: '800',
+            color: '#64748b',
+            textTransform: 'uppercase',
+            letterSpacing: '0.04em'
+          }}>
+            <span></span>
+            <span>Nama</span>
+            <span style={{ textAlign: 'center' }}>H</span>
+            <span style={{ textAlign: 'center' }}>T</span>
+            <span style={{ textAlign: 'center' }}>A</span>
+            <span style={{ textAlign: 'center' }}>Iz</span>
+            <span style={{ textAlign: 'center' }}>Sk</span>
+            <span></span>
+          </div>
+
+          {/* Baris Data */}
           {filteredBawahan.map((bawahan) => {
             const sum = bawahan.summary || {};
             return (
               <div
                 key={bawahan.id}
+                onClick={() => handlePilihBawahan(bawahan)}
                 style={{
+                  display: 'grid',
+                  gridTemplateColumns: '44px 1fr repeat(5, 44px) 60px',
+                  gap: '0',
+                  padding: '10px 14px',
                   backgroundColor: '#ffffff',
-                  borderRadius: '16px',
-                  border: '1.5px solid var(--border-light)',
-                  padding: '14px',
-                  boxShadow: '0 4px 12px rgba(0,0,0,0.03)',
-                  display: 'flex',
-                  flexDirection: 'column',
-                  gap: '12px',
-                  transition: 'transform 0.15s ease'
+                  borderBottom: '1px solid var(--border-light)',
+                  cursor: 'pointer',
+                  transition: 'background-color 0.1s ease',
+                  alignItems: 'center'
                 }}
               >
-                {/* Header Profil Karyawan */}
-                <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
-                  {bawahan.foto ? (
-                    <img
-                      src={bawahan.foto}
-                      alt={bawahan.nama}
-                      style={{ width: '44px', height: '44px', borderRadius: '12px', objectFit: 'cover', border: '1.5px solid #cbd5e1' }}
-                    />
-                  ) : (
-                    <div style={{
-                      width: '44px',
-                      height: '44px',
-                      borderRadius: '12px',
-                      background: 'linear-gradient(135deg, #0284c7 0%, #0369a1 100%)',
-                      color: '#ffffff',
-                      display: 'flex',
-                      alignItems: 'center',
-                      justifyContent: 'center',
-                      fontWeight: '800',
-                      fontSize: '14px'
-                    }}>
-                      {bawahan.inisial}
-                    </div>
-                  )}
-
-                  <div style={{ flex: 1, minWidth: 0 }}>
-                    <h3 style={{ fontSize: '14px', fontWeight: '800', color: 'var(--text-main)', margin: '0 0 2px', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
-                      {bawahan.nama}
-                    </h3>
-                    <p style={{ fontSize: '11px', color: 'var(--text-muted)', margin: '0 0 4px' }}>
-                      {bawahan.nip} • {bawahan.jabatan}
-                    </p>
-                    <span style={{ fontSize: '10px', color: '#0369a1', fontWeight: '700', backgroundColor: '#e0f2fe', padding: '2px 6px', borderRadius: '4px' }}>
-                      {bawahan.departemen}
-                    </span>
-                  </div>
-                </div>
-
-                {/* Ringkasan Mini Kehadiran Bulan Ini */}
-                <div style={{
-                  display: 'grid',
-                  gridTemplateColumns: 'repeat(5, 1fr)',
-                  gap: '6px',
-                  backgroundColor: '#f8fafc',
-                  padding: '8px',
-                  borderRadius: '10px'
-                }}>
-                  <div style={{ textAlign: 'center' }}>
-                    <span style={{ fontSize: '9px', color: '#16a34a', fontWeight: '700', display: 'block' }}>Hadir</span>
-                    <span style={{ fontSize: '13px', fontWeight: '800', color: '#15803d' }}>{sum.hadir || 0}</span>
-                  </div>
-                  <div style={{ textAlign: 'center' }}>
-                    <span style={{ fontSize: '9px', color: '#d97706', fontWeight: '700', display: 'block' }}>Telat</span>
-                    <span style={{ fontSize: '13px', fontWeight: '800', color: '#b45309' }}>{sum.terlambat || 0}</span>
-                  </div>
-                  <div style={{ textAlign: 'center' }}>
-                    <span style={{ fontSize: '9px', color: '#dc2626', fontWeight: '700', display: 'block' }}>Alpha</span>
-                    <span style={{ fontSize: '13px', fontWeight: '800', color: '#b91c1c' }}>{sum.tidak_hadir || 0}</span>
-                  </div>
-                  <div style={{ textAlign: 'center' }}>
-                    <span style={{ fontSize: '9px', color: '#0284c7', fontWeight: '700', display: 'block' }}>Izin</span>
-                    <span style={{ fontSize: '13px', fontWeight: '800', color: '#0369a1' }}>{sum.izin || 0}</span>
-                  </div>
-                  <div style={{ textAlign: 'center' }}>
-                    <span style={{ fontSize: '9px', color: '#ca8a04', fontWeight: '700', display: 'block' }}>Sakit</span>
-                    <span style={{ fontSize: '13px', fontWeight: '800', color: '#a16207' }}>{sum.sakit || 0}</span>
-                  </div>
-                </div>
-
-                {/* Tombol Detail (Membuka Kalender Kehadiran Karyawan) */}
-                <button
-                  type="button"
-                  onClick={() => handlePilihBawahan(bawahan)}
-                  style={{
-                    width: '100%',
-                    padding: '10px 14px',
-                    borderRadius: '12px',
+                {/* Foto Avatar */}
+                {bawahan.foto ? (
+                  <img
+                    src={bawahan.foto}
+                    alt={bawahan.nama}
+                    style={{ width: '32px', height: '32px', borderRadius: '8px', objectFit: 'cover', border: '1px solid #e2e8f0' }}
+                  />
+                ) : (
+                  <div style={{
+                    width: '32px',
+                    height: '32px',
+                    borderRadius: '8px',
                     background: 'linear-gradient(135deg, #0284c7 0%, #0369a1 100%)',
-                    border: 'none',
                     color: '#ffffff',
-                    fontSize: '12px',
-                    fontWeight: '800',
                     display: 'flex',
                     alignItems: 'center',
                     justifyContent: 'center',
-                    gap: '6px',
-                    cursor: 'pointer',
-                    boxShadow: '0 3px 10px rgba(2, 132, 199, 0.25)',
-                    transition: 'all 0.15s ease'
-                  }}
-                >
-                  <Calendar size={15} />
-                  <span>Detail Kalender Kehadiran</span>
-                  <ChevronRight size={15} />
-                </button>
+                    fontWeight: '800',
+                    fontSize: '12px'
+                  }}>
+                    {bawahan.inisial}
+                  </div>
+                )}
+
+                {/* Nama & Jabatan */}
+                <div style={{ minWidth: 0, marginRight: '8px' }}>
+                  <div style={{
+                    fontSize: '13px',
+                    fontWeight: '700',
+                    color: '#0f172a',
+                    whiteSpace: 'nowrap',
+                    overflow: 'hidden',
+                    textOverflow: 'ellipsis'
+                  }}>
+                    {bawahan.nama}
+                  </div>
+                  <div style={{
+                    fontSize: '10px',
+                    color: '#94a3b8',
+                    whiteSpace: 'nowrap',
+                    overflow: 'hidden',
+                    textOverflow: 'ellipsis'
+                  }}>
+                    {bawahan.nip} · {bawahan.jabatan}
+                  </div>
+                </div>
+
+                {/* Hadir */}
+                <div style={{ textAlign: 'center' }}>
+                  <span style={{ fontSize: '14px', fontWeight: '800', color: '#15803d' }}>{sum.hadir ?? 0}</span>
+                </div>
+
+                {/* Telat */}
+                <div style={{ textAlign: 'center' }}>
+                  <span style={{ fontSize: '14px', fontWeight: '800', color: '#b45309' }}>{sum.terlambat ?? 0}</span>
+                </div>
+
+                {/* Alpha */}
+                <div style={{ textAlign: 'center' }}>
+                  <span style={{ fontSize: '14px', fontWeight: '800', color: '#b91c1c' }}>{sum.tidak_hadir ?? 0}</span>
+                </div>
+
+                {/* Izin */}
+                <div style={{ textAlign: 'center' }}>
+                  <span style={{ fontSize: '14px', fontWeight: '800', color: '#0369a1' }}>{sum.izin ?? 0}</span>
+                </div>
+
+                {/* Sakit */}
+                <div style={{ textAlign: 'center' }}>
+                  <span style={{ fontSize: '14px', fontWeight: '800', color: '#a16207' }}>{sum.sakit ?? 0}</span>
+                </div>
+
+                {/* Detail Button */}
+                <div style={{ display: 'flex', justifyContent: 'flex-end' }} onClick={(e) => e.stopPropagation()}>
+                  <button
+                    type="button"
+                    onClick={() => handlePilihBawahan(bawahan)}
+                    style={{
+                      padding: '5px 10px',
+                      borderRadius: '8px',
+                      background: 'linear-gradient(135deg, #0284c7 0%, #0369a1 100%)',
+                      border: 'none',
+                      color: '#ffffff',
+                      fontSize: '11px',
+                      fontWeight: '700',
+                      cursor: 'pointer',
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: '4px',
+                      boxShadow: '0 2px 6px rgba(2, 132, 199, 0.2)',
+                      whiteSpace: 'nowrap'
+                    }}
+                  >
+                    <Calendar size={12} />
+                    <span>Detail</span>
+                  </button>
+                </div>
               </div>
             );
           })}

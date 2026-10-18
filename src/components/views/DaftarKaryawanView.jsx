@@ -7,6 +7,7 @@ export default function DaftarKaryawanView({ onBack }) {
   const [searchQuery, setSearchQuery] = useState('');
   const [isLoading, setIsLoading] = useState(true);
   const [isRefreshing, setIsRefreshing] = useState(false);
+  const [error, setError] = useState(null);
 
   const fetchKaryawan = async (silent = false) => {
     if (!silent) setIsLoading(true);
@@ -16,12 +17,15 @@ export default function DaftarKaryawanView({ onBack }) {
       const res = await api.getDaftarKaryawan();
       if (res && res.success) {
         setKaryawanList(res.data || []);
+        setError(null);
       } else {
         setKaryawanList([]);
+        setError(res?.message || 'Gagal memuat data dari server.');
       }
     } catch (err) {
       console.error('Gagal memuat daftar karyawan:', err);
       setKaryawanList([]);
+      setError(err.message || 'Terjadi kesalahan jaringan.');
     } finally {
       setIsLoading(false);
       setIsRefreshing(false);
@@ -99,6 +103,39 @@ export default function DaftarKaryawanView({ onBack }) {
           <RefreshCw size={17} className={isRefreshing ? 'animate-spin' : ''} />
         </button>
       </div>
+
+      {/* Error banner */}
+      {error && (
+        <div style={{
+          backgroundColor: '#fef2f2',
+          border: '1px solid #fecaca',
+          borderRadius: 'var(--radius-md)',
+          padding: '12px 14px',
+          display: 'flex',
+          alignItems: 'center',
+          gap: '10px',
+        }}>
+          <AlertCircle size={18} style={{ color: '#b91c1c', flexShrink: 0 }} />
+          <span style={{ fontSize: '12px', color: '#991b1b', flex: 1 }}>{error}</span>
+          <button
+            type="button"
+            onClick={() => fetchKaryawan(true)}
+            style={{
+              padding: '4px 10px',
+              borderRadius: '6px',
+              border: '1px solid #fca5a5',
+              backgroundColor: '#fff',
+              color: '#b91c1c',
+              fontSize: '11px',
+              fontWeight: '700',
+              cursor: 'pointer',
+              flexShrink: 0,
+            }}
+          >
+            Coba Lagi
+          </button>
+        </div>
+      )}
 
       {/* Pencarian */}
       <div style={{ position: 'relative' }}>
