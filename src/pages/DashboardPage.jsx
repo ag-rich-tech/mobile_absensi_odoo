@@ -23,6 +23,7 @@ import ApprovalView from '../components/views/ApprovalView';
 import PengumumanView from '../components/views/PengumumanView';
 import ReimbursementView from '../components/views/ReimbursementView';
 import KehadiranBawahanView from '../components/views/KehadiranBawahanView';
+import DaftarKaryawanView from '../components/views/DaftarKaryawanView';
 // Komponen Vektor Awan untuk Animasi Berjalan di Card Presensi
 const CloudSvgA = ({ style = {} }) => (
   <svg viewBox="0 0 120 50" fill="#ffffff" style={{ display: 'block', ...style }}>
@@ -237,7 +238,7 @@ export default function DashboardPage({ user: initialUser, onLogout, onStartAtte
   const isOn = (code) => featureFlags[code] !== false;
   const FEATURE_CODES = ['attendance', 'history', 'leave', 'dinas', 'overtime',
     'payslip', 'helpdesk', 'tasks', 'approval', 'announcement',
-    'reimbursement', 'team'];
+    'reimbursement', 'team', 'karyawan'];
 
   const loadDashboardData = async (showLoading = true) => {
     try {
@@ -2145,7 +2146,43 @@ export default function DashboardPage({ user: initialUser, onLogout, onStartAtte
                     Tim Bawahan
                   </span>
                 </button>
-)}
+              )}
+                {/* 14. Daftar Karyawan */}
+                {isOn('karyawan') && (
+                <button
+                  type='button'
+                  onClick={() => setActiveNav('karyawan')}
+                  style={{
+                    display: 'flex',
+                    flexDirection: 'column',
+                    alignItems: 'center',
+                    background: 'none',
+                    border: 'none',
+                    cursor: 'pointer',
+                    padding: '2px',
+                    position: 'relative'
+                  }}
+                >
+                  <div style={{
+                    width: '46px',
+                    height: '46px',
+                    borderRadius: '14px',
+                    background: 'linear-gradient(135deg, #fef3c7 0%, #fde68a 100%)',
+                    border: '1.5px solid #fcd34d',
+                    color: '#92400e',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    boxShadow: '0 4px 10px rgba(146, 64, 14, 0.15)',
+                    position: 'relative'
+                  }}>
+                    <Users size={22} strokeWidth={2.2} />
+                  </div>
+                  <span style={{ fontSize: '11px', fontWeight: '700', color: 'var(--text-main)', marginTop: '6px' }}>
+                    Daftar Karyawan
+                  </span>
+                </button>
+              )}
               </div>
             </div>
 
@@ -2304,6 +2341,11 @@ export default function DashboardPage({ user: initialUser, onLogout, onStartAtte
             {/* Tab: Monitoring Kehadiran Bawahan (Atasan) */}
             {activeNav === 'kehadiran_bawahan' && (
               <KehadiranBawahanView onBack={() => handleNavBack('home', () => loadStatusBawahan())} />
+            )}
+
+            {/* Tab: Daftar Karyawan */}
+            {activeNav === 'karyawan' && (
+              <DaftarKaryawanView onBack={() => handleNavBack('home')} />
             )}
           </div>
         )}
