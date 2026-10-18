@@ -299,6 +299,36 @@ body {
   animation: slideUp 0.4s cubic-bezier(0.16, 1, 0.3, 1) forwards;
 }
 
+/* Transisi Slide-Out Kembali ke Beranda */
+@keyframes slideOutRight {
+  0% {
+    transform: translateX(0);
+    opacity: 1;
+  }
+  100% {
+    transform: translateX(100%);
+    opacity: 0;
+  }
+}
+
+.animate-slide-out-right {
+  animation: slideOutRight 0.22s cubic-bezier(0.16, 1, 0.3, 1) forwards !important;
+  pointer-events: none;
+}
+
+/* Efek Tap Interaktif Tombol Back */
+.btn-back-action {
+  transition: transform 0.15s cubic-bezier(0.16, 1, 0.3, 1), background-color 0.15s ease, opacity 0.15s ease;
+  cursor: pointer;
+  user-select: none;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.btn-back-action:active {
+  transform: scale(0.88) !important;
+  opacity: 0.75;
+}
+
 .animate-pulse-subtle {
   animation: pulseGlow 2.5s infinite ease-in-out;
 }

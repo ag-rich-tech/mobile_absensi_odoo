@@ -107,7 +107,7 @@ export default function ReimbursementView({ onBack }) {
 
     const selectedJenis = jenisList.find(j => j.id == selectedJenisId);
     if (selectedJenis && selectedJenis.wajib_bukti_nota && !dokumenFile) {
-      setFormError(`Kategori '${selectedJenis.nama_jenis}' mewajibkan unggah bukti nota / kuitansi.`);
+      setFormError(`Kategori '${selectedJenis.nama_jenis || selectedJenis.nama || selectedJenis.id}' mewajibkan unggah bukti nota / kuitansi.`);
       return;
     }
 
@@ -172,6 +172,7 @@ export default function ReimbursementView({ onBack }) {
           <button
             type="button"
             onClick={onBack}
+            className="btn-back-action"
             style={{
               width: '36px',
               height: '36px',
@@ -657,14 +658,14 @@ export default function ReimbursementView({ onBack }) {
               >
                 {jenisList.map(j => (
                   <option key={j.id} value={j.id}>
-                    {j.nama_jenis} {j.kode_jenis ? `(${j.kode_jenis})` : ''}
+                    {j.nama_jenis || j.nama || j.id} {j.kode_jenis || j.kode ? `(${j.kode_jenis || j.kode})` : ''}
                   </option>
                 ))}
               </select>
             </div>
 
             {/* Info Plafon & Aturan Kategori yang Dipilih */}
-            {activeJenis && (
+            {activeJenis && (activeJenis.plafon || activeJenis.aturan) && (
               <div style={{
                 padding: '10px 12px',
                 borderRadius: '12px',
@@ -675,17 +676,21 @@ export default function ReimbursementView({ onBack }) {
                 flexDirection: 'column',
                 gap: '4px'
               }}>
-                <div style={{ display: 'flex', alignItems: 'center', gap: '6px', color: '#15803d', fontWeight: '800' }}>
-                  <Wallet size={14} />
-                  <span>Informasi Batasan Plafon:</span>
-                </div>
-                <div style={{ color: '#166534', fontSize: '10px', lineHeight: 1.4 }}>
-                  • Per Klaim: <strong>{activeJenis.plafon?.per_klaim_format}</strong><br />
-                  • Per Bulan: <strong>{activeJenis.plafon?.per_bulan_format}</strong> (Sisa Kuota: <strong>{activeJenis.kuota_saya?.sisa_bulan_ini_format}</strong>)<br />
-                  • Per Tahun: <strong>{activeJenis.plafon?.per_tahun_format}</strong> (Sisa Kuota: <strong>{activeJenis.kuota_saya?.sisa_tahun_ini_format}</strong>)
-                </div>
+                {activeJenis.plafon && (
+                  <>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '6px', color: '#15803d', fontWeight: '800' }}>
+                      <Wallet size={14} />
+                      <span>Informasi Batasan Plafon:</span>
+                    </div>
+                    <div style={{ color: '#166534', fontSize: '10px', lineHeight: 1.4 }}>
+                      • Per Klaim: <strong>{activeJenis.plafon?.per_klaim_format || '-'}</strong><br />
+                      • Per Bulan: <strong>{activeJenis.plafon?.per_bulan_format || '-'}</strong> (Sisa Kuota: <strong>{activeJenis.kuota_saya?.sisa_bulan_ini_format || '-'}</strong>)<br />
+                      • Per Tahun: <strong>{activeJenis.plafon?.per_tahun_format || '-'}</strong> (Sisa Kuota: <strong>{activeJenis.kuota_saya?.sisa_tahun_ini_format || '-'}</strong>)
+                    </div>
+                  </>
+                )}
                 {activeJenis.aturan && (
-                  <div style={{ marginTop: '4px', paddingTop: '4px', borderTop: '1px dashed #bbf7d0', color: '#166534', fontSize: '10px', whiteSpace: 'pre-line' }}>
+                  <div style={{ marginTop: '4px', paddingTop: '4px', borderTop: activeJenis.plafon ? '1px dashed #bbf7d0' : 'none', color: '#166534', fontSize: '10px', whiteSpace: 'pre-line' }}>
                     <strong>Syarat & Ketentuan:</strong><br />
                     {activeJenis.aturan}
                   </div>

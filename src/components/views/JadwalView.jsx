@@ -50,6 +50,7 @@ export default function JadwalView({ onBack }) {
         <button
           type="button"
           onClick={onBack}
+          className="btn-back-action"
           style={{
             width: '36px',
             height: '36px',

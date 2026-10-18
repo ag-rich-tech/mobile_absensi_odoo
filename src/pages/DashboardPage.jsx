@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import {
   MapPin, Clock, Camera, LogOut, Calendar, User, Briefcase,
   CheckCircle2, AlertTriangle, ArrowRight, ShieldCheck, RefreshCw,
@@ -150,6 +150,29 @@ const getTimeTheme = (date) => {
 export default function DashboardPage({ user: initialUser, onLogout, onStartAttendance, onNavigateToEnrollment }) {
   const [currentTime, setCurrentTime] = useState(getServerDate());
   const [activeNav, setActiveNav] = useState('home'); // 'home' | 'history' | 'profile'
+  const [exitingNav, setExitingNav] = useState(null);
+  const screenScrollRef = useRef(null);
+
+  const handleNavBack = (targetNav = 'home', callback) => {
+    if (exitingNav) return;
+    setExitingNav(activeNav);
+    setTimeout(() => {
+      setActiveNav(targetNav);
+      setExitingNav(null);
+      if (screenScrollRef.current) {
+        screenScrollRef.current.scrollTop = 0;
+      }
+      if (typeof callback === 'function') callback();
+    }, 220);
+  };
+
+  const handleNavChange = (newNav) => {
+    if (exitingNav) {
+      setExitingNav(null);
+    }
+    setActiveNav(newNav);
+  };
+
   const [modalType, setModalType] = useState(null); // 'masuk' | 'pulang' | null
   const [isLoading, setIsLoading] = useState(true);
   const [isRefreshing, setIsRefreshing] = useState(false);
@@ -611,7 +634,7 @@ export default function DashboardPage({ user: initialUser, onLogout, onStartAtte
       </div>
 
       {/* Area Konten Scrollable */}
-      <div className="screen-scroll-area" style={{
+      <div ref={screenScrollRef} className="screen-scroll-area" style={{
         flex: 1,
         overflowY: 'auto',
         overflowX: 'hidden',
@@ -620,8 +643,8 @@ export default function DashboardPage({ user: initialUser, onLogout, onStartAtte
         paddingBottom: '90px'
       }}>
         {/* Main Content View Switcher */}
-        {activeNav === 'home' && (
-          <div style={{ padding: '16px 20px', display: 'flex', flexDirection: 'column', gap: '16px' }}>
+        {activeNav === 'home' && !exitingNav && (
+          <div style={{ padding: '16px 20px', display: 'flex', flexDirection: 'column', gap: '16px' }} className="animate-fade-in">
             {/* Card Notifikasi Registrasi Biometrik Wajah jika Belum Terdaftar & Diwajibkan */}
             {(pegawai?.wajib_face_recognition !== false && !pegawai?.is_face_registered && !pegawai?.face_descriptor) && (
               <div style={{
@@ -2195,94 +2218,99 @@ export default function DashboardPage({ user: initialUser, onLogout, onStartAtte
           </div>
         )}
 
-        {/* Tab: Riwayat Presensi Lengkap */}
-        {activeNav === 'history' && (
-          <RiwayatView onBack={() => setActiveNav('home')} />
-        )}
+        {/* Subviews Container dengan Animasi Transisi Slide-Out ke Beranda */}
+        {activeNav !== 'home' && (
+          <div className={exitingNav ? 'animate-slide-out-right' : ''} style={{ width: '100%', minHeight: '100%' }}>
+            {/* Tab: Riwayat Presensi Lengkap */}
+            {activeNav === 'history' && (
+              <RiwayatView onBack={() => handleNavBack('home')} />
+            )}
 
-        {/* Tab: Profil Pegawai */}
-        {activeNav === 'profile' && (
-          <ProfileView
-            user={pegawai}
-            onBack={() => setActiveNav('home')}
-            onLogout={handleLogoutClick}
-            onOpenDenda={() => setActiveNav('denda')}
-            onOpenJadwal={() => setActiveNav('jadwal')}
-            onPhotoUpdated={(newPhotoUrl) => {
-              setDashboardData((prev) => prev ? {
-                ...prev,
-                pegawai: {
-                  ...prev.pegawai,
-                  foto_profil: newPhotoUrl
-                }
-              } : prev);
-            }}
-          />
-        )}
+            {/* Tab: Profil Pegawai */}
+            {activeNav === 'profile' && (
+              <ProfileView
+                user={pegawai}
+                onBack={() => handleNavBack('home')}
+                onLogout={handleLogoutClick}
+                onOpenDenda={() => setActiveNav('denda')}
+                onOpenJadwal={() => setActiveNav('jadwal')}
+                onPhotoUpdated={(newPhotoUrl) => {
+                  setDashboardData((prev) => prev ? {
+                    ...prev,
+                    pegawai: {
+                      ...prev.pegawai,
+                      foto_profil: newPhotoUrl
+                    }
+                  } : prev);
+                }}
+              />
+            )}
 
-        {/* Tab: Pengajuan Izin & Cuti */}
-        {activeNav === 'izin' && (
-          <IzinView onBack={() => setActiveNav('home')} />
-        )}
+            {/* Tab: Pengajuan Izin & Cuti */}
+            {activeNav === 'izin' && (
+              <IzinView onBack={() => handleNavBack('home')} />
+            )}
 
-        {/* Tab: Jadwal Kerja & Shift (Navigasi Dari Profil) */}
-        {activeNav === 'jadwal' && (
-          <JadwalView onBack={() => setActiveNav('profile')} />
-        )}
+            {/* Tab: Jadwal Kerja & Shift (Navigasi Dari Profil) */}
+            {activeNav === 'jadwal' && (
+              <JadwalView onBack={() => handleNavBack('profile')} />
+            )}
 
-        {/* Tab: Kunjungan Dinas */}
-        {activeNav === 'dinas' && (
-          <DinasView onBack={() => setActiveNav('home')} />
-        )}
+            {/* Tab: Kunjungan Dinas */}
+            {activeNav === 'dinas' && (
+              <DinasView onBack={() => handleNavBack('home')} />
+            )}
 
-        {/* Tab: Lembur Karyawan */}
-        {activeNav === 'lembur' && (
-          <LemburView onBack={() => setActiveNav('home')} />
-        )}
+            {/* Tab: Lembur Karyawan */}
+            {activeNav === 'lembur' && (
+              <LemburView onBack={() => handleNavBack('home')} />
+            )}
 
-        {/* Tab: Informasi Aturan Denda */}
-        {activeNav === 'denda' && (
-          <DendaView onBack={() => setActiveNav('profile')} />
-        )}
+            {/* Tab: Informasi Aturan Denda */}
+            {activeNav === 'denda' && (
+              <DendaView onBack={() => handleNavBack('profile')} />
+            )}
 
-        {/* Tab: Slip Gaji Karyawan */}
-        {activeNav === 'slip_gaji' && (
-          <SlipGajiView onBack={() => setActiveNav('home')} />
-        )}
+            {/* Tab: Slip Gaji Karyawan */}
+            {activeNav === 'slip_gaji' && (
+              <SlipGajiView onBack={() => handleNavBack('home')} />
+            )}
 
-        {/* Tab: Ajukan Permasalahan / Kendala */}
-        {activeNav === 'masalah' && (
-          <MasalahView onBack={() => setActiveNav('home')} />
-        )}
+            {/* Tab: Ajukan Permasalahan / Kendala */}
+            {activeNav === 'masalah' && (
+              <MasalahView onBack={() => handleNavBack('home')} />
+            )}
 
-        {/* Tab: Penugasan Kerja (Tugas Berjalan & Tugas Selesai) */}
-        {activeNav === 'tugas' && (
-          <TugasView onBack={() => setActiveNav('home')} />
-        )}
+            {/* Tab: Penugasan Kerja (Tugas Berjalan & Tugas Selesai) */}
+            {activeNav === 'tugas' && (
+              <TugasView onBack={() => handleNavBack('home')} />
+            )}
 
-        {/* Tab: Persetujuan / Approval Pengajuan Mobile */}
-        {activeNav === 'approval' && (
-          <ApprovalView onBack={() => { setActiveNav('home'); loadPendingApprovalCount(); }} />
-        )}
+            {/* Tab: Persetujuan / Approval Pengajuan Mobile */}
+            {activeNav === 'approval' && (
+              <ApprovalView onBack={() => handleNavBack('home', () => loadPendingApprovalCount())} />
+            )}
 
-        {/* Tab: Pengumuman Resmi Perusahaan */}
-        {activeNav === 'pengumuman' && (
-          <PengumumanView onBack={() => { setActiveNav('home'); loadPengumumanCount(); }} />
-        )}
+            {/* Tab: Pengumuman Resmi Perusahaan */}
+            {activeNav === 'pengumuman' && (
+              <PengumumanView onBack={() => handleNavBack('home', () => loadPengumumanCount())} />
+            )}
 
-        {/* Tab: Klaim Reimbursement */}
-        {activeNav === 'reimbursement' && (
-          <ReimbursementView onBack={() => setActiveNav('home')} />
-        )}
+            {/* Tab: Klaim Reimbursement */}
+            {activeNav === 'reimbursement' && (
+              <ReimbursementView onBack={() => handleNavBack('home')} />
+            )}
 
-        {/* Tab: Monitoring Kehadiran Bawahan (Atasan) */}
-        {activeNav === 'kehadiran_bawahan' && (
-          <KehadiranBawahanView onBack={() => { setActiveNav('home'); loadStatusBawahan(); }} />
+            {/* Tab: Monitoring Kehadiran Bawahan (Atasan) */}
+            {activeNav === 'kehadiran_bawahan' && (
+              <KehadiranBawahanView onBack={() => handleNavBack('home', () => loadStatusBawahan())} />
+            )}
+          </div>
         )}
       </div>
 
       {/* Floating Bottom Navigation (Statis di Bawah) */}
-      <BottomNav activeNav={activeNav} onChangeNav={setActiveNav} />
+      <BottomNav activeNav={activeNav} onChangeNav={handleNavChange} />
 
       {/* Modal Absensi Riil */}
       {modalType && (

@@ -132,6 +132,7 @@ export default function TugasView({ onBack }) {
           <button
             type="button"
             onClick={onBack}
+            className="btn-back-action"
             style={{
               width: '36px',
               height: '36px',

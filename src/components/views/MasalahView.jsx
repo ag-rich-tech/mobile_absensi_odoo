@@ -271,6 +271,7 @@ export default function MasalahView({ onBack }) {
           <button
             type="button"
             onClick={onBack}
+            className="btn-back-action"
             style={{
               background: '#f8fafc',
               border: '1px solid #e2e8f0',

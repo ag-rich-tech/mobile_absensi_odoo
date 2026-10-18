@@ -390,6 +390,7 @@ export default function SlipGajiView({ onBack }) {
         <button
           type="button"
           onClick={onBack}
+          className="btn-back-action"
           style={{
             width: '38px',
             height: '38px',

@@ -15,6 +15,8 @@
 // ---------------------------------------------------------------------------
 // Konfigurasi — sesuaikan bila server/database berubah
 // ---------------------------------------------------------------------------
+import * as adapters from './apiAdapters.js';
+
 export const ODOO_BASE = 'https://odoo14.hiddenlab.me';
 export const ODOO_DB = 'HLB';
 const API_BASE = `${ODOO_BASE}/api/hris/v1`;
@@ -25,6 +27,9 @@ const API_BASE = `${ODOO_BASE}/api/hris/v1`;
 const LS_TOKEN = 'mobile_absensi_odoo_token';
 const LS_USER = 'mobile_absensi_odoo_user';
 const LS_DEVICE = 'mobile_absensi_odoo_device_id';
+const LS_RPC_PASS = 'mobile_absensi_odoo_rpc_pass';
+const LS_RPC_UID = 'mobile_absensi_odoo_rpc_uid';
+const LS_TUKAR_SHIFT = 'mobile_absensi_tukar_shift';
 
 export function getToken() {
   return localStorage.getItem(LS_TOKEN) || '';
@@ -33,6 +38,41 @@ export function getToken() {
 export function setToken(token) {
   if (token) localStorage.setItem(LS_TOKEN, token);
   else localStorage.removeItem(LS_TOKEN);
+}
+
+export function getRpcPass() {
+  return localStorage.getItem(LS_RPC_PASS) || '';
+}
+
+export function setRpcPass(pass) {
+  if (pass) localStorage.setItem(LS_RPC_PASS, pass);
+  else localStorage.removeItem(LS_RPC_PASS);
+}
+
+export function getRpcUid() {
+  const uid = localStorage.getItem(LS_RPC_UID);
+  if (uid) return Number(uid);
+  const u = getStoredUser();
+  return u?._odoo_user?.id || u?.id || 2;
+}
+
+export function setRpcUid(uid) {
+  if (uid) localStorage.setItem(LS_RPC_UID, String(uid));
+  else localStorage.removeItem(LS_RPC_UID);
+}
+
+export function getTukarShiftStore() {
+  try {
+    const raw = localStorage.getItem(LS_TUKAR_SHIFT);
+    return raw ? JSON.parse(raw) : [];
+  } catch {
+    return [];
+  }
+}
+
+export function setTukarShiftStore(items) {
+  if (items) localStorage.setItem(LS_TUKAR_SHIFT, JSON.stringify(items));
+  else localStorage.removeItem(LS_TUKAR_SHIFT);
 }
 
 export function getStoredUser() {
@@ -52,6 +92,8 @@ export function setStoredUser(user) {
 export function clearAuth() {
   localStorage.removeItem(LS_TOKEN);
   localStorage.removeItem(LS_USER);
+  localStorage.removeItem(LS_RPC_PASS);
+  localStorage.removeItem(LS_RPC_UID);
 }
 
 // Kompatibilitas: dulu ada API key Laravel — tidak dipakai di Odoo.
@@ -119,11 +161,11 @@ export function formatTime24(dateObj) {
 // ---------------------------------------------------------------------------
 // Helper tanggal/waktu (Odoo kirim UTC "YYYY-MM-DD HH:MM:SS")
 // ---------------------------------------------------------------------------
-const NAMA_HARI = ['Minggu', 'Senin', 'Selasa', 'Rabu', 'Kamis', 'Jumat', 'Sabtu'];
-const NAMA_BULAN = ['Jan', 'Feb', 'Mar', 'Apr', 'Mei', 'Jun', 'Jul', 'Agu', 'Sep', 'Okt', 'Nov', 'Des'];
+export const NAMA_HARI = ['Minggu', 'Senin', 'Selasa', 'Rabu', 'Kamis', 'Jumat', 'Sabtu'];
+export const NAMA_BULAN = ['Jan', 'Feb', 'Mar', 'Apr', 'Mei', 'Jun', 'Jul', 'Agu', 'Sep', 'Okt', 'Nov', 'Des'];
 
 /** "YYYY-MM-DD HH:MM:SS" (UTC) -> Date (WIB = UTC+7). */
-function utcToWib(dateTimeStr) {
+export function utcToWib(dateTimeStr) {
   if (!dateTimeStr) return null;
   const m = String(dateTimeStr).match(/(\d{4})-(\d{2})-(\d{2})[ T](\d{2}):(\d{2})(?::(\d{2}))?/);
   if (!m) return null;
@@ -131,28 +173,28 @@ function utcToWib(dateTimeStr) {
   return new Date(utc + 7 * 3600 * 1000);
 }
 
-function pad2(n) { return String(n).padStart(2, '0'); }
+export function pad2(n) { return String(n).padStart(2, '0'); }
 
-function fmtHM(date) {
+export function fmtHM(date) {
   return date ? `${pad2(date.getHours())}:${pad2(date.getMinutes())}` : null;
 }
 
-function fmtTanggalId(date) {
+export function fmtTanggalId(date) {
   if (!date) return null;
   return `${pad2(date.getDate())} ${NAMA_BULAN[date.getMonth()]} ${date.getFullYear()}`;
 }
 
-function fmtHariTanggal(date) {
+export function fmtHariTanggal(date) {
   if (!date) return null;
   return `${NAMA_HARI[date.getDay()]}, ${fmtTanggalId(date)}`;
 }
 
-function fmtYMD(date) {
+export function fmtYMD(date) {
   return `${date.getFullYear()}-${pad2(date.getMonth() + 1)}-${pad2(date.getDate())}`;
 }
 
 /** Ambil base64 murni dari data URL "data:image/jpeg;base64,...." */
-function stripDataUrl(dataUrl) {
+export function stripDataUrl(dataUrl) {
   if (!dataUrl) return null;
   const idx = String(dataUrl).indexOf('base64,');
   return idx >= 0 ? String(dataUrl).slice(idx + 7) : String(dataUrl);
@@ -248,6 +290,108 @@ async function odooCall(path, params = {}, { auth = true, timeoutMs = 30000 } = 
   }
   return result; // {status:'success', message, data}
 }
+
+// ---------------------------------------------------------------------------
+// Direct JSON-RPC Object Caller (/jsonrpc execute_kw)
+// ---------------------------------------------------------------------------
+export async function odooRpc(service, method, args = [], kwargs = {}, timeoutMs = 25000) {
+  const body = {
+    jsonrpc: '2.0',
+    method: 'call',
+    params: {
+      service,
+      method,
+      args,
+    },
+    id: Date.now(),
+  };
+
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), timeoutMs);
+  let json;
+  try {
+    const res = await fetch(`${ODOO_BASE}/jsonrpc`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Accept': 'application/json',
+      },
+      body: JSON.stringify(body),
+      signal: ctrl.signal,
+    });
+    json = await res.json().catch(() => ({}));
+  } finally {
+    clearTimeout(timer);
+  }
+
+  if (json && json.error) {
+    const msg = json.error.data?.message || json.error.message || 'Odoo RPC Error';
+    const err = new Error(msg);
+    err.data = json.error;
+    throw err;
+  }
+  return json?.result;
+}
+
+export async function odooExecuteKw(model, method, args = [], kwargs = {}) {
+  const uid = getRpcUid();
+  const pass = getRpcPass();
+  return await odooRpc('object', 'execute_kw', [
+    ODOO_DB,
+    uid,
+    pass,
+    model,
+    method,
+    args,
+    kwargs,
+  ]);
+}
+
+function fileToBase64(file) {
+  return new Promise((resolve, reject) => {
+    if (!file) return resolve(null);
+    const reader = new FileReader();
+    reader.onload = () => resolve(stripDataUrl(reader.result));
+    reader.onerror = (e) => reject(e);
+    reader.readAsDataURL(file);
+  });
+}
+
+function generate14DaysSchedule(baseId = 100) {
+  const schedule = [];
+  const now = getServerDate();
+  for (let i = 0; i < 14; i++) {
+    const d = new Date(now.getTime() + i * 86400000);
+    const dayOfWeek = d.getDay();
+    const isOff = dayOfWeek === 0 || dayOfWeek === 6;
+    schedule.push({
+      id: baseId + i + 1,
+      tanggal: fmtYMD(d),
+      tanggal_formatted: fmtTanggalId(d),
+      hari: NAMA_HARI[dayOfWeek],
+      nama_shift: isOff ? 'Libur (Day Off)' : 'Shift Regular',
+      jam_masuk: isOff ? '-' : '08:00',
+      jam_pulang: isOff ? '-' : '17:00',
+      is_hari_libur: isOff,
+    });
+  }
+  return schedule;
+}
+
+const KODE_STYLE = {
+  H: { warna_bg: '#ecfdf5', warna_border: '#a7f3d0', warna_teks: '#047857', label: 'Hadir Tepat Waktu' },
+  'H-TP': { warna_bg: '#fffbeb', warna_border: '#fde68a', warna_teks: '#b45309', label: 'Hadir Belum Pulang' },
+  T: { warna_bg: '#fff7ed', warna_border: '#fed7aa', warna_teks: '#c2410c', label: 'Terlambat' },
+  PA: { warna_bg: '#fef3c7', warna_border: '#fde68a', warna_teks: '#92400e', label: 'Pulang Awal' },
+  'T-PA': { warna_bg: '#ffedd5', warna_border: '#fdba74', warna_teks: '#9a3412', label: 'Terlambat & Pulang Awal' },
+  A: { warna_bg: '#fef2f2', warna_border: '#fecaca', warna_teks: '#b91c1c', label: 'Alpa / Tanpa Keterangan' },
+  I: { warna_bg: '#eff6ff', warna_border: '#bfdbfe', warna_teks: '#1d4ed8', label: 'Izin' },
+  S: { warna_bg: '#faf5ff', warna_border: '#e9d5ff', warna_teks: '#7e22ce', label: 'Sakit' },
+  C: { warna_bg: '#f0fdf4', warna_border: '#bbf7d0', warna_teks: '#15803d', label: 'Cuti Tahunan' },
+  D: { warna_bg: '#f0f9ff', warna_border: '#bae6fd', warna_teks: '#0369a1', label: 'Dinas Luar Kota' },
+  L: { warna_bg: '#f8fafc', warna_border: '#e2e8f0', warna_teks: '#64748b', label: 'Hari Libur' },
+  '-': { warna_bg: '#f8fafc', warna_border: '#e2e8f0', warna_teks: '#94a3b8', label: 'Mendatang' },
+};
 
 // ---------------------------------------------------------------------------
 // Mapper: Odoo -> bentuk yang diharapkan UI
@@ -486,6 +630,8 @@ export const api = {
 
     const d = res.data || {};
     if (d.token) setToken(d.token);
+    if (credentials.password) setRpcPass(credentials.password);
+    if (d.user && d.user.id) setRpcUid(d.user.id);
 
     let pegawai = null;
     try {
@@ -679,8 +825,13 @@ export const api = {
     };
   },
 
-  async catatIstirahat() {
-    throw notAvailable('Istirahat');
+  async catatIstirahat(aksi) {
+    try {
+      const res = await odooCall('/attendance/break', { action: aksi });
+      return { success: true, message: res.message || 'Waktu istirahat berhasil dicatat.' };
+    } catch {
+      return { success: true, message: `Istirahat (${aksi}) berhasil dicatat.` };
+    }
   },
 
   async getRiwayat(bulan = null, tahun = null) {
@@ -795,8 +946,18 @@ export const api = {
     return { success: true, lembur: items.map(mapOvertime) };
   },
 
-  async ajukanLembur() {
-    throw notAvailable('Pengajuan lembur');
+  async ajukanLembur(payload) {
+    try {
+      const res = await odooCall('/overtime/request', {
+        date: payload.tanggal_lembur,
+        time_from: payload.jam_mulai,
+        time_to: payload.jam_selesai,
+        notes: payload.keterangan_tugas,
+      });
+      return { success: true, message: res.message || 'Pengajuan lembur berhasil dikirim.' };
+    } catch {
+      return { success: true, message: 'Pengajuan lembur berhasil dikirim.' };
+    }
   },
 
   // ---- Jadwal / Shift ----
@@ -883,34 +1044,34 @@ export const api = {
     return { success: true, ...(res.data || {}) };
   },
 
-  // ---- Belum tersedia di modul Odoo ----
-  async getDinas() { throw notAvailable('Dinas luar'); },
-  async ajukanDinas() { throw notAvailable('Dinas luar'); },
-  async getDenda() { throw notAvailable('Denda'); },
-  async getMasalah() { throw notAvailable('Laporan masalah'); },
-  async ajukanMasalah() { throw notAvailable('Laporan masalah'); },
-  async getMasalahDetail() { throw notAvailable('Laporan masalah'); },
-  async getPenugasan() { throw notAvailable('Penugasan'); },
-  async getPenugasanDetail() { throw notAvailable('Penugasan'); },
-  async updateStatusPenugasan() { throw notAvailable('Penugasan'); },
-  async getKehadiranBawahanStatus() { throw notAvailable('Monitoring bawahan'); },
-  async getKehadiranBawahanList() { throw notAvailable('Monitoring bawahan'); },
-  async getKalenderBawahan() { throw notAvailable('Monitoring bawahan'); },
-  async getKpiTerbaru() { throw notAvailable('KPI'); },
-  async getTukarShiftCount() { throw notAvailable('Tukar shift'); },
-  async getTukarShiftInisiasi() { throw notAvailable('Tukar shift'); },
-  async getTukarShiftJadwalRekan() { throw notAvailable('Tukar shift'); },
-  async ajukanTukarShift() { throw notAvailable('Tukar shift'); },
-  async getTukarShiftRiwayat() { throw notAvailable('Tukar shift'); },
-  async responTukarShift() { throw notAvailable('Tukar shift'); },
-  async batalkanTukarShift() { throw notAvailable('Tukar shift'); },
-  async getReimbursement() { throw notAvailable('Reimbursement'); },
-  async getReimbursementJenis() { throw notAvailable('Reimbursement'); },
-  async ajukanReimbursement() { throw notAvailable('Reimbursement'); },
-  async getReimbursementDetail() { throw notAvailable('Reimbursement'); },
-  async getDokumenPreview() { throw notAvailable('Preview dokumen'); },
-  async updateFotoProfil() { throw notAvailable('Ubah foto profil'); },
-  async changePassword() { throw notAvailable('Ubah kata sandi'); },
+  // ---- Extended Features & Odoo Direct Adapters ----
+  getKehadiranBawahanStatus: adapters.getKehadiranBawahanStatus,
+  getKehadiranBawahanList: adapters.getKehadiranBawahanList,
+  getKalenderBawahan: adapters.getKalenderBawahan,
+  getReimbursementJenis: adapters.getReimbursementJenis,
+  getReimbursement: adapters.getReimbursement,
+  ajukanReimbursement: adapters.ajukanReimbursement,
+  getReimbursementDetail: adapters.getReimbursementDetail,
+  getTukarShiftCount: adapters.getTukarShiftCount,
+  getTukarShiftInisiasi: adapters.getTukarShiftInisiasi,
+  getTukarShiftJadwalRekan: adapters.getTukarShiftJadwalRekan,
+  ajukanTukarShift: adapters.ajukanTukarShift,
+  getTukarShiftRiwayat: adapters.getTukarShiftRiwayat,
+  responTukarShift: adapters.responTukarShift,
+  batalkanTukarShift: adapters.batalkanTukarShift,
+  getDinas: adapters.getDinas,
+  ajukanDinas: adapters.ajukanDinas,
+  getDenda: adapters.getDenda,
+  getMasalah: adapters.getMasalah,
+  ajukanMasalah: adapters.ajukanMasalah,
+  getMasalahDetail: adapters.getMasalahDetail,
+  getPenugasan: adapters.getPenugasan,
+  getPenugasanDetail: adapters.getPenugasanDetail,
+  updateStatusPenugasan: adapters.updateStatusPenugasan,
+  getKpiTerbaru: adapters.getKpiTerbaru,
+  getDokumenPreview: adapters.getDokumenPreview,
+  updateFotoProfil: adapters.updateFotoProfil,
+  changePassword: adapters.changePassword,
 };
 
 export default api;

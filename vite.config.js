@@ -18,6 +18,11 @@ export default defineConfig({
         changeOrigin: true,
         secure: false,
       },
+      '/jsonrpc': {
+        target: 'https://odoo14.hiddenlab.me',
+        changeOrigin: true,
+        secure: false,
+      },
     },
   },
 })

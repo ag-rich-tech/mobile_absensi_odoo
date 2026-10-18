@@ -2,7 +2,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import {
   ChevronLeft, User, Lock, Smartphone, ShieldCheck, Mail, Phone,
   MapPin, Building, KeyRound, LogOut, CheckCircle2, AlertCircle,
-  CircleDollarSign, ChevronRight, Camera, RefreshCw, Check, X,
+  ChevronRight, Camera, RefreshCw, Check, X,
   CalendarDays, Award, TrendingUp, Navigation
 } from 'lucide-react';
 import api, { getOrCreateDeviceId } from '../../services/api';
@@ -142,6 +142,7 @@ export default function ProfileView({ user, onBack, onLogout, onOpenDenda, onOpe
         <button
           type="button"
           onClick={onBack}
+          className="btn-back-action"
           style={{
             width: '36px',
             height: '36px',
@@ -542,10 +543,6 @@ export default function ProfileView({ user, onBack, onLogout, onOpenDenda, onOpe
           <span style={{ fontSize: '12px', color: 'var(--text-muted)' }}>Pola Jadwal</span>
           <span style={{ fontSize: '12px', fontWeight: '700', color: 'var(--text-main)' }}>{user?.tipe_jadwal || 'Fleksibel'}</span>
         </div>
-        <div style={{ padding: '12px 14px', borderBottom: '1px solid var(--border-subtle)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-          <span style={{ fontSize: '12px', color: 'var(--text-muted)' }}>Flag Denda</span>
-          <span style={{ fontSize: '12px', fontWeight: '700', color: 'var(--primary-600)' }}>{user?.label_flag_denda || 'Denda Masuk & Pulang'}</span>
-        </div>
         <div style={{ padding: '12px 14px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
           <span style={{ fontSize: '12px', color: 'var(--text-muted)' }}>Akses WFA</span>
           <span style={{ fontSize: '12px', fontWeight: '700', color: user?.ijinkan_wfa ? 'var(--success)' : 'var(--text-muted)' }}>
@@ -577,7 +574,6 @@ export default function ProfileView({ user, onBack, onLogout, onOpenDenda, onOpe
           ['No. HP', user?.no_hp],
           ['Email', user?.email],
           ['Atasan', user?.manager],
-          ['Coach', user?.coach],
         ].map(([label, val], i, arr) => (
           <div key={label} style={{ padding: '12px 14px', borderBottom: i < arr.length - 1 ? '1px solid var(--border-subtle)' : 'none', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
             <span style={{ fontSize: '12px', color: 'var(--text-muted)' }}>{label}</span>
@@ -651,77 +647,6 @@ export default function ProfileView({ user, onBack, onLogout, onOpenDenda, onOpe
           alignItems: 'center',
           justifyContent: 'center',
           color: '#7c3aed',
-          flexShrink: 0
-        }}>
-          <ChevronRight size={18} />
-        </div>
-      </div>
-
-      {/* Menu Akses: Info Aturan & Akumulasi Denda */}
-      <div
-        onClick={onOpenDenda}
-        style={{
-          backgroundColor: '#ffffff',
-          borderRadius: 'var(--radius-md)',
-          border: '1.5px solid #fecdd3',
-          padding: '14px 16px',
-          boxShadow: '0 2px 10px rgba(225, 29, 72, 0.06)',
-          cursor: 'pointer',
-          display: 'flex',
-          alignItems: 'center',
-          justifyContent: 'space-between',
-          background: 'linear-gradient(135deg, #ffffff 0%, #fff1f2 100%)',
-          transition: 'all 0.2s'
-        }}
-      >
-        <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
-          <div style={{
-            width: '42px',
-            height: '42px',
-            borderRadius: '12px',
-            background: 'linear-gradient(135deg, #fff1f2 0%, #ffe4e6 100%)',
-            border: '1px solid #fecdd3',
-            color: '#e11d48',
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-            boxShadow: '0 4px 10px rgba(225, 29, 72, 0.12)',
-            flexShrink: 0
-          }}>
-            <CircleDollarSign size={22} strokeWidth={2.2} />
-          </div>
-          <div>
-            <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-              <span style={{ fontSize: '13px', fontWeight: '800', color: '#0f172a' }}>
-                Info Aturan & Denda
-              </span>
-              <span style={{
-                fontSize: '9px',
-                fontWeight: '800',
-                color: '#e11d48',
-                backgroundColor: '#ffe4e6',
-                padding: '2px 6px',
-                borderRadius: '6px'
-              }}>
-                Kedisiplinan
-              </span>
-            </div>
-            <p style={{ fontSize: '11px', color: '#64748b', margin: '2px 0 0', lineHeight: 1.3 }}>
-              Ketentuan keterlambatan, pulang cepat & total denda
-            </p>
-          </div>
-        </div>
-
-        <div style={{
-          width: '30px',
-          height: '30px',
-          borderRadius: '8px',
-          backgroundColor: '#ffffff',
-          border: '1px solid #fecdd3',
-          display: 'flex',
-          alignItems: 'center',
-          justifyContent: 'center',
-          color: '#e11d48',
           flexShrink: 0
         }}>
           <ChevronRight size={18} />
