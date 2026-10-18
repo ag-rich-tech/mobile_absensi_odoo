@@ -1,0 +1,64 @@
+name: Build Capacitor iOS (unsigned IPA, free sideload)
+
+on:
+  workflow_dispatch:
+
+jobs:
+  build-ipa-unsigned:
+    runs-on: macos-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build web application
+        run: npm run build
+
+      - name: Sync iOS
+        shell: bash
+        run: |
+          if [ ! -d ios/App ]; then
+            npx cap add ios
+          fi
+          npx cap sync ios
+
+      - name: Build for device (no signing)
+        shell: bash
+        run: |
+          xcodebuild \
+            -workspace ios/App/App.xcworkspace \
+            -scheme App \
+            -sdk iphoneos \
+            -configuration Release \
+            -derivedDataPath "$PWD/build/DerivedData" \
+            CODE_SIGNING_ALLOWED=NO \
+            build
+
+      - name: Package unsigned IPA
+        shell: bash
+        run: |
+          APP_PATH="build/DerivedData/Build/Products/Release-iphoneos/App.app"
+          if [ ! -d "$APP_PATH" ]; then
+            echo "ERROR: $APP_PATH not found"
+            exit 1
+          fi
+          rm -rf Payload && mkdir -p Payload
+          cp -r "$APP_PATH" Payload/
+          zip -r -y "build/MobileAbsensi-unsigned.ipa" Payload
+
+      - name: Upload unsigned IPA
+        uses: actions/upload-artifact@v4
+        with:
+          name: mobile-absensi-ios-unsigned-ipa
+          path: build/MobileAbsensi-unsigned.ipa
+          if-no-files-found: error
+          retention-days: 7
