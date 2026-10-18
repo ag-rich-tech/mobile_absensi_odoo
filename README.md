@@ -1,6 +1,6 @@
 ## Screenshots
 <div align="center">
-![Dashboard](public/images/screenshoots_app/dashboard.png)
+  <img src="public/images/screenshoots_app/dashboard.png" alt="Dashboard" />
 </div>
 
 ## React Compiler
