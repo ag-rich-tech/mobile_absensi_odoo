@@ -1,0 +1,475 @@
+:root {
+  --primary-50: #fff7ed;
+  --primary-100: #ffedd5;
+  --primary-200: #fed7aa;
+  --primary-300: #fdba74;
+  --primary-400: #fb923c;
+  --primary-500: #f97316;
+  --primary-600: #ea580c;
+  --primary-700: #c2410c;
+  --primary-800: #9a3412;
+  --primary-900: #7c2d12;
+  --primary-gradient: linear-gradient(135deg, #f97316 0%, #ea580c 100%);
+  --primary-glow: rgba(234, 88, 12, 0.25);
+
+  --bg-white: #ffffff;
+  --bg-slate: #f8fafc;
+  --bg-subtle: #f1f5f9;
+
+  --text-main: #0f172a;
+  --text-muted: #64748b;
+  --text-light: #94a3b8;
+
+  --border-light: #e2e8f0;
+  --border-subtle: #f1f5f9;
+
+  --success: #10b981;
+  --success-bg: #ecfdf5;
+  --warning: #f59e0b;
+  --warning-bg: #fffbeb;
+  --danger: #ef4444;
+  --danger-bg: #fef2f2;
+  --info: #0ea5e9;
+  --info-bg: #f0f9ff;
+
+  --font-sans: 'Plus Jakarta Sans', -apple-system, BlinkMacSystemFont, sans-serif;
+  --font-mono: 'JetBrains Mono', monospace;
+
+  --shadow-sm: 0 1px 3px rgba(0, 0, 0, 0.05);
+  --shadow-md: 0 4px 12px rgba(15, 23, 42, 0.06);
+  --shadow-lg: 0 10px 25px -3px rgba(15, 23, 42, 0.08);
+  --shadow-primary: 0 8px 20px -2px rgba(234, 88, 12, 0.35);
+
+  --radius-sm: 10px;
+  --radius-md: 16px;
+  --radius-lg: 24px;
+  --radius-full: 9999px;
+}
+
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+  -webkit-tap-highlight-color: transparent;
+}
+
+html,
+body {
+  font-family: var(--font-sans);
+  background-color: #f1f5f9;
+  color: var(--text-main);
+  min-height: 100vh;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+/* Container Wrapper untuk Seluruh Aplikasi */
+.app-viewport-wrapper {
+  min-height: 100vh;
+  min-height: 100dvh;
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  background-color: #f8fafc;
+}
+
+/* Smartphone & Tablet Device Frame: Responsif Menyesuaikan Layar */
+.mobile-device-container {
+  width: 100%;
+  max-width: 100%;
+  height: 100vh;
+  height: 100dvh;
+  background-color: var(--bg-white);
+  position: relative;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  margin: 0 auto;
+}
+
+/* Penyesuaian Responsif Layar Tab (Tablet: iPad, Android Tablet 640px - 1024px) */
+@media (min-width: 640px) {
+  .app-viewport-wrapper {
+    background-color: #f1f5f9;
+  }
+
+  .mobile-device-container {
+    /* Mengikuti dan menyesuaikan layar tablet hingga 860px terpusat dengan aksen bayangan halus */
+    max-width: 860px;
+    height: 100vh;
+    height: 100dvh;
+    border-radius: 0;
+    box-shadow: 0 0 45px rgba(15, 23, 42, 0.07);
+    border-left: 1px solid rgba(226, 232, 240, 0.85);
+    border-right: 1px solid rgba(226, 232, 240, 0.85);
+  }
+
+  .screen-scroll-area {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+  }
+
+  .screen-scroll-area>* {
+    width: 100%;
+    max-width: 820px;
+    box-sizing: border-box;
+  }
+
+  /* Grid Menu Utama: di layar tablet menjadi 8 kolom berjajar rapi 1 baris */
+  .main-menu-grid {
+    grid-template-columns: repeat(8, 1fr) !important;
+    gap: 16px 8px !important;
+  }
+
+  /* Form & Card terpusat di layar tablet */
+  .tablet-centered-card {
+    max-width: 460px !important;
+    margin: 0 auto !important;
+    width: 100% !important;
+  }
+
+  /* Video kamera selfie terpusat dan berukuran pas di tablet */
+  .tablet-camera-card {
+    height: 380px !important;
+    max-width: 480px !important;
+    margin: 0 auto !important;
+  }
+
+  /* Top Bar Header di tablet */
+  .dashboard-top-header {
+    padding: max(18px, env(safe-area-inset-top, 0px)) 28px 14px 28px !important;
+  }
+}
+
+/* Di Monitor PC Desktop Sangat Lebar (> 1100px) */
+@media (min-width: 1100px) {
+  .app-viewport-wrapper {
+    padding: 20px 0;
+  }
+
+  .mobile-device-container {
+    max-width: 840px;
+    height: calc(100vh - 40px);
+    height: calc(100dvh - 40px);
+    max-height: 960px;
+    border-radius: 24px;
+    box-shadow: 0 25px 60px -15px rgba(15, 23, 42, 0.12);
+    border: 1px solid rgba(226, 232, 240, 0.9);
+  }
+}
+
+/* Sembunyikan Fake Notch Bar di semua resolusi */
+.device-notch-bar {
+  display: none !important;
+}
+
+/* Dukungan Safe Area Insets (Edge-to-Edge Android & Notch iPhone) */
+.dashboard-top-header {
+  padding-top: max(16px, env(safe-area-inset-top, 0px)) !important;
+}
+
+.bottom-nav-bar {
+  padding-bottom: max(8px, env(safe-area-inset-bottom, 0px)) !important;
+  min-height: calc(68px + env(safe-area-inset-bottom, 0px)) !important;
+  box-sizing: border-box !important;
+}
+
+/* Screen Content Area */
+.screen-scroll-area {
+  flex: 1;
+  overflow-y: auto;
+  overflow-x: hidden;
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  background-color: var(--bg-white);
+  padding-bottom: calc(96px + env(safe-area-inset-bottom, 0px));
+  /* Space for bottom nav elevated */
+}
+
+.screen-scroll-area.no-nav {
+  padding-top: max(16px, env(safe-area-inset-top, 0px));
+  padding-bottom: max(24px, env(safe-area-inset-bottom, 0px));
+}
+
+.screen-scroll-area::-webkit-scrollbar {
+  width: 0;
+  height: 0;
+  display: none;
+}
+
+/* Utility Animations */
+@keyframes fadeIn {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes slideUp {
+  from {
+    opacity: 0;
+    transform: translateY(20px);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes pulseGlow {
+
+  0%,
+  100% {
+    transform: scale(1);
+    opacity: 0.8;
+  }
+
+  50% {
+    transform: scale(1.05);
+    opacity: 1;
+  }
+}
+
+@keyframes geofencePulse {
+  0% {
+    transform: scale(0.92);
+    box-shadow: 0 0 0 0 rgba(74, 222, 128, 0.85);
+  }
+
+  70% {
+    transform: scale(1.08);
+    box-shadow: 0 0 0 8px rgba(74, 222, 128, 0);
+  }
+
+  100% {
+    transform: scale(0.92);
+    box-shadow: 0 0 0 0 rgba(74, 222, 128, 0);
+  }
+}
+
+@keyframes iconGlowBounce {
+
+  0%,
+  100% {
+    transform: scale(1);
+    filter: drop-shadow(0 0 4px rgba(74, 222, 128, 0.8));
+  }
+
+  50% {
+    transform: scale(1.16);
+    filter: drop-shadow(0 0 9px rgba(74, 222, 128, 1));
+  }
+}
+
+@keyframes radarWave {
+  0% {
+    transform: scale(0.8);
+    opacity: 0.9;
+  }
+
+  100% {
+    transform: scale(2.4);
+    opacity: 0;
+  }
+}
+
+.animate-geofence-beacon {
+  animation: geofencePulse 1.8s infinite ease-in-out;
+}
+
+.animate-icon-pulse {
+  animation: iconGlowBounce 1.8s infinite ease-in-out;
+}
+
+.animate-fade-in {
+  animation: fadeIn 0.35s ease-out forwards;
+}
+
+.animate-slide-up {
+  animation: slideUp 0.4s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+}
+
+.animate-pulse-subtle {
+  animation: pulseGlow 2.5s infinite ease-in-out;
+}
+
+/* Animasi Awan Berjalan (Seamless Floating & Drifting Clouds) */
+@keyframes cloudDriftSlow {
+  0% {
+    transform: translateX(0);
+  }
+
+  100% {
+    transform: translateX(-50%);
+  }
+}
+
+@keyframes cloudDriftMedium {
+  0% {
+    transform: translateX(-50%);
+  }
+
+  100% {
+    transform: translateX(0);
+  }
+}
+
+@keyframes cloudDriftFast {
+  0% {
+    transform: translateX(0);
+  }
+
+  100% {
+    transform: translateX(-50%);
+  }
+}
+
+@keyframes cloudFloatSubtle {
+
+  0%,
+  100% {
+    transform: translateY(0);
+  }
+
+  50% {
+    transform: translateY(-6px);
+  }
+}
+
+.clouds-container {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  pointer-events: none;
+  z-index: 1;
+}
+
+.clouds-track-slow {
+  display: flex;
+  width: 200%;
+  height: 100%;
+  position: absolute;
+  top: 0;
+  left: 0;
+  animation: cloudDriftSlow 42s linear infinite;
+  will-change: transform;
+}
+
+.clouds-track-medium {
+  display: flex;
+  width: 200%;
+  height: 100%;
+  position: absolute;
+  top: 0;
+  left: 0;
+  animation: cloudDriftMedium 28s linear infinite;
+  will-change: transform;
+}
+
+.clouds-track-foreground {
+  display: flex;
+  width: 200%;
+  height: 100%;
+  position: absolute;
+  top: 0;
+  left: 0;
+  animation: cloudDriftFast 18s linear infinite;
+  will-change: transform;
+}
+
+.cloud-floating-item {
+  animation: cloudFloatSubtle 4s ease-in-out infinite;
+}
+
+/* Animasi Bintang Malam Hari (Twinkling Stars) */
+@keyframes starTwinkle {
+
+  0%,
+  100% {
+    opacity: 0.25;
+    transform: scale(0.75);
+  }
+
+  50% {
+    opacity: 0.95;
+    transform: scale(1.25);
+    box-shadow: 0 0 6px rgba(255, 255, 255, 0.9);
+  }
+}
+
+.twinkle-star {
+  position: absolute;
+  background-color: #ffffff;
+  border-radius: 50%;
+  animation: starTwinkle 3s infinite ease-in-out;
+  pointer-events: none;
+}
+
+/* Ripple & Click Feel */
+button,
+.clickable-card {
+  transition: all 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+  cursor: pointer;
+  user-select: none;
+}
+
+button:active,
+.clickable-card:active {
+  transform: scale(0.97);
+}
+
+/* Bottom Navigation Bar */
+.bottom-nav-bar {
+  position: absolute;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  height: 68px;
+  background: rgba(255, 255, 255, 0.95);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+  border-top: 1px solid rgba(226, 232, 240, 0.8);
+  display: flex;
+  align-items: center;
+  justify-content: space-around;
+  padding: 0 12px;
+  z-index: 40;
+}
+
+.nav-tab-btn {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 3px;
+  background: none;
+  border: none;
+  color: var(--text-light);
+  font-size: 10px;
+  font-weight: 600;
+  padding: 6px 12px;
+  border-radius: var(--radius-sm);
+  transition: all 0.2s ease;
+}
+
+.nav-tab-btn.active {
+  color: var(--primary-600);
+}
+
+.nav-tab-btn.active .nav-indicator {
+  width: 4px;
+  height: 4px;
+  border-radius: 50%;
+  background-color: var(--primary-600);
+  margin-top: 1px;
+}

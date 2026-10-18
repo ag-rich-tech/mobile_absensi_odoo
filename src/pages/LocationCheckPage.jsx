@@ -1,0 +1,934 @@
+import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
+import {
+  ArrowLeft, MapPin, RefreshCw, Navigation, CheckCircle2,
+  AlertCircle, ShieldCheck, ShieldAlert, Lock, ArrowRight, Building, Sparkles,
+  AlertTriangle, X, Info
+} from 'lucide-react';
+import AttendanceMap from '../components/AttendanceMap';
+import api from '../services/api';
+import { checkFakeGps } from '../services/fakeGpsService';
+
+export default function LocationCheckPage({
+  type = 'masuk',
+  user,
+  officeLocation,
+  allLocations = [],
+  jamKerja,
+  onBack,
+  onProceed,
+  onOfficeLocationUpdate
+}) {
+  const isMasuk = type === 'masuk';
+
+  // Ref untuk callback parent agar tidak memicu re-render / re-trigger loop
+  const onOfficeLocationUpdateRef = useRef(onOfficeLocationUpdate);
+  useEffect(() => {
+    onOfficeLocationUpdateRef.current = onOfficeLocationUpdate;
+  }, [onOfficeLocationUpdate]);
+
+  // Ref penanda sinkronisasi awal hanya berjalan 1 kali saja
+  const hasSyncedOnceRef = useRef(false);
+
+  // State Titik Lokasi Kantor Acuan Real-Time (Dapat di-force update langsung dari server)
+  const [currentOfficeLocation, setCurrentOfficeLocation] = useState(officeLocation || null);
+  const [locationsList, setLocationsList] = useState(allLocations || []);
+  const [isFetchingOffice, setIsFetchingOffice] = useState(false);
+  const [isOfficeUpdated, setIsOfficeUpdated] = useState(false);
+
+  // Default titik lokasi kantor (TARGET VALIDASI ABSENSI RESMI PEGAWAI) - Reaktif terhadap data server terbaru
+  const officeCoords = useMemo(() => ({
+    id: currentOfficeLocation?.id,
+    latitude: currentOfficeLocation?.latitude != null ? Number(currentOfficeLocation.latitude) : -6.143662253255497,
+    longitude: currentOfficeLocation?.longitude != null ? Number(currentOfficeLocation.longitude) : 106.6288537,
+    nama: currentOfficeLocation?.nama_lokasi || 'Kantor Pusat Tangerang',
+    radius: currentOfficeLocation?.radius_meter != null ? Number(currentOfficeLocation.radius_meter) : 100
+  }), [currentOfficeLocation]);
+
+  const officeCoordsRef = useRef(officeCoords);
+  useEffect(() => {
+    officeCoordsRef.current = officeCoords;
+  }, [officeCoords]);
+
+  // Fungsi: Mengambil Titik Lokasi Kantor & Radius TERBARU Secara Paksa dari Server (Bypass Cache) - Dijalankan 1 kali saja
+  const fetchFreshOfficeLocation = useCallback(async () => {
+    setIsFetchingOffice(true);
+    try {
+      const res = await api.getLokasiPresensi();
+      if (res && res.success && res.lokasi_kantor) {
+        setCurrentOfficeLocation(res.lokasi_kantor);
+        if (Array.isArray(res.semua_lokasi)) {
+          setLocationsList(res.semua_lokasi);
+        }
+        setIsOfficeUpdated(true);
+
+        if (typeof onOfficeLocationUpdateRef.current === 'function') {
+          onOfficeLocationUpdateRef.current(res.lokasi_kantor, res.semua_lokasi);
+        }
+      }
+    } catch (err) {
+      console.warn('Gagal sinkronisasi titik lokasi kantor dari server:', err);
+    } finally {
+      setIsFetchingOffice(false);
+    }
+  }, []);
+
+  // Titik lokasi absensi lainnya (Hanya ditampilkan di peta, validasi tetap ke officeCoords di atas)
+  const otherLocations = useMemo(() => {
+    if (!Array.isArray(locationsList)) return [];
+    return locationsList.filter(loc => {
+      if (currentOfficeLocation?.id && loc.id === currentOfficeLocation.id) return false;
+      if (Math.abs(Number(loc.latitude) - Number(officeCoords.latitude)) < 0.0001 &&
+        Math.abs(Number(loc.longitude) - Number(officeCoords.longitude)) < 0.0001) {
+        return false;
+      }
+      return true;
+    });
+  }, [locationsList, currentOfficeLocation?.id, officeCoords.latitude, officeCoords.longitude]);
+
+  const [userCoords, setUserCoords] = useState(null);
+  const [distance, setDistance] = useState(null);
+  const [isRefreshing, setIsRefreshing] = useState(false);
+  const [gpsError, setGpsError] = useState('');
+
+  // States Anti-Fraud Fake GPS & Mock Location
+  const [isCheckingFakeGps, setIsCheckingFakeGps] = useState(false);
+  const [isFakeGps, setIsFakeGps] = useState(false);
+  const [fakeGpsReason, setFakeGpsReason] = useState('');
+  const [showFakeGpsModal, setShowFakeGpsModal] = useState(false);
+
+  // Kalkulasi jarak Haversine (Meter)
+  const calculateDistance = (lat1, lon1, lat2, lon2) => {
+    const R = 6371000; // Radius bumi dalam meter
+    const dLat = (lat2 - lat1) * (Math.PI / 180);
+    const dLon = (lon2 - lon1) * (Math.PI / 180);
+    const a =
+      Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+      Math.cos(lat1 * (Math.PI / 180)) * Math.cos(lat2 * (Math.PI / 180)) *
+      Math.sin(dLon / 2) * Math.sin(dLon / 2);
+    const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+    return Math.round(R * c);
+  };
+
+  // Ambil Posisi GPS Karyawan Real-Time & Lakukan Deteksi Fake GPS
+  const fetchLocation = useCallback(async () => {
+    setIsRefreshing(true);
+    setGpsError('');
+    setIsCheckingFakeGps(true);
+
+    if (!('geolocation' in navigator)) {
+      setGpsError('Perangkat tidak mendukung geolokasi GPS.');
+      setIsRefreshing(false);
+      setIsCheckingFakeGps(false);
+      return;
+    }
+
+    navigator.geolocation.getCurrentPosition(
+      async (pos) => {
+        const coords = {
+          latitude: pos.coords.latitude,
+          longitude: pos.coords.longitude,
+          accuracy: Math.round(pos.coords.accuracy || 10)
+        };
+        setUserCoords(coords);
+
+        const targetOffice = officeCoordsRef.current;
+        const dist = calculateDistance(
+          coords.latitude,
+          coords.longitude,
+          targetOffice.latitude,
+          targetOffice.longitude
+        );
+        setDistance(dist);
+        setIsRefreshing(false);
+
+        // Validasi Anti-Fraud Fake GPS
+        try {
+          const fakeResult = await checkFakeGps(coords);
+          if (fakeResult && fakeResult.isFake) {
+            setIsFakeGps(true);
+            setFakeGpsReason(fakeResult.reason || 'Terdeteksi manipulasi sinyal GPS atau Mock Location.');
+            setShowFakeGpsModal(true);
+          } else {
+            setIsFakeGps(false);
+            setFakeGpsReason('');
+          }
+        } catch (e) {
+          console.warn('Gagal memverifikasi fake GPS:', e);
+        } finally {
+          setIsCheckingFakeGps(false);
+        }
+      },
+      async (err) => {
+        console.warn('Geolocation error:', err.message);
+        setGpsError('Tidak dapat mendeteksi GPS. Pastikan izin lokasi aktif dan GPS menyala.');
+        setIsRefreshing(false);
+
+        // Periksa native plugin jika ada
+        try {
+          const fakeResult = await checkFakeGps(null);
+          if (fakeResult && fakeResult.isFake) {
+            setIsFakeGps(true);
+            setFakeGpsReason(fakeResult.reason);
+          }
+        } catch (_) { }
+        setIsCheckingFakeGps(false);
+      },
+      { enableHighAccuracy: true, timeout: 8000, maximumAge: 10000 }
+    );
+  }, []);
+
+  // Kalkulasi jarak otomatis setiap kali userCoords ATAU titik kantor server (officeCoords) berubah
+  useEffect(() => {
+    if (userCoords && officeCoords.latitude && officeCoords.longitude) {
+      const dist = calculateDistance(
+        userCoords.latitude,
+        userCoords.longitude,
+        officeCoords.latitude,
+        officeCoords.longitude
+      );
+      setDistance(dist);
+    }
+  }, [userCoords, officeCoords.latitude, officeCoords.longitude]);
+
+  // Sinkronisasi Titik Lokasi & Deteksi GPS HANYA 1 KALI SAJA saat halaman dibuka
+  useEffect(() => {
+    if (hasSyncedOnceRef.current) return;
+    hasSyncedOnceRef.current = true;
+
+    fetchFreshOfficeLocation();
+    fetchLocation();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // Handler Refresh Total: Tarik data titik kantor dari server sekaligus update GPS perangkat secara manual
+  const handleFullRefresh = useCallback(async () => {
+    await Promise.allSettled([
+      fetchFreshOfficeLocation(),
+      fetchLocation()
+    ]);
+  }, [fetchFreshOfficeLocation, fetchLocation]);
+
+  // Evaluasi apakah karyawan berada di dalam radius atau berstatus Petugas Lapangan (Bebas Radius)
+  const isPetugasLapangan = Boolean(user?.is_petugas_lapangan || user?.ijinkan_wfa);
+  const radius = officeCoords.radius;
+  const isInside = distance !== null ? (distance <= radius || isPetugasLapangan) : false;
+  const canProceed = isInside && !isFakeGps;
+
+  const handleProceedClick = () => {
+    if (isFakeGps) {
+      setShowFakeGpsModal(true);
+      return;
+    }
+    if (!isInside) return;
+
+    onProceed({
+      type,
+      coords: userCoords || {
+        latitude: officeCoords.latitude,
+        longitude: officeCoords.longitude
+      },
+      distance: distance || 0,
+      officeLocation: officeCoords,
+      isFakeGps: false,
+      antiFraudVerified: true
+    });
+  };
+
+  return (
+    <div className="screen-scroll-area no-nav animate-fade-in" style={{
+      backgroundColor: '#ffffff',
+      minHeight: '100%',
+      display: 'flex',
+      flexDirection: 'column',
+      justifyContent: 'space-between',
+      paddingTop: 'max(42px, calc(env(safe-area-inset-top, 0px) + 14px))',
+      paddingBottom: 'max(52px, calc(env(safe-area-inset-bottom, 0px) + 24px))',
+      paddingLeft: '18px',
+      paddingRight: '18px',
+      boxSizing: 'border-box'
+    }}>
+      <div>
+        {/* Top Header */}
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '14px' }}>
+          <button
+            type="button"
+            onClick={onBack}
+            style={{
+              width: '40px',
+              height: '40px',
+              borderRadius: 'var(--radius-sm)',
+              backgroundColor: 'var(--bg-slate)',
+              border: '1px solid var(--border-light)',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              color: 'var(--text-main)',
+              cursor: 'pointer'
+            }}
+          >
+            <ArrowLeft size={18} />
+          </button>
+
+          <div style={{ textAlign: 'center' }}>
+            <span style={{
+              fontSize: '11px',
+              fontWeight: '800',
+              textTransform: 'uppercase',
+              letterSpacing: '0.5px',
+              color: isMasuk ? 'var(--primary-600)' : '#2563eb',
+              backgroundColor: isMasuk ? 'var(--primary-50)' : '#eff6ff',
+              padding: '4px 12px',
+              borderRadius: 'var(--radius-full)'
+            }}>
+              {isMasuk ? 'Langkah 1: Cek Lokasi Masuk' : 'Langkah 1: Cek Lokasi Pulang'}
+            </span>
+          </div>
+
+          <button
+            type="button"
+            onClick={handleFullRefresh}
+            title="Refresh GPS & Sinkronisasi Titik Kantor"
+            disabled={isRefreshing || isCheckingFakeGps || isFetchingOffice}
+            style={{
+              width: '40px',
+              height: '40px',
+              borderRadius: 'var(--radius-sm)',
+              backgroundColor: 'var(--bg-slate)',
+              border: '1px solid var(--border-light)',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              color: 'var(--primary-600)',
+              cursor: 'pointer'
+            }}
+          >
+            <RefreshCw size={17} className={isRefreshing || isCheckingFakeGps || isFetchingOffice ? 'animate-spin' : ''} />
+          </button>
+        </div>
+
+        {/* Section Title */}
+        <div style={{ marginBottom: '10px' }}>
+          <h1 style={{ fontSize: '20px', fontWeight: '800', color: 'var(--text-main)', letterSpacing: '-0.3px', margin: 0 }}>
+            Titik Lokasi Presensi
+          </h1>
+          <p style={{ fontSize: '12px', color: 'var(--text-muted)', marginTop: '2px', margin: 0 }}>
+            Pastikan Anda berada di area kantor untuk membuka sesi absensi
+          </p>
+        </div>
+
+        {/* Status Verifikasi Keaslian GPS (Anti-Fake GPS Strip) */}
+        <div style={{
+          marginBottom: '12px',
+          padding: '8px 12px',
+          borderRadius: '12px',
+          backgroundColor: isFakeGps
+            ? '#fef2f2'
+            : isCheckingFakeGps
+              ? '#eff6ff'
+              : '#f0fdf4',
+          border: `1px solid ${isFakeGps ? '#fca5a5' : isCheckingFakeGps ? '#bfdbfe' : '#bbf7d0'}`,
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'space-between',
+          transition: 'all 0.25s ease'
+        }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+            {isFakeGps ? (
+              <ShieldAlert size={16} color="#dc2626" style={{ flexShrink: 0 }} />
+            ) : isCheckingFakeGps ? (
+              <RefreshCw size={14} color="#2563eb" className="animate-spin" style={{ flexShrink: 0 }} />
+            ) : (
+              <ShieldCheck size={16} color="#16a34a" style={{ flexShrink: 0 }} />
+            )}
+            <span style={{
+              fontSize: '11px',
+              fontWeight: '700',
+              color: isFakeGps ? '#b91c1c' : isCheckingFakeGps ? '#1d4ed8' : '#15803d'
+            }}>
+              {isFakeGps
+                ? 'Peringatan: Fake GPS / Mock Location Terdeteksi!'
+                : isCheckingFakeGps
+                  ? 'Memeriksa Keaslian Sinyal GPS...'
+                  : 'Anti-Fake GPS Aktif: Koordinat Asli Terverifikasi'}
+            </span>
+          </div>
+
+          {isFakeGps && (
+            <button
+              type="button"
+              onClick={() => setShowFakeGpsModal(true)}
+              style={{
+                background: '#dc2626',
+                color: '#ffffff',
+                border: 'none',
+                borderRadius: '6px',
+                padding: '3px 8px',
+                fontSize: '10px',
+                fontWeight: '800',
+                cursor: 'pointer'
+              }}
+            >
+              Detail
+            </button>
+          )}
+        </div>
+
+        {/* Banner Peringatan Keras Jika Fake GPS Terdeteksi */}
+        {isFakeGps && (
+          <div style={{
+            marginBottom: '14px',
+            padding: '12px 14px',
+            borderRadius: '16px',
+            backgroundColor: '#fff1f2',
+            border: '1.5px solid #fecdd3',
+            boxShadow: '0 4px 14px rgba(225, 29, 72, 0.08)',
+            display: 'flex',
+            flexDirection: 'column',
+            gap: '6px',
+            animation: 'fadeIn 0.25s ease-out'
+          }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+              <AlertTriangle size={18} color="#e11d48" style={{ flexShrink: 0 }} />
+              <span style={{ fontSize: '13px', fontWeight: '800', color: '#9f1239' }}>
+                Manipulasi Lokasi Terdeteksi!
+              </span>
+            </div>
+            <p style={{ fontSize: '11px', color: '#be123c', margin: 0, lineHeight: 1.45 }}>
+              {fakeGpsReason || 'Aplikasi Fake GPS atau Mock Location aktif pada perangkat Anda.'}
+            </p>
+            <div style={{ fontSize: '11px', color: '#881337', fontWeight: '600', marginTop: '2px' }}>
+              Presensi diblokir. Harap nonaktifkan Fake GPS dan matikan Mock Location di Opsi Pengembang untuk melanjutkan.
+            </div>
+          </div>
+        )}
+
+        {/* Card Maps Container (height 400px) */}
+        <div style={{
+          width: '100%',
+          height: '400px',
+          borderRadius: '24px',
+          border: `1.5px solid ${isFakeGps ? '#fca5a5' : 'var(--border-light)'}`,
+          position: 'relative',
+          overflow: 'hidden',
+          backgroundColor: '#f1f5f9',
+          boxShadow: '0 10px 28px rgba(0, 0, 0, 0.08)'
+        }}>
+          {userCoords ? (
+            <AttendanceMap
+              officeCoords={officeCoords}
+              userCoords={userCoords}
+              otherLocations={otherLocations}
+              radius={radius}
+              isInside={isInside && !isFakeGps}
+            />
+          ) : (
+            <div style={{ width: '100%', height: '100%', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', color: 'var(--text-muted)' }}>
+              <Navigation size={28} className="animate-spin" style={{ color: 'var(--primary-500)', marginBottom: '8px' }} />
+              <span style={{ fontSize: '12px', fontWeight: '600' }}>Mendeteksi Titik GPS Anda...</span>
+            </div>
+          )}
+
+          {/* Floating Badge Status Di Pojok Atas Peta */}
+          <div style={{
+            position: 'absolute',
+            top: '12px',
+            left: '12px',
+            zIndex: 10,
+            backdropFilter: 'blur(6px)',
+            backgroundColor: isFakeGps ? '#fef2f2' : (isPetugasLapangan ? '#eef2ff' : (isInside ? 'var(--success-bg)' : '#fef2f2')),
+            border: isFakeGps ? '1px solid #fecaca' : (isPetugasLapangan ? '1px solid #c7d2fe' : (isInside ? '1px solid #bbf7d0' : '1px solid #fecaca')),
+            borderRadius: 'var(--radius-full)',
+            padding: '5px 12px',
+            display: 'flex',
+            alignItems: 'center',
+            gap: '6px',
+            boxShadow: '0 2px 8px rgba(0,0,0,0.12)'
+          }}>
+            <span style={{
+              width: '8px',
+              height: '8px',
+              borderRadius: '50%',
+              backgroundColor: isFakeGps ? '#dc2626' : (isPetugasLapangan ? '#4f46e5' : (isInside ? '#22c55e' : '#ef4444'))
+            }}></span>
+            <span style={{
+              fontSize: '11px',
+              fontWeight: '800',
+              color: isFakeGps ? '#dc2626' : (isPetugasLapangan ? '#4338ca' : (isInside ? 'var(--success)' : 'var(--danger)'))
+            }}>
+              {isFakeGps ? 'Fake GPS Terdeteksi' : (isPetugasLapangan ? 'Petugas Lapangan (Bebas Radius)' : (isInside ? 'Dalam Radius Kantor' : 'Di Luar Radius Kantor'))}
+            </span>
+          </div>
+
+          {/* Legenda Titik Lokasi Floating di Pojok Kiri Bawah Peta */}
+          {otherLocations.length > 0 && (
+            <div style={{
+              position: 'absolute',
+              bottom: '12px',
+              left: '12px',
+              zIndex: 10,
+              backgroundColor: 'rgba(255, 255, 255, 0.92)',
+              backdropFilter: 'blur(6px)',
+              borderRadius: '12px',
+              padding: '6px 10px',
+              display: 'flex',
+              alignItems: 'center',
+              gap: '10px',
+              fontSize: '10px',
+              fontWeight: '700',
+              boxShadow: '0 2px 10px rgba(0,0,0,0.1)',
+              border: '1px solid rgba(226, 232, 240, 0.8)'
+            }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
+                <span style={{ width: '8px', height: '8px', borderRadius: '50%', backgroundColor: '#f97316' }}></span>
+                <span style={{ color: '#0f172a' }}>Target Anda</span>
+              </div>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
+                <span style={{ width: '8px', height: '8px', borderRadius: '50%', backgroundColor: '#64748b' }}></span>
+                <span style={{ color: '#64748b' }}>{otherLocations.length} Lokasi Lain</span>
+              </div>
+            </div>
+          )}
+        </div>
+
+        {/* Card Detail Status Geofencing */}
+        <div style={{
+          marginTop: '14px',
+          padding: '14px 16px',
+          borderRadius: 'var(--radius-md)',
+          backgroundColor: isFakeGps
+            ? '#fef2f2'
+            : isPetugasLapangan
+              ? '#eef2ff'
+              : isInside
+                ? 'var(--success-bg)'
+                : 'var(--bg-slate)',
+          border: isFakeGps
+            ? '1.5px solid #fecaca'
+            : isPetugasLapangan
+              ? '1.5px solid #c7d2fe'
+              : isInside
+                ? '1.5px solid #bbf7d0'
+                : '1px solid var(--border-light)',
+          display: 'flex',
+          flexDirection: 'column',
+          gap: '8px'
+        }}>
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+              <Building size={16} style={{ color: isFakeGps ? '#dc2626' : (isPetugasLapangan ? '#4f46e5' : (isInside ? 'var(--success)' : 'var(--primary-600)')) }} />
+              <span style={{ fontSize: '13px', fontWeight: '800', color: 'var(--text-main)' }}>
+                {officeCoords.nama}
+              </span>
+            </div>
+
+            <span style={{
+              fontSize: '12px',
+              fontWeight: '900',
+              color: isFakeGps ? '#dc2626' : (isPetugasLapangan ? '#4f46e5' : (isInside ? 'var(--success)' : 'var(--danger)')),
+              fontFamily: 'var(--font-mono)'
+            }}>
+              {distance !== null ? `${distance} Meter` : '-- Meter'}
+            </span>
+          </div>
+
+          {/* Indikator Status Sinkronisasi Titik Kantor & Radius Real-Time */}
+          <div style={{
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'space-between',
+            paddingTop: '4px',
+            borderTop: '1px dashed var(--border-light)',
+            fontSize: '11px'
+          }}>
+            <span style={{ color: 'var(--text-muted)' }}>
+              Radius Acuan: <strong style={{ color: 'var(--text-main)', fontWeight: '800' }}>{radius} Meter</strong>
+            </span>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
+              {isFetchingOffice ? (
+                <span style={{ fontSize: '10px', color: 'var(--primary-600)', fontWeight: '700', display: 'flex', alignItems: 'center', gap: '3px' }}>
+                  <RefreshCw size={10} className="animate-spin" /> Menyinkronkan Radius...
+                </span>
+              ) : isOfficeUpdated ? (
+                <span style={{
+                  fontSize: '10px',
+                  color: '#16a34a',
+                  fontWeight: '700',
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '3px',
+                  backgroundColor: '#f0fdf4',
+                  padding: '2px 6px',
+                  borderRadius: '6px',
+                  border: '1px solid #bbf7d0'
+                }}>
+                  <CheckCircle2 size={10} /> Radius Terkini
+                </span>
+              ) : null}
+            </div>
+          </div>
+
+          <div style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '11px', color: isFakeGps ? '#b91c1c' : (isPetugasLapangan ? '#3730a3' : (isInside ? '#15803d' : 'var(--text-muted)')) }}>
+            {isFakeGps ? (
+              <>
+                <ShieldAlert size={15} style={{ color: '#dc2626', flexShrink: 0 }} />
+                <span>Posisi tidak valid karena manipulasi koordinat Fake GPS.</span>
+              </>
+            ) : isPetugasLapangan ? (
+              <>
+                <Navigation size={15} style={{ color: '#4f46e5', flexShrink: 0 }} />
+                <span>Mode Petugas Lapangan Aktif: Anda bebas melakukan presensi di luar radius kantor!</span>
+              </>
+            ) : isInside ? (
+              <>
+                <CheckCircle2 size={15} style={{ color: 'var(--success)', flexShrink: 0 }} />
+                <span>Titik lokasi valid! Anda berada dalam batas radius {radius}m.</span>
+              </>
+            ) : (
+              <>
+                <AlertCircle size={15} style={{ color: 'var(--warning)', flexShrink: 0 }} />
+                <span>
+                  {distance !== null
+                    ? `Anda berada ${distance}m dari kantor (Batas: ${radius}m. Selisih ${Math.max(0, distance - radius)}m).`
+                    : 'Mendeteksi posisi GPS...'}
+                </span>
+              </>
+            )}
+          </div>
+        </div>
+
+        {/* Error jika GPS bermasalah */}
+        {gpsError && (
+          <div style={{
+            marginTop: '10px',
+            padding: '10px 12px',
+            borderRadius: 'var(--radius-sm)',
+            backgroundColor: 'var(--danger-bg)',
+            border: '1px solid #fecaca',
+            color: 'var(--danger)',
+            fontSize: '11px',
+            fontWeight: '600'
+          }}>
+            {gpsError}
+          </div>
+        )}
+      </div>
+
+      {/* Bagian Tombol Aksi di Bawah */}
+      <div style={{ display: 'flex', flexDirection: 'column', gap: '10px', marginTop: '20px' }}>
+        {/* KASUS 1: FAKE GPS TERDETEKSI (Tombol Diblokir Keras) */}
+        {isFakeGps ? (
+          <div style={{ display: 'flex', gap: '10px' }}>
+            <button
+              type="button"
+              onClick={handleFullRefresh}
+              disabled={isRefreshing || isCheckingFakeGps || isFetchingOffice}
+              style={{
+                width: '50px',
+                height: '50px',
+                borderRadius: 'var(--radius-md)',
+                backgroundColor: 'var(--bg-slate)',
+                border: '1px solid var(--border-light)',
+                color: 'var(--text-muted)',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                cursor: 'pointer'
+              }}
+              title="Periksa Ulang"
+            >
+              <RefreshCw size={18} className={isRefreshing || isCheckingFakeGps || isFetchingOffice ? 'animate-spin' : ''} />
+            </button>
+
+            <button
+              type="button"
+              onClick={() => setShowFakeGpsModal(true)}
+              style={{
+                flex: 1,
+                height: '50px',
+                borderRadius: 'var(--radius-md)',
+                backgroundColor: '#fee2e2',
+                border: '1.5px solid #fca5a5',
+                color: '#dc2626',
+                fontSize: '14px',
+                fontWeight: '800',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                gap: '8px',
+                cursor: 'pointer',
+                boxShadow: '0 4px 12px rgba(220, 38, 38, 0.15)'
+              }}
+            >
+              <ShieldAlert size={18} />
+              <span>Fake GPS Terdeteksi (Lihat Solusi)</span>
+            </button>
+          </div>
+        ) : !isInside ? (
+          /* KASUS 2: BELUM DI DALAM RADIUS KANTOR */
+          <div style={{ display: 'flex', gap: '10px' }}>
+            <button
+              type="button"
+              onClick={handleFullRefresh}
+              disabled={isRefreshing || isCheckingFakeGps || isFetchingOffice}
+              style={{
+                flex: 1,
+                height: '50px',
+                borderRadius: 'var(--radius-md)',
+                backgroundColor: '#ffffff',
+                border: '2px solid var(--primary-600)',
+                color: 'var(--primary-600)',
+                fontSize: '14px',
+                fontWeight: '800',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                gap: '8px',
+                cursor: 'pointer',
+                boxShadow: 'var(--shadow-sm)'
+              }}
+            >
+              <RefreshCw size={18} className={isRefreshing || isCheckingFakeGps || isFetchingOffice ? 'animate-spin' : ''} />
+              <span>{isFetchingOffice ? 'Sinkronisasi Server...' : 'Periksa Ulang'}</span>
+            </button>
+
+            <button
+              type="button"
+              disabled={true}
+              title="Dekati lokasi kantor agar tombol aktif"
+              style={{
+                flex: 1,
+                height: '50px',
+                borderRadius: 'var(--radius-md)',
+                backgroundColor: 'var(--bg-slate)',
+                border: '1px solid var(--border-light)',
+                color: 'var(--text-light)',
+                fontSize: '14px',
+                fontWeight: '700',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                gap: '8px',
+                cursor: 'not-allowed',
+                opacity: 0.6
+              }}
+            >
+              <Lock size={16} />
+              <span>Lanjutkan</span>
+            </button>
+          </div>
+        ) : (
+          /* KASUS 3: AMAN & BERADA DI DALAM RADIUS KANTOR */
+          <div style={{ display: 'flex', gap: '10px' }}>
+            <button
+              type="button"
+              onClick={fetchLocation}
+              disabled={isRefreshing || isCheckingFakeGps}
+              title="Perbarui GPS"
+              style={{
+                width: '50px',
+                height: '50px',
+                borderRadius: 'var(--radius-md)',
+                backgroundColor: 'var(--bg-slate)',
+                border: '1px solid var(--border-light)',
+                color: 'var(--text-muted)',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                cursor: 'pointer'
+              }}
+            >
+              <RefreshCw size={18} className={isRefreshing || isCheckingFakeGps ? 'animate-spin' : ''} />
+            </button>
+
+            <button
+              type="button"
+              onClick={handleProceedClick}
+              style={{
+                flex: 1,
+                height: '50px',
+                borderRadius: 'var(--radius-md)',
+                background: isMasuk ? 'var(--primary-gradient)' : 'linear-gradient(135deg, #2563eb, #1d4ed8)',
+                border: 'none',
+                color: '#ffffff',
+                fontSize: '15px',
+                fontWeight: '800',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                gap: '10px',
+                cursor: 'pointer',
+                boxShadow: isMasuk ? 'var(--shadow-primary)' : '0 6px 16px rgba(37, 99, 235, 0.35)',
+                animation: 'scaleIn 0.25s ease-out'
+              }}
+            >
+              <span>Lanjutkan ke Kamera</span>
+              <ArrowRight size={18} strokeWidth={2.5} />
+            </button>
+          </div>
+        )}
+      </div>
+
+      {/* Modal Popup Peringatan Anti-Fraud Fake GPS */}
+      {showFakeGpsModal && (
+        <div style={{
+          position: 'fixed',
+          inset: 0,
+          backgroundColor: 'rgba(15, 23, 42, 0.75)',
+          backdropFilter: 'blur(8px)',
+          WebkitBackdropFilter: 'blur(8px)',
+          zIndex: 100,
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          padding: '20px',
+          animation: 'fadeIn 0.25s ease-out'
+        }}>
+          <div style={{
+            backgroundColor: '#ffffff',
+            borderRadius: '28px',
+            padding: '24px 20px',
+            width: '100%',
+            maxWidth: '430px',
+            boxShadow: '0 25px 50px -12px rgba(0, 0, 0, 0.25)',
+            border: '1px solid rgba(254, 202, 202, 0.8)',
+            display: 'flex',
+            flexDirection: 'column',
+            gap: '16px',
+            animation: 'slideUp 0.3s cubic-bezier(0.16, 1, 0.3, 1)'
+          }}>
+            {/* Header Popup */}
+            <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+                <div style={{
+                  width: '46px',
+                  height: '46px',
+                  borderRadius: '14px',
+                  background: 'linear-gradient(135deg, #fef2f2 0%, #fee2e2 100%)',
+                  border: '1px solid #fca5a5',
+                  color: '#dc2626',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  boxShadow: '0 4px 12px rgba(220, 38, 38, 0.15)'
+                }}>
+                  <ShieldAlert size={28} strokeWidth={2.3} />
+                </div>
+                <div>
+                  <h3 style={{ fontSize: '16px', fontWeight: '800', color: '#991b1b', margin: 0, letterSpacing: '-0.3px' }}>
+                    Peringatan Anti-Fraud
+                  </h3>
+                  <p style={{ fontSize: '11px', color: '#b91c1c', margin: '2px 0 0 0', fontWeight: '600' }}>
+                    Fake GPS / Mock Location Terdeteksi
+                  </p>
+                </div>
+              </div>
+
+              <button
+                type="button"
+                onClick={() => setShowFakeGpsModal(false)}
+                style={{
+                  width: '32px',
+                  height: '32px',
+                  borderRadius: '50%',
+                  backgroundColor: 'var(--bg-slate)',
+                  border: 'none',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  color: 'var(--text-muted)',
+                  cursor: 'pointer'
+                }}
+              >
+                <X size={16} />
+              </button>
+            </div>
+
+            <div style={{
+              padding: '12px 14px',
+              borderRadius: '14px',
+              backgroundColor: '#fff1f2',
+              border: '1px solid #fecdd3',
+              fontSize: '12px',
+              color: '#9f1239',
+              lineHeight: 1.45
+            }}>
+              <strong>Detail Temuan Sistem:</strong>
+              <div style={{ marginTop: '4px', color: '#e11d48' }}>
+                {fakeGpsReason || 'Koordinat lokasi perangkat berasal dari aplikasi Mock Location atau provider tiruan.'}
+              </div>
+            </div>
+
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+              <span style={{ fontSize: '12px', fontWeight: '800', color: 'var(--text-main)' }}>
+                Langkah yang Harus Dilakukan:
+              </span>
+
+              <div style={{ display: 'flex', alignItems: 'flex-start', gap: '10px', fontSize: '11px', color: '#475569' }}>
+                <div style={{ width: '20px', height: '20px', borderRadius: '50%', backgroundColor: '#f1f5f9', display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: '800', flexShrink: 0, color: 'var(--primary-600)' }}>1</div>
+                <div>Tutup atau copot pemasangan aplikasi pemalsu lokasi (Fake GPS / GPS Joystick) dari perangkat Anda.</div>
+              </div>
+
+              <div style={{ display: 'flex', alignItems: 'flex-start', gap: '10px', fontSize: '11px', color: '#475569' }}>
+                <div style={{ width: '20px', height: '20px', borderRadius: '50%', backgroundColor: '#f1f5f9', display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: '800', flexShrink: 0, color: 'var(--primary-600)' }}>2</div>
+                <div>Buka <strong>Pengaturan HP &gt; Opsi Pengembang (Developer Options)</strong> dan pilih <em>Tidak Ada</em> pada opsi <strong>Pilih aplikasi lokasi palsu (Mock location app)</strong>.</div>
+              </div>
+
+              <div style={{ display: 'flex', alignItems: 'flex-start', gap: '10px', fontSize: '11px', color: '#475569' }}>
+                <div style={{ width: '20px', height: '20px', borderRadius: '50%', backgroundColor: '#f1f5f9', display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: '800', flexShrink: 0, color: 'var(--primary-600)' }}>3</div>
+                <div>Nyalakan GPS lokasi fisik asli Anda lalu tekan tombol <strong>Cek Ulang Lokasi</strong> di bawah.</div>
+              </div>
+            </div>
+
+            {/* Tombol Aksi */}
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', marginTop: '4px' }}>
+              <button
+                type="button"
+                onClick={() => {
+                  setShowFakeGpsModal(false);
+                  fetchLocation();
+                }}
+                style={{
+                  width: '100%',
+                  height: '46px',
+                  borderRadius: 'var(--radius-md)',
+                  background: 'var(--primary-gradient)',
+                  border: 'none',
+                  color: '#ffffff',
+                  fontSize: '14px',
+                  fontWeight: '700',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  gap: '8px',
+                  cursor: 'pointer',
+                  boxShadow: 'var(--shadow-primary)'
+                }}
+              >
+                <RefreshCw size={17} />
+                <span>Cek Ulang Lokasi Sekarang</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => setShowFakeGpsModal(false)}
+                style={{
+                  width: '100%',
+                  padding: '8px',
+                  background: 'none',
+                  border: 'none',
+                  color: 'var(--text-muted)',
+                  fontSize: '12px',
+                  fontWeight: '600',
+                  cursor: 'pointer',
+                  textAlign: 'center'
+                }}
+              >
+                Tutup Peringatan
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}

@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="utf-8"?>
+<network-security-config>
+    <!-- Izinkan sertifikat sistem untuk domain API -->
+    <domain-config cleartextTrafficPermitted="false">
+        <domain includeSubdomains="true">odoo14.hiddenlab.me</domain>
+        <trust-anchors>
+            <certificates src="system" />
+        </trust-anchors>
+    </domain-config>
+    <!-- Default: izinkan semua sertifikat sistem -->
+    <base-config cleartextTrafficPermitted="false">
+        <trust-anchors>
+            <certificates src="system" />
+        </trust-anchors>
+    </base-config>
+</network-security-config>
+
