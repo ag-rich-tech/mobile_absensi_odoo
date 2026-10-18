@@ -1072,6 +1072,7 @@ export const api = {
   getDokumenPreview: adapters.getDokumenPreview,
   updateFotoProfil: adapters.updateFotoProfil,
   changePassword: adapters.changePassword,
+  getDaftarKaryawan: adapters.getDaftarKaryawan,
 };
 
 export default api;
