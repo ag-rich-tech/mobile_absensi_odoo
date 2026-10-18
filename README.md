@@ -1,25 +1,23 @@
-# React + Vite
-This template provides a minimal setup to get React working in Vite with HMR and some Oxlint rules.
-Currently, two official plugins are available:
-- [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react) uses [Oxc](https://oxc.rs)
-- [@vitejs/plugin-react-swc](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react-swc) uses [SWC](https://swc.rs/)
+## Screenshots
+
+![Dashboard](./public/images/screenshoots_app/dashboard.png)
 
 ## React Compiler
 The React Compiler is not enabled on this template because of its impact on dev & build performances. To add it, see [this documentation](https://react.dev/learn/react-compiler/installation).
 
 ## Compile
 
-first compile for folder /dist
+First compile for folder /dist
 ```bash  
    npm run build  
 ``` 
 
-compile & sync android
+Compile & sync android
 ```bash  
    npx cap sync android  
 ```
 
-build apk
+Build apk
 ```bash  
    cd android; .\gradlew.bat assembleDebug  
 ```
