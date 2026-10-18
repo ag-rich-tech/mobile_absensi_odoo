@@ -404,7 +404,7 @@ export async function getReimbursement() {
 
   try {
     const res = await odooCall('/reimbursement/list', {});
-    const rawList = res?.data?.list || [];
+    const rawList = res?.data?.reimbursements || res?.data?.list || [];
 
     const catMap = {
       transport: 'Transport / Bensin',
@@ -420,6 +420,7 @@ export async function getReimbursement() {
       rejected: 'ditolak',
       paid: 'dicairkan',
       diajukan: 'menunggu',
+      cancelled: 'ditolak',
     };
 
     list = rawList.map((r) => {
@@ -437,12 +438,13 @@ export async function getReimbursement() {
         id: r.id,
         nomor_pengajuan: r.name || `RMB-${r.id}`,
         nama_jenis: namaJenis,
-        tanggal_kuitansi: r.date || (r.create_date ? r.create_date.slice(0, 10) : ''),
-        nominal: r.amount || r.nominal || 0,
-        nominal_format: `Rp ${Number(r.amount || r.nominal || 0).toLocaleString('id-ID')}`,
+        tanggal_kuitansi: r.expense_date || '',
+        nominal: r.total_amount || r.total || 0,
+        nominal_format: `Rp ${(r.total_amount || r.total || 0).toLocaleString('id-ID')}`,
         nominal_disetujui: r.approved_amount || r.nominal_disetujui || null,
         nominal_disetujui_format: r.approved_amount || r.nominal_disetujui ? `Rp ${Number(r.approved_amount || r.nominal_disetujui).toLocaleString('id-ID')}` : null,
-        keterangan: r.note || r.description || r.keterangan || '',
+        // Odoo mirrors name → description when user left it empty; strip that fallback
+        keterangan: (r.description === r.name ? '' : r.description) || '',
         status: st,
         dokumen_nota_url: r.attachment ? `data:image/jpeg;base64,${r.attachment}` : null,
         approval: {

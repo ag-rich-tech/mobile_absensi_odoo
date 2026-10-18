@@ -500,6 +500,39 @@ function mapLeave(lv) {
 }
 
 function mapApprovalItem(lv) {
+  const modul = lv.modul || 'cuti';
+  if (modul === 'reimbursement') {
+    const emp = lv.employee || {};
+    return {
+      id: lv.id,
+      pengajuan_id: lv.sheet_id || lv.id,
+      modul: 'reimbursement',
+      label_modul: 'Klaim Reimbursement',
+      pemohon: {
+        nama: emp.name || lv.employee_name || '',
+        jabatan: emp.job ? (emp.job.name || emp.job[1]) : '',
+        departemen: emp.department ? (emp.department.name || emp.department[1]) : '',
+        nip: emp.nip || '',
+        foto: emp.photo || null,
+      },
+      created_at: lv.submit_date ? fmtTanggalId(utcToWib(lv.submit_date)) : '',
+      status: lv.state || 'menunggu',
+      detail: {
+        jenis_pengajuan: lv.jenis || 'Klaim Operasional',
+        nominal: `Rp ${Number(lv.total_amount || 0).toLocaleString('id-ID')}`,
+        nominal_raw: Number(lv.total_amount || 0),
+        tanggal_kuitansi: lv.expense_date || '',
+        keterangan: lv.description || '',
+        dokumen_url: lv.attachment || null,
+      },
+      alur_steps: [],
+      catatan_saya: '',
+      is_current: true,
+      step_ke: 1,
+      total_step: 1,
+      _raw: lv,
+    };
+  }
   return {
     id: lv.id,
     pengajuan_id: lv.id,
@@ -521,8 +554,8 @@ function mapApprovalItem(lv) {
     total_step: 1,
     _raw: lv,
   };
-}
 
+}
 function mapAnnouncement(a) {
   const body = a.body || '';
   return {
