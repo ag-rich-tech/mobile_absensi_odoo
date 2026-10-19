@@ -518,7 +518,7 @@ function mapApprovalItem(lv) {
       created_at: lv.submit_date ? fmtTanggalId(utcToWib(lv.submit_date)) : '',
       status: lv.state || 'menunggu',
       detail: {
-        jenis_pengajuan: lv.jenis || 'Klaim Operasional',
+        jenis_pengajuan: lv.product ? (Array.isArray(lv.product) ? lv.product[1] || lv.product[0] : lv.product) || 'Klaim Operasional' : 'Klaim Operasional',
         nominal: `Rp ${Number(lv.total_amount || 0).toLocaleString('id-ID')}`,
         nominal_raw: Number(lv.total_amount || 0),
         tanggal_kuitansi: lv.expense_date || '',

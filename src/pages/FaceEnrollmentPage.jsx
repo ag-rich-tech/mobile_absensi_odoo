@@ -436,63 +436,46 @@ export default function FaceEnrollmentPage({ user, onBack, onSuccess }) {
             pointerEvents: 'none',
             zIndex: 10
           }}>
-            {/* Lingkaran Oval Target Wajah */}
-            <div style={{
-              width: 'min(340px, 78vw)',
-              height: 'min(480px, 92vw)',
-              borderRadius: '50% / 46%',
-              border: `3px dashed ${
-                isSuccess 
-                  ? '#22c55e' 
-                  : enrollStep === 'memproses' 
-                    ? '#38bdf8' 
-                    : isEyeClosed 
-                      ? '#22c55e' 
-                      : detectedConfidence > 0 
-                        ? '#facc15' 
-                        : 'rgba(255, 255, 255, 0.4)'
-              }`,
-              boxShadow: isSuccess 
-                ? '0 0 30px rgba(34, 197, 94, 0.6)' 
-                : isEyeClosed
-                  ? '0 0 25px rgba(34, 197, 94, 0.5)'
-                  : detectedConfidence > 0
-                    ? '0 0 20px rgba(250, 204, 21, 0.4)'
-                    : '0 0 20px rgba(0, 0, 0, 0.5)',
-              position: 'relative',
-              transition: 'all 0.2s ease'
-            }}>
-              {/* Pojok Reticle Animasi */}
+            {/* Animated FaceID Circle Scanner (sheepymeh style) */}
+            {!isSuccess && enrollStep !== 'memproses' && (
               <div style={{
                 position: 'absolute',
-                top: '-12px',
-                left: '50%',
-                transform: 'translateX(-50%)',
-                backgroundColor: isSuccess ? '#22c55e' : (isEyeClosed ? '#22c55e' : (detectedConfidence > 0 ? '#facc15' : '#3b82f6')),
-                padding: '3px 12px',
-                borderRadius: '12px',
-                fontSize: '11px',
-                fontWeight: '800',
-                color: '#0f172a',
+                width: '110px',
+                height: '110px',
+                borderRadius: '50%',
+                border: detectedConfidence > 0 ? '2px solid rgba(255,255,255,0.3)' : '2px solid rgba(255,255,255,0.1)',
                 display: 'flex',
                 alignItems: 'center',
-                gap: '4px',
-                whiteSpace: 'nowrap'
+                justifyContent: 'center',
+                pointerEvents: 'none',
+                zIndex: 11
               }}>
-                {isSuccess ? (
-                  <CheckCircle2 size={12} />
-                ) : isEyeClosed ? (
-                  <Eye size={12} />
-                ) : (
-                  <UserCheck size={12} />
+                {/* Outer spinning ring */}
+                <div className="enroll-scanner-circle" />
+                {/* Inner ring with different delay */}
+                <div className="enroll-scanner-circle enroll-scanner-circle-1" />
+                {/* Scan line when face detected */}
+                {detectedConfidence > 0 && !isEyeClosed && (
+                  <div style={{
+                    position: 'absolute',
+                    left: '15%', right: '15%',
+                    height: '2px',
+                    background: 'linear-gradient(90deg, transparent, #38bdf8, #a78bfa, transparent)',
+                    animation: 'faceIdScanLine 1.6s ease-in-out infinite',
+                    boxShadow: '0 0 6px rgba(56,189,248,0.5)',
+                    zIndex: 12
+                  }} />
                 )}
-                {isSuccess 
-                  ? 'TERVERIFIKASI' 
-                  : isEyeClosed 
-                    ? 'KEDIPAN TERDETEKSI' 
-                    : (detectedConfidence > 0 ? 'KEDIP ATAU KLIK SIMPAN' : 'ARAHKAN WAJAH')}
+                {/* Center icon */}
+                <div style={{ zIndex: 13 }}>
+                  {isEyeClosed
+                    ? <CheckCircle2 size={26} style={{ color: '#22c55e' }} />
+                    : detectedConfidence > 0
+                      ? <Eye size={24} style={{ color: '#38bdf8', opacity: 0.85 }} />
+                      : <div style={{ width: 8, height: 8, borderRadius: '50%', background: 'rgba(255,255,255,0.3)' }} />}
+                </div>
               </div>
-            </div>
+            )}
 
             {/* Status Liveness Pill */}
             <div style={{

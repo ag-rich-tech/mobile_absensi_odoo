@@ -732,66 +732,60 @@ export default function AttendanceCapturePage({
             </div>
           )}
 
-          {/* Oval Panduan Wajah (Face Guide) Interaktif & Status Biometrik */}
-          <div style={{
-            position: 'absolute',
-            width: 'min(260px, 70vw)',
-            height: 'min(335px, 78vw)',
-            borderRadius: '50% / 46%',
-            border: `3px dashed ${isFaceVerified
-                ? '#22c55e'
-                : (faceMatched && !blinkDetected)
-                  ? '#facc15'
-                  : faceDetected
-                    ? '#38bdf8'
-                    : 'rgba(249, 115, 22, 0.85)'
-              }`,
-            boxShadow: isFaceVerified
-              ? '0 0 25px rgba(34, 197, 94, 0.6), 0 0 0 9999px rgba(15, 23, 42, 0.4)'
-              : (faceMatched && !blinkDetected)
-                ? '0 0 20px rgba(250, 204, 21, 0.4), 0 0 0 9999px rgba(15, 23, 42, 0.35)'
-                : '0 0 0 9999px rgba(15, 23, 42, 0.35)',
-            pointerEvents: 'none',
-            zIndex: 3,
-            transition: 'all 0.3s ease'
-          }}>
-            {/* Tag Status Biometrik di Atas Lingkaran */}
-            {hasFaceEnrolled && (
+          {/* FaceID Scanner Circular Overlay */}
+          {hasFaceEnrolled && cameraActive && !capturedPhoto && (
+            <div style={{
+              position: 'absolute',
+              width: 'min(180px, 46vw)',
+              height: 'min(180px, 46vw)',
+              borderRadius: '50%',
+              border: isFaceVerified ? '3px solid #22c55e' : '3px solid rgba(56,189,248,0.6)',
+              boxShadow: isFaceVerified
+                ? '0 0 30px rgba(34,197,94,0.6), inset 0 0 20px rgba(34,197,94,0.1)'
+                : '0 0 25px rgba(56,189,248,0.35), inset 0 0 20px rgba(56,189,248,0.1)',
+              pointerEvents: 'none',
+              zIndex: 3,
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              transition: 'all 0.4s ease'
+            }}>
+              {/* Rotating ring (FaceID style) */}
+              <div className="face-id-ring" />
+              {/* Scanning line */}
+              {!isFaceVerified && <div className="face-id-scan-line" />}
+              {/* Corner brackets */}
+              <div className={`face-id-corners${isFaceVerified ? ' verified' : ''}`}>
+                <div className="face-id-corner face-id-corner--tl" />
+                <div className="face-id-corner face-id-corner--tr" />
+                <div className="face-id-corner face-id-corner--bl" />
+                <div className="face-id-corner face-id-corner--br" />
+              </div>
+              {/* Center icon */}
+              <div style={{ zIndex: 1 }}>
+                {isFaceVerified
+                  ? <CheckCircle2 size={24} style={{ color: '#22c55e' }} />
+                  : faceMatched && !blinkDetected
+                    ? <Sparkles size={20} style={{ color: '#facc15' }} />
+                    : faceDetected
+                      ? <Eye size={22} style={{ color: '#38bdf8', opacity: 0.85 }} />
+                      : <div style={{ width: 8, height: 8, borderRadius: '50%', background: 'rgba(255,255,255,0.3)' }} />}
+              </div>
+              {/* Status label below circle */}
               <div style={{
                 position: 'absolute',
-                top: '-12px',
-                left: '50%',
-                transform: 'translateX(-50%)',
-                backgroundColor: isFaceVerified ? '#22c55e' : (faceMatched ? '#facc15' : '#3b82f6'),
-                padding: '2px 10px',
-                borderRadius: '12px',
-                fontSize: '10px',
+                bottom: '-26px',
+                fontSize: '9px',
                 fontWeight: '800',
-                color: '#0f172a',
-                display: 'flex',
-                alignItems: 'center',
-                gap: '4px',
+                color: isFaceVerified ? '#22c55e' : '#38bdf8',
+                letterSpacing: '0.8px',
+                textTransform: 'uppercase',
                 whiteSpace: 'nowrap'
               }}>
-                {isFaceVerified ? (
-                  <>
-                    <CheckCircle2 size={11} />
-                    <span>TERVERIFIKASI</span>
-                  </>
-                ) : faceMatched ? (
-                  <>
-                    <Eye size={11} />
-                    <span>KEDIPKAN MATA</span>
-                  </>
-                ) : (
-                  <>
-                    <UserCheck size={11} />
-                    <span>PENCOCOKAN WAJAH</span>
-                  </>
-                )}
+                {isFaceVerified ? '✓ Terverifikasi' : '● Meminda'}
               </div>
-            )}
-          </div>
+            </div>
+          )}
 
           {/* Floating Pill Status Biometrik di Bawah Kamera */}
           {hasFaceEnrolled && cameraActive && !capturedPhoto && (

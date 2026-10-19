@@ -388,15 +388,30 @@ export async function getKalenderBawahan(bawahanId, bulanParam) {
 // 2. Reimbursement
 // ---------------------------------------------------------------------------
 export async function getReimbursementJenis() {
-  return {
-    success: true,
-    data: [
-      { id: 'transport', kode: 'transport', kode_jenis: 'transport', nama: 'Transport / Bensin', nama_jenis: 'Transport / Bensin', wajib_bukti_nota: true, maksimal_klaim: null },
-      { id: 'medical', kode: 'medical', kode_jenis: 'medical', nama: 'Kesehatan / Medis', nama_jenis: 'Kesehatan / Medis', wajib_bukti_nota: true, maksimal_klaim: null },
-      { id: 'meal', kode: 'meal', kode_jenis: 'meal', nama: 'Konsumsi / Meal', nama_jenis: 'Konsumsi / Meal', wajib_bukti_nota: true, maksimal_klaim: null },
-      { id: 'operational', kode: 'operational', kode_jenis: 'operational', nama: 'Operasional Lainnya', nama_jenis: 'Operasional Lainnya', wajib_bukti_nota: false, maksimal_klaim: null },
-    ],
-  };
+  try {
+    const res = await odooCall('/reimbursement/jenis', {});
+    const rawList = res?.data || [];
+    const data = rawList.map((p) => ({
+      id: p.id,
+      kode: p.code || p.id,
+      kode_jenis: p.code || p.id,
+      nama: p.name || p.display_name,
+      nama_jenis: p.name || p.display_name,
+      wajib_bukti_nota: p.wajib_bukti_nota || false,
+      maksimal_klaim: p.maksimal_klaim || null,
+    }));
+    return { success: true, data };
+  } catch {
+    return {
+      success: true,
+      data: [
+        { id: 'transport', kode: 'transport', kode_jenis: 'transport', nama: 'Transport / Bensin', nama_jenis: 'Transport / Bensin', wajib_bukti_nota: true, maksimal_klaim: null },
+        { id: 'medical', kode: 'medical', kode_jenis: 'medical', nama: 'Kesehatan / Medis', nama_jenis: 'Kesehatan / Medis', wajib_bukti_nota: true, maksimal_klaim: null },
+        { id: 'meal', kode: 'meal', kode_jenis: 'meal', nama: 'Konsumsi / Meal', nama_jenis: 'Konsumsi / Meal', wajib_bukti_nota: true, maksimal_klaim: null },
+        { id: 'operational', kode: 'operational', kode_jenis: 'operational', nama: 'Operasional Lainnya', nama_jenis: 'Operasional Lainnya', wajib_bukti_nota: false, maksimal_klaim: null },
+      ],
+    };
+  }
 }
 
 export async function getReimbursement() {
@@ -484,6 +499,10 @@ export async function ajukanReimbursement(payload) {
   let keterangan = '';
   let docBase64 = null;
   let docName = 'nota.jpg';
+  // Nama file deskriptif: {product}-{employee}-{date}.jpg
+  const empNama = (payload?.employee_name || '').trim().replace(/\s+/g, '_') || 'unknown';
+  const jenisLabel = (payload?.jenis_label || payload?.reimbursement_jenis_id || 'operational').replace(/\s+/g, '_');
+  docName = `${jenisLabel}_${empNama}_${tanggal}.jpg`;
 
   if (payload instanceof FormData) {
     jenis = payload.get('reimbursement_jenis_id') || 'operational';
@@ -492,7 +511,7 @@ export async function ajukanReimbursement(payload) {
     keterangan = payload.get('keterangan') || '';
     const doc = payload.get('dokumen');
     if (doc && doc.size > 0) {
-      docName = doc.name || docName;
+      // docName already set above with descriptive format
       docBase64 = await fileToBase64(doc);
     }
   } else if (payload && typeof payload === 'object') {
@@ -501,7 +520,7 @@ export async function ajukanReimbursement(payload) {
     nominal = parseFloat(payload.nominal || 0);
     keterangan = payload.keterangan || '';
     if (payload.dokumen instanceof File) {
-      docName = payload.dokumen.name || docName;
+      // docName already set above with descriptive format
       docBase64 = await fileToBase64(payload.dokumen);
     } else if (typeof payload.dokumen === 'string') {
       docBase64 = stripDataUrl(payload.dokumen);
