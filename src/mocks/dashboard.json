@@ -57,7 +57,20 @@
         "is_face_registered": false,
         "face_enrolled_at": null,
         "login": "agtest",
-        "location_policy": "wfo"
+        "location_policy": "wfo",
+        "allowed_location_ids": [
+          1
+        ],
+        "allowed_locations": [
+          {
+            "id": 1,
+            "name": "Kantor Pusat",
+            "lat": -6.2,
+            "lng": 106.8,
+            "radius_m": 100.0
+          }
+        ],
+        "face_code": "FACE-K7M2QX9P"
       },
       "attendance": {
         "checked_in": true,
@@ -98,7 +111,27 @@
         "office_lat": -6.2,
         "office_lng": 106.8,
         "office_radius_m": 100.0,
-        "features": {}
+        "features": {},
+        "location_policy": "wfo",
+        "locations": [
+          {
+            "id": 1,
+            "name": "Kantor Pusat",
+            "lat": -6.2,
+            "lng": 106.8,
+            "radius_m": 100.0
+          },
+          {
+            "id": 2,
+            "name": "Kantor Cabang",
+            "lat": -6.3,
+            "lng": 107.0,
+            "radius_m": 150.0
+          }
+        ],
+        "allowed_location_ids": [
+          1
+        ]
       },
       "server_time": {
         "timestamp": 1792987782
@@ -113,7 +146,26 @@
       "office_lng": 106.8,
       "office_radius_m": 100.0,
       "features": {},
-      "location_policy": "wfo"
+      "location_policy": "wfo",
+      "locations": [
+        {
+          "id": 1,
+          "name": "Kantor Pusat",
+          "lat": -6.2,
+          "lng": 106.8,
+          "radius_m": 100.0
+        },
+        {
+          "id": 2,
+          "name": "Kantor Cabang",
+          "lat": -6.3,
+          "lng": 107.0,
+          "radius_m": 150.0
+        }
+      ],
+      "allowed_location_ids": [
+        1
+      ]
     }
   },
   "server_time": {

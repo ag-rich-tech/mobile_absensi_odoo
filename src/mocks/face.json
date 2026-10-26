@@ -1,4 +1,28 @@
 {
-  "enroll": {"status": "success", "message": "Wajah terdaftar di server.", "data": {"is_face_registered": true, "face_enrolled_at": "2026-10-26 04:00:00"}},
-  "status": {"status": "success", "message": "OK", "data": {"is_face_registered": true, "face_enrolled_at": "2026-10-26 04:00:00"}}
+  "enroll": {
+    "status": "success",
+    "message": "Wajah terdaftar di server.",
+    "data": {
+      "is_face_registered": true,
+      "face_enrolled_at": "2026-10-26 04:00:00",
+      "face_code": "FACE-K7M2QX9P"
+    }
+  },
+  "status": {
+    "status": "success",
+    "message": "OK",
+    "data": {
+      "is_face_registered": true,
+      "face_enrolled_at": "2026-10-26 04:00:00",
+      "face_code": "FACE-K7M2QX9P"
+    }
+  },
+  "unregister": {
+    "status": "success",
+    "message": "Pendaftaran wajah dihapus.",
+    "data": {
+      "is_face_registered": false,
+      "face_code": ""
+    }
+  }
 }

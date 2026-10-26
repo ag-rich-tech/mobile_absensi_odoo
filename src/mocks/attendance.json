@@ -1,8 +1,90 @@
 {
-  "status": {"status": "success", "message": "OK", "data": {"checked_in": true, "open_attendance": {"id": 12, "check_in": "2026-10-26 01:00:00", "check_out": null, "worked_hours": 0.0, "distance_in_m": 0, "distance_out_m": 0, "mock_in": false, "mock_out": false}}},
-  "clock_in": {"status": "success", "message": "Clock-in tercatat.", "data": {"attendance": {"id": 12, "check_in": "2026-10-26 01:00:00", "check_out": null, "worked_hours": 0.0, "distance_in_m": 12.4, "distance_out_m": 0, "mock_in": false, "mock_out": false}}},
-  "clock_out": {"status": "success", "message": "Clock-out tercatat.", "data": {"attendance": {"id": 12, "check_in": "2026-10-26 01:00:00", "check_out": "2026-10-26 10:00:00", "worked_hours": 9.0, "distance_in_m": 12.4, "distance_out_m": 8.1, "mock_in": false, "mock_out": false}}},
-  "history": {"status": "success", "message": "OK", "data": {"items": [{"id": 12, "check_in": "2026-10-26 01:00:00", "check_out": "2026-10-26 10:00:00", "worked_hours": 9.0, "distance_in_m": 0, "distance_out_m": 0, "mock_in": false, "mock_out": false}]}},
-  "break": {"status": "success", "message": "Waktu istirahat berhasil dicatat.", "data": {}},
-  "tracking": {"status": "success", "message": "OK", "data": {"accepted": true}}
+  "status": {
+    "status": "success",
+    "message": "OK",
+    "data": {
+      "checked_in": true,
+      "open_attendance": {
+        "id": 12,
+        "check_in": "2026-10-26 01:00:00",
+        "check_out": null,
+        "worked_hours": 0.0,
+        "distance_in_m": 0,
+        "distance_out_m": 0,
+        "mock_in": false,
+        "mock_out": false
+      }
+    }
+  },
+  "clock_in": {
+    "status": "success",
+    "message": "Clock-in tercatat.",
+    "data": {
+      "attendance": {
+        "id": 12,
+        "check_in": "2026-10-26 01:00:00",
+        "check_out": null,
+        "worked_hours": 0.0,
+        "distance_in_m": 12.4,
+        "distance_out_m": 0,
+        "mock_in": false,
+        "mock_out": false,
+        "location": {
+          "id": 1,
+          "name": "Kantor Pusat"
+        }
+      }
+    }
+  },
+  "clock_out": {
+    "status": "success",
+    "message": "Clock-out tercatat.",
+    "data": {
+      "attendance": {
+        "id": 12,
+        "check_in": "2026-10-26 01:00:00",
+        "check_out": "2026-10-26 10:00:00",
+        "worked_hours": 9.0,
+        "distance_in_m": 12.4,
+        "distance_out_m": 8.1,
+        "mock_in": false,
+        "mock_out": false
+      }
+    }
+  },
+  "history": {
+    "status": "success",
+    "message": "OK",
+    "data": {
+      "items": [
+        {
+          "id": 12,
+          "check_in": "2026-10-26 01:00:00",
+          "check_out": "2026-10-26 10:00:00",
+          "worked_hours": 9.0,
+          "distance_in_m": 0,
+          "distance_out_m": 0,
+          "mock_in": false,
+          "mock_out": false
+        }
+      ]
+    }
+  },
+  "break": {
+    "status": "success",
+    "message": "Waktu istirahat berhasil dicatat.",
+    "data": {}
+  },
+  "tracking": {
+    "status": "success",
+    "message": "OK",
+    "data": {
+      "accepted": true
+    }
+  },
+  "clock_in_out_of_radius": {
+    "status": "error",
+    "code": "OUT_OF_RADIUS",
+    "message": "Anda di luar radius lokasi yang diizinkan. Lokasi terdekat: Kantor Pusat (jarak 24500 m, radius 100 m). Clock-in ditolak."
+  }
 }

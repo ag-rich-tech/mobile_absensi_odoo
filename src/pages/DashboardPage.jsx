@@ -180,6 +180,8 @@ export default function DashboardPage({ user: initialUser, onLogout, onStartAtte
   const [dashboardData, setDashboardData] = useState(null);
   const [userLocation, setUserLocation] = useState(null);
   const [distanceToOffice, setDistanceToOffice] = useState(null);
+  // Lokasi terdekat dari daftar yang diizinkan (multi-lokasi 18.0.1.2.0).
+  const [nearestOffice, setNearestOffice] = useState(null);
   const [riwayatBulan, setRiwayatBulan] = useState([]);
   const [isLoadingRiwayat, setIsLoadingRiwayat] = useState(false);
   const [pendingApprovalCount, setPendingApprovalCount] = useState(0);
@@ -318,11 +320,25 @@ export default function DashboardPage({ user: initialUser, onLogout, onStartAtte
     }
   }, [activeNav]);
 
-  // 2. Deteksi GPS pengguna dan hitung jarak ke kantor
+  // 2. Deteksi GPS pengguna dan hitung jarak ke lokasi TERDEKAT dari
+  // daftar yang diizinkan (multi-lokasi 18.0.1.2.0 — bukan satu radius
+  // global). Geofence + nama kantor memakai lokasi terdekat itu.
   useEffect(() => {
-    if (!dashboardData?.lokasi_kantor) return;
+    const candidates = (dashboardData?.semua_lokasi?.length
+      ? dashboardData.semua_lokasi
+      : (dashboardData?.lokasi_kantor ? [dashboardData.lokasi_kantor] : []));
+    if (!candidates.length) return;
 
-    const office = dashboardData.lokasi_kantor;
+    const haversine = (lat, lon, office) => {
+      const R = 6371000;
+      const dLat = (office.latitude - lat) * (Math.PI / 180);
+      const dLon = (office.longitude - lon) * (Math.PI / 180);
+      const a =
+        Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+        Math.cos(lat * (Math.PI / 180)) * Math.cos(office.latitude * (Math.PI / 180)) *
+        Math.sin(dLon / 2) * Math.sin(dLon / 2);
+      return Math.round(R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a)));
+    };
 
     if ('geolocation' in navigator) {
       navigator.geolocation.getCurrentPosition(
@@ -331,29 +347,30 @@ export default function DashboardPage({ user: initialUser, onLogout, onStartAtte
           const lon = pos.coords.longitude;
           setUserLocation({ lat, lon });
 
-          // Hitung jarak Haversine sederhana ke kantor
-          const R = 6371000;
-          const dLat = (office.latitude - lat) * (Math.PI / 180);
-          const dLon = (office.longitude - lon) * (Math.PI / 180);
-          const a =
-            Math.sin(dLat / 2) * Math.sin(dLat / 2) +
-            Math.cos(lat * (Math.PI / 180)) * Math.cos(office.latitude * (Math.PI / 180)) *
-            Math.sin(dLon / 2) * Math.sin(dLon / 2);
-          const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
-          const d = Math.round(R * c);
-
-          setDistanceToOffice(d);
+          let nearest = null;
+          let nearestDist = null;
+          for (const office of candidates) {
+            const d = haversine(lat, lon, office);
+            if (nearestDist === null || d < nearestDist) {
+              nearest = office;
+              nearestDist = d;
+            }
+          }
+          setNearestOffice(nearest);
+          setDistanceToOffice(nearestDist);
         },
         (err) => {
           console.warn('GPS location fallback to office simulator:', err.message);
+          setNearestOffice(candidates[0]);
           setDistanceToOffice(14); // Fallback jarak dekat untuk pengetesan desktop
         },
         { enableHighAccuracy: true, timeout: 6000 }
       );
     } else {
+      setNearestOffice(candidates[0]);
       setDistanceToOffice(14);
     }
-  }, [dashboardData?.lokasi_kantor]);
+  }, [dashboardData?.semua_lokasi, dashboardData?.lokasi_kantor]);
 
   // 3. Muat Riwayat saat tab History aktif
   useEffect(() => {
@@ -417,7 +434,9 @@ export default function DashboardPage({ user: initialUser, onLogout, onStartAtte
 
   const pegawai = dashboardData?.pegawai || initialUser;
   const jamKerja = dashboardData?.jam_kerja_hari_ini;
-  const lokasi = dashboardData?.lokasi_kantor;
+  // Lokasi yang ditampilkan + dipakai modal absensi = lokasi terdekat
+  // (bila GPS sudah jalan), fallback lokasi pertama dari server.
+  const lokasi = nearestOffice || dashboardData?.lokasi_kantor;
   const absensiHariIni = dashboardData?.absensi_hari_ini;
   const stats = dashboardData?.statistik_bulan_ini;
   const riwayatList = dashboardData?.riwayat_terakhir || [];
@@ -920,7 +939,7 @@ export default function DashboardPage({ user: initialUser, onLogout, onStartAtte
                   </div>
                   <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
                     <MapPin size={14} style={{ opacity: 0.8 }} />
-                    <span>{lokasi?.nama_lokasi?.slice(0, 16) || 'Kantor Pusat'}</span>
+                    <span>{(lokasi?.nama_lokasi || lokasi?.nama || 'Kantor Pusat').slice(0, 16)}</span>
                   </div>
                 </div>
               </div>

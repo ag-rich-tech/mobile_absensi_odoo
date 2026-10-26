@@ -307,12 +307,61 @@ function mapPegawai(user, employeeBrief, profile) {
     // status wajah biometrik (dari server)
     is_face_registered: !!emp.is_face_registered,
     face_enrolled_at: emp.face_enrolled_at || null,
+    // kode pendek pendaftaran wajah (barcode di form employee Odoo)
+    face_code: emp.face_code || '',
     // policy lokasi (dari server, ag_rest_api): 'wfo' | 'anywhere'
     location_policy: emp.location_policy || 'wfo',
+    // lokasi yang diizinkan (wfo): kosong = semua lokasi perusahaan
+    allowed_location_ids: emp.allowed_location_ids || [],
+    allowed_locations: emp.allowed_locations || [],
     // mentah (bila UI butuh)
     _odoo_user: user || null,
     _odoo_employee: emp || null,
   };
+}
+
+// ---------------------------------------------------------------------------
+// Mapper lokasi: config server (multi-lokasi, 18.0.1.2.0) -> bentuk UI.
+// - locations: [{id, name, lat, lng, radius_m}] dari config/public.
+// - policy wfo + allowed_location_ids terisi -> hanya lokasi itu.
+// - policy wfo + allowed kosong -> SEMUA lokasi perusahaan.
+// - policy anywhere -> semua lokasi (tapi ijinkan_wfa = true).
+// - fallback titik legacy tunggal (office_lat/lng) -> satu lokasi 'Kantor'.
+// Objek lokasi membawa kunci ganda (nama/nama_lokasi, radius_m/
+// radius_meter) karena halaman lama membaca kunci yang berbeda.
+// ---------------------------------------------------------------------------
+function mapLocations(cfgData, employee) {
+  const raw = Array.isArray(cfgData.locations) ? cfgData.locations : [];
+  const policy = (employee && employee.location_policy)
+    || cfgData.location_policy || 'wfo';
+  const allowedIds = (employee && employee.allowed_location_ids)
+    || cfgData.allowed_location_ids || [];
+  let list = raw;
+  if (policy === 'wfo' && allowedIds.length) {
+    const picked = raw.filter((l) => allowedIds.includes(l.id));
+    if (picked.length) list = picked;
+  }
+  const mapped = list.map((l) => ({
+    id: l.id ?? null,
+    latitude: l.lat,
+    longitude: l.lng,
+    radius_m: l.radius_m || 100,
+    radius_meter: l.radius_m || 100,
+    nama: l.name || 'Kantor',
+    nama_lokasi: l.name || 'Kantor',
+  }));
+  if (!mapped.length && (cfgData.office_lat || cfgData.office_lng)) {
+    mapped.push({
+      id: null,
+      latitude: cfgData.office_lat,
+      longitude: cfgData.office_lng,
+      radius_m: cfgData.office_radius_m || 100,
+      radius_meter: cfgData.office_radius_m || 100,
+      nama: 'Kantor',
+      nama_lokasi: 'Kantor',
+    });
+  }
+  return { list: mapped, policy };
 }
 
 function mapAttendanceItem(att) {
@@ -647,14 +696,8 @@ export const api = {
       const jam_kerja_hari_ini = shifts.length ? mapShift(shifts[0], true) : null;
 
       const cfgData = d.config || {};
-      const lokasi_kantor = (cfgData.office_lat || cfgData.office_lng)
-        ? {
-            latitude: cfgData.office_lat,
-            longitude: cfgData.office_lng,
-            radius_m: cfgData.office_radius_m || 100,
-            nama: 'Kantor',
-          }
-        : null;
+      const { list: semua_lokasi, policy } = mapLocations(cfgData, d.employee);
+      const lokasi_kantor = semua_lokasi.length ? semua_lokasi[0] : null;
 
       const riwayat_terakhir = (d.history || []).map(mapAttendanceItem);
 
@@ -662,6 +705,9 @@ export const api = {
         success: true,
         pegawai,
         lokasi_kantor,
+        semua_lokasi,
+        location_policy: policy,
+        ijinkan_wfa: policy === 'anywhere',
         jam_kerja_hari_ini,
         absensi_hari_ini,
         riwayat_terakhir,
@@ -706,14 +752,9 @@ export const api = {
     const jam_kerja_hari_ini = shifts.length ? mapShift(shifts[0], true) : null;
 
     const cfgData = (cfg && cfg.data) || {};
-    const lokasi_kantor = (cfgData.office_lat || cfgData.office_lng)
-      ? {
-          latitude: cfgData.office_lat,
-          longitude: cfgData.office_lng,
-          radius_m: cfgData.office_radius_m || 100,
-          nama: 'Kantor',
-        }
-      : null;
+    const { list: semua_lokasi, policy } = mapLocations(
+      cfgData, prof && prof.data && prof.data.employee);
+    const lokasi_kantor = semua_lokasi.length ? semua_lokasi[0] : null;
 
     // riwayat 7 hari terakhir untuk kartu dashboard
     let riwayat_terakhir = [];
@@ -732,6 +773,9 @@ export const api = {
       success: true,
       pegawai,
       lokasi_kantor,
+      semua_lokasi,
+      location_policy: policy,
+      ijinkan_wfa: policy === 'anywhere',
       jam_kerja_hari_ini,
       absensi_hari_ini,
       riwayat_terakhir,
@@ -744,13 +788,14 @@ export const api = {
   async getLokasiPresensi() {
     const cfg = await odooCall('/config/public', {}, { auth: false });
     const d = cfg.data || {};
+    // config/public sudah memuat policy + allowed ids user sesi.
+    const { list: semua_lokasi, policy } = mapLocations(d, null);
     return {
       success: true,
-      lokasi_kantor: (d.office_lat || d.office_lng)
-        ? { latitude: d.office_lat, longitude: d.office_lng, radius_m: d.office_radius_m || 100, nama: 'Kantor' }
-        : null,
-      semua_lokasi: [],
-      ijinkan_wfa: false,
+      lokasi_kantor: semua_lokasi.length ? semua_lokasi[0] : null,
+      semua_lokasi,
+      location_policy: policy,
+      ijinkan_wfa: policy === 'anywhere',
     };
   },
 
