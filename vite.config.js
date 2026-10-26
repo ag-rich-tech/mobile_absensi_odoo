@@ -1,28 +1,38 @@
 import react from '@vitejs/plugin-react'
-import { defineConfig } from 'vite'
+import { defineConfig, loadEnv } from 'vite'
+
+// Proxy dev dibaca dari .env (SATU sumber kebenaran, sama seperti src/config.js):
+//   VITE_ODOO_URL -> target proxy (default https://odoo18.hiddenlab.me)
+//   VITE_API_BASE -> prefix API yang di-proxy (default /ag_rest_api/v1)
+// Proxy membuat dev server satu origin dengan API sehingga cookie sesi Odoo
+// ikut terkirim. Prefix lama /api, /storage, dan /jsonrpc (Odoo 14) DIHAPUS:
+// aplikasi branch odoo 18.0 tidak lagi memakainya.
+// '/web' ikut di-proxy agar foto profil /web/image/... bisa dimuat dengan
+// cookie sesi yang sama saat dev.
 
 // https://vite.dev/config/
-export default defineConfig({
-  plugins: [react()],
-  server: {
-    host: true,
-    port: 5173,
-    proxy: {
-      '/api': {
-        target: 'http://127.0.0.1:8181',
-        changeOrigin: true,
-        secure: false,
-      },
-      '/storage': {
-        target: 'http://127.0.0.1:8181',
-        changeOrigin: true,
-        secure: false,
-      },
-      '/jsonrpc': {
-        target: 'https://odoo14.hiddenlab.me',
-        changeOrigin: true,
-        secure: false,
+export default defineConfig(({ mode }) => {
+  const env = loadEnv(mode, process.cwd(), '')
+  const odooUrl = env.VITE_ODOO_URL || 'https://odoo18.hiddenlab.me'
+  const apiBase = env.VITE_API_BASE || '/ag_rest_api/v1'
+
+  return {
+    plugins: [react()],
+    server: {
+      host: true,
+      port: 5173,
+      proxy: {
+        [apiBase]: {
+          target: odooUrl,
+          changeOrigin: true,
+          secure: false,
+        },
+        '/web': {
+          target: odooUrl,
+          changeOrigin: true,
+          secure: false,
+        },
       },
     },
-  },
+  }
 })

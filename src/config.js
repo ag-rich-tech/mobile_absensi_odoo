@@ -1,0 +1,59 @@
+/**
+ * Konfigurasi terpusat aplikasi "Ali Attendance" (branch odoo 18.0).
+ *
+ * SEMUA target server dibaca dari file .env — tidak ada lagi URL Odoo
+ * yang tersebar di kode (dulu: hardcoded di api.js + vite.config.js).
+ *
+ * Kunci .env (lihat .env.example):
+ *   VITE_ODOO_URL  - base URL Odoo 18 (default https://odoo18.hiddenlab.me)
+ *   VITE_ODOO_DB   - nama database Odoo (default tester)
+ *   VITE_API_BASE  - prefix API modul ag_rest_api (default /ag_rest_api/v1)
+ *   VITE_USE_MOCK  - 'true' = pakai mock JSON lokal tanpa network
+ *
+ * Perilaku dev vs produksi:
+ *   - `npm run dev` (import.meta.env.DEV): fetch memakai path RELATIF
+ *     sehingga vite proxy (vite.config.js) meneruskannya ke VITE_ODOO_URL
+ *     dalam satu origin — cookie sesi Odoo ikut terkirim.
+ *   - build produksi / APK: fetch memakai URL ABSOLUT VITE_ODOO_URL.
+ *     Catatan: cookie sesi Odoo tidak punya atribut SameSite sehingga
+ *     browser menganggapnya Lax — fetch lintas origin dari WebView
+ *     Capacitor kemungkinan tidak membawa cookie. Untuk APK produksi,
+ *     sajikan API lewat origin yang sama (reverse proxy satu origin).
+ *     Jangan pernah mematikan auth untuk mengatasi ini.
+ */
+
+const env = import.meta.env || {};
+
+export const ODOO_URL = (env.VITE_ODOO_URL || 'https://odoo18.hiddenlab.me').replace(/\/$/, '');
+export const ODOO_DB = env.VITE_ODOO_DB || 'tester';
+export const API_BASE = env.VITE_API_BASE || '/ag_rest_api/v1';
+export const USE_MOCK = String(env.VITE_USE_MOCK || '').toLowerCase() === 'true';
+export const IS_DEV = !!env.DEV;
+
+// Di dev, path relatif -> vite proxy (satu origin, cookie ikut).
+// Di produksi/APK, path absolut ke VITE_ODOO_URL.
+const API_ROOT = IS_DEV ? '' : ODOO_URL;
+
+/** URL lengkap untuk satu endpoint ag_rest_api, mis. apiUrl('/attendance/status'). */
+export function apiUrl(path) {
+  return `${API_ROOT}${API_BASE}${path}`;
+}
+
+/** URL lengkap untuk route bawaan Odoo, mis. sessionUrl('/web/session/authenticate'). */
+export function sessionUrl(path) {
+  return `${API_ROOT}${path}`;
+}
+
+/**
+ * URL foto profil dari path /web/image/... yang dikirim server.
+ * Di dev: path relatif (ikut proxy /web, cookie sesi terkirim).
+ * Di produksi: absolut ke VITE_ODOO_URL.
+ */
+export function photoUrl(path) {
+  if (!path) return null;
+  if (path.startsWith('data:') || path.startsWith('http')) return path;
+  return IS_DEV ? path : `${ODOO_URL}${path}`;
+}
+
+// Kompatibilitas: nama lama yang dipakai kode lama.
+export const ODOO_BASE = ODOO_URL;

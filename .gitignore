@@ -22,3 +22,7 @@ dist-ssr
 *.njsproj
 *.sln
 *.sw?
+
+# Env (branch odoo 18.0): .env asli TIDAK PERNAH di-commit.
+.env*
+!.env.example

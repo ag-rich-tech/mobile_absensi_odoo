@@ -1,0 +1,12 @@
+{
+  "denda": {"status": "success", "message": "OK", "data": {"aturan_denda_masuk": [{"id": 1, "rentang": "1 - 15 Menit", "keterangan": "Toleransi keterlambatan ringan", "nominal_formatted": "Rp 10.000"}], "aturan_denda_pulang": []}},
+  "issue_list": {"status": "success", "message": "OK", "data": {"items": [{"id": 1, "nomor_tiket": "TKT-202610-0001", "kategori_masalah": "sistem_error", "label_kategori": "Sistem / Aplikasi Error", "judul": "Uji tiket", "tanggal_kejadian": "2026-10-26", "jam_kejadian": "08:05", "deskripsi": "Tes API", "foto_bukti_url": null, "status": "menunggu", "tindakan_admin": "", "tindakan_admin_label": "", "catatan_admin": ""}]}},
+  "issue_detail": {"status": "success", "message": "OK", "data": {"issue": {"id": 1, "nomor_tiket": "TKT-202610-0001", "kategori_masalah": "sistem_error", "label_kategori": "Sistem / Aplikasi Error", "judul": "Uji tiket", "tanggal_kejadian": "2026-10-26", "jam_kejadian": "08:05", "deskripsi": "Tes API", "foto_bukti_url": null, "status": "menunggu", "tindakan_admin": "", "tindakan_admin_label": "", "catatan_admin": ""}}},
+  "issue_submit": {"status": "success", "message": "Laporan kendala absensi berhasil dikirim.", "data": {"id": 1, "nomor_tiket": "TKT-202610-0001"}},
+  "task_list": {"status": "success", "message": "OK", "data": {"items": [{"id": 1, "judul": "Tugas Uji", "deskripsi": "Tugas uji", "tenggat_waktu": "2026-10-31", "status": "selesai", "prioritas": "normal", "pemberi_tugas": "Manager", "progres": 100}], "statistik": {"total_semua": 1, "total_berjalan": 0, "total_selesai": 1}}},
+  "task_detail": {"status": "success", "message": "OK", "data": {"task": {"id": 1, "judul": "Tugas Uji", "deskripsi": "Tugas uji", "tenggat_waktu": "2026-10-31", "status": "selesai", "prioritas": "normal", "pemberi_tugas": "Manager", "progres": 100}}},
+  "task_update": {"status": "success", "message": "Status penugasan berhasil diperbarui.", "data": {}},
+  "kpi": {"status": "success", "message": "OK", "data": {"nilai_akhir": 95.0, "grade": "A", "status": "Sangat Baik", "periode": "October 2026", "pencapaian": [{"indikator": "Kehadiran bulan berjalan", "target": "22 hari kerja", "capaian": "21 hari", "skor": 95.0}]}},
+  "change_password": {"status": "success", "message": "Kata sandi berhasil diubah.", "data": {}},
+  "logout": {"status": "success", "message": "Logout berhasil.", "data": {}}
+}

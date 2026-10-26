@@ -1,0 +1,5 @@
+{
+  "today": {"status": "success", "message": "OK", "data": {"items": [{"tanggal": "2026-10-26", "hari": "Monday", "nama_shift": "Shift", "jam_masuk": "08:00", "jam_pulang": "17:00", "is_hari_libur": false}]}},
+  "upcoming": {"status": "success", "message": "OK", "data": {"items": [{"tanggal": "2026-10-27", "hari": "Tuesday", "nama_shift": "Shift", "jam_masuk": "08:00", "jam_pulang": "17:00", "is_hari_libur": false}]}},
+  "calendar": {"status": "success", "message": "OK", "data": {"hari_kerja": [0, 1, 2, 3, 4], "hari_libur": [5, 6], "daftar_shift": [{"name": "Shift", "dayofweek": 0, "hour_from": "08:00", "hour_to": "17:00", "day_period": "morning"}]}}
+}

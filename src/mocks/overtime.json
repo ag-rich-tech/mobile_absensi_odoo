@@ -1,0 +1,4 @@
+{
+  "history": {"status": "success", "message": "OK", "data": {"items": [{"id": 1, "date": "2026-10-26", "name": "Lembur uji", "proposed_hours": 2.0, "approved_hours": 0.0, "state": "confirm", "state_label": "Menunggu"}]}},
+  "request": {"status": "success", "message": "Pengajuan lembur berhasil dikirim.", "data": {"id": 1}}
+}

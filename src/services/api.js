@@ -1,11 +1,17 @@
 /**
- * API Client Service untuk Mobile Absensi — ADAPTER ODOO
- * Terhubung ke modul `t_hris_mobile_api_muse` di Odoo 14:
- *   https://odoo14.hiddenlab.me/api/hris/v1/*
+ * API Client Service untuk Mobile Absensi — ADAPTER ODOO 18
+ * Terhubung ke modul BARU `ag_rest_api` di Odoo 18:
+ *   {VITE_ODOO_URL}/ag_rest_api/v1/*
  *
- * Pola Odoo: JSON-RPC envelope {"jsonrpc":"2.0","method":"call","params":{...}}
- * dengan "db" WAJIB di setiap params + header Authorization: Bearer <token>.
- * Response: {"jsonrpc":"2.0","id":..,"result":{"status":"success"|"error",...}}
+ * Pola baru: POST JSON biasa (body = params), response
+ * {"status":"success"|"error","message":...,"data":...}.
+ * Auth: session Odoo — login via /web/session/authenticate bawaan Odoo,
+ * lalu semua endpoint memakai cookie sesi itu (credentials: 'include').
+ * TIDAK ADA lagi Bearer token, password RPC di localStorage, maupun
+ * direct /jsonrpc execute_kw (semua sudah dihapus di branch ini).
+ *
+ * Semua target server dibaca dari .env lewat src/config.js.
+ * Mode mock: VITE_USE_MOCK=true -> mock JSON lokal (src/mocks/).
  *
  * Nama fungsi & bentuk response disamakan dengan kontrak UI yang sudah ada
  * (res.success, res.pegawai, res.riwayat, dst) sehingga TIDAK ADA komponen
@@ -16,10 +22,12 @@
 // Konfigurasi — sesuaikan bila server/database berubah
 // ---------------------------------------------------------------------------
 import * as adapters from './apiAdapters.js';
+import { ODOO_URL, ODOO_DB, API_BASE, USE_MOCK, apiUrl, sessionUrl, photoUrl } from '../config.js';
+import { getMockResponse, MOCK_USER, MOCK_EMPLOYEE } from '../mocks.js';
 
-export const ODOO_BASE = 'https://odoo14.hiddenlab.me';
-export const ODOO_DB = 'HLB';
-const API_BASE = `${ODOO_BASE}/api/hris/v1`;
+// Kompatibilitas: kode lama mengimpor ODOO_BASE/ODOO_DB dari modul ini.
+export const ODOO_BASE = ODOO_URL;
+export { ODOO_DB, ODOO_URL, API_BASE };
 
 // ---------------------------------------------------------------------------
 // Storage (localStorage; key khusus Odoo agar tidak bentrok sesi lama)
@@ -27,9 +35,6 @@ const API_BASE = `${ODOO_BASE}/api/hris/v1`;
 const LS_TOKEN = 'mobile_absensi_odoo_token';
 const LS_USER = 'mobile_absensi_odoo_user';
 const LS_DEVICE = 'mobile_absensi_odoo_device_id';
-const LS_RPC_PASS = 'mobile_absensi_odoo_rpc_pass';
-const LS_RPC_UID = 'mobile_absensi_odoo_rpc_uid';
-const LS_TUKAR_SHIFT = 'mobile_absensi_tukar_shift';
 
 export function getToken() {
   return localStorage.getItem(LS_TOKEN) || '';
@@ -38,41 +43,6 @@ export function getToken() {
 export function setToken(token) {
   if (token) localStorage.setItem(LS_TOKEN, token);
   else localStorage.removeItem(LS_TOKEN);
-}
-
-export function getRpcPass() {
-  return localStorage.getItem(LS_RPC_PASS) || '';
-}
-
-export function setRpcPass(pass) {
-  if (pass) localStorage.setItem(LS_RPC_PASS, pass);
-  else localStorage.removeItem(LS_RPC_PASS);
-}
-
-export function getRpcUid() {
-  const uid = localStorage.getItem(LS_RPC_UID);
-  if (uid) return Number(uid);
-  const u = getStoredUser();
-  return u?._odoo_user?.id || u?.id || 2;
-}
-
-export function setRpcUid(uid) {
-  if (uid) localStorage.setItem(LS_RPC_UID, String(uid));
-  else localStorage.removeItem(LS_RPC_UID);
-}
-
-export function getTukarShiftStore() {
-  try {
-    const raw = localStorage.getItem(LS_TUKAR_SHIFT);
-    return raw ? JSON.parse(raw) : [];
-  } catch {
-    return [];
-  }
-}
-
-export function setTukarShiftStore(items) {
-  if (items) localStorage.setItem(LS_TUKAR_SHIFT, JSON.stringify(items));
-  else localStorage.removeItem(LS_TUKAR_SHIFT);
 }
 
 export function getStoredUser() {
@@ -92,8 +62,6 @@ export function setStoredUser(user) {
 export function clearAuth() {
   localStorage.removeItem(LS_TOKEN);
   localStorage.removeItem(LS_USER);
-  localStorage.removeItem(LS_RPC_PASS);
-  localStorage.removeItem(LS_RPC_UID);
 }
 
 // Kompatibilitas: dulu ada API key Laravel — tidak dipakai di Odoo.
@@ -217,7 +185,7 @@ let featureFlagsCache = null;
 export async function getFeatureFlags() {
   if (featureFlagsCache) return featureFlagsCache;
   try {
-    const cfg = await odooCall('/config/public', {}, { auth: false });
+    const cfg = await odooCall('/config/public');
     featureFlagsCache = (cfg.data && cfg.data.features) || {};
   } catch {
     featureFlagsCache = {};
@@ -232,37 +200,36 @@ export function clearFeatureFlagsCache() {
 // ---------------------------------------------------------------------------
 // JSON-RPC caller Odoo
 // ---------------------------------------------------------------------------
-export async function odooCall(path, params = {}, { auth = true, timeoutMs = 30000 } = {}) {
-  const token = getToken();
-  const headers = {
-    'Content-Type': 'application/json',
-    'Accept': 'application/json',
-  };
-  if (auth && token) {
-    headers['Authorization'] = `Bearer ${token}`;
+export async function odooCall(path, params = {}, { timeoutMs = 30000 } = {}) {
+  // Mode mock: kembalikan mock JSON lokal tanpa network.
+  if (USE_MOCK) {
+    const mock = getMockResponse(path);
+    if (mock) return mock;
+    const err = new Error(`Mock untuk ${path} belum tersedia.`);
+    err.code = 'MOCK_MISSING';
+    throw err;
   }
-  const body = {
-    jsonrpc: '2.0',
-    method: 'call',
-    params: { db: ODOO_DB, ...params },
-    id: Date.now(),
-  };
 
   let json;
   try {
-    // Timeout agar tidak hang selamanya di koneksi mati.
-    // Untuk upload foto (enroll), pakai timeout pendek agar cepat fallback
-    // ke mode tanpa foto bila koneksi lambat (mis. masalah fallback IPv6).
     const ctrl = new AbortController();
     const timer = setTimeout(() => ctrl.abort(), timeoutMs);
     try {
-      const res = await fetch(`${API_BASE}${path}`, {
+      const res = await fetch(apiUrl(path), {
         method: 'POST',
-        headers,
-        body: JSON.stringify(body),
+        headers: {
+          'Content-Type': 'application/json',
+          'Accept': 'application/json',
+        },
+        credentials: 'include',
+        body: JSON.stringify(params || {}),
         signal: ctrl.signal,
       });
       json = await res.json().catch(() => ({}));
+      // Server menjawab JSON error juga untuk status non-2xx (mis. 401).
+      if (!res.ok && json.status !== 'error') {
+        json = { status: 'error', code: res.status === 401 ? 'NO_SESSION' : 'ERROR', message: `Server menjawab HTTP ${res.status}.` };
+      }
     } finally {
       clearTimeout(timer);
     }
@@ -278,11 +245,11 @@ export async function odooCall(path, params = {}, { auth = true, timeoutMs = 300
     throw e;
   }
 
-  const result = json.result || {};
+  const result = json || {};
   if (result.status === 'error') {
     const err = new Error(result.message || 'Terjadi kesalahan pada server Odoo.');
     err.code = result.code || 'ERROR';
-    if (['NO_TOKEN', 'INVALID_TOKEN', 'TOKEN_EXPIRED'].includes(err.code)) {
+    if (err.code === 'NO_SESSION') {
       clearAuth();
       err.status = 401;
     }
@@ -291,107 +258,9 @@ export async function odooCall(path, params = {}, { auth = true, timeoutMs = 300
   return result; // {status:'success', message, data}
 }
 
-// ---------------------------------------------------------------------------
-// Direct JSON-RPC Object Caller (/jsonrpc execute_kw)
-// ---------------------------------------------------------------------------
-export async function odooRpc(service, method, args = [], kwargs = {}, timeoutMs = 25000) {
-  const body = {
-    jsonrpc: '2.0',
-    method: 'call',
-    params: {
-      service,
-      method,
-      args,
-    },
-    id: Date.now(),
-  };
-
-  const ctrl = new AbortController();
-  const timer = setTimeout(() => ctrl.abort(), timeoutMs);
-  let json;
-  try {
-    const res = await fetch(`${ODOO_BASE}/jsonrpc`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Accept': 'application/json',
-      },
-      body: JSON.stringify(body),
-      signal: ctrl.signal,
-    });
-    json = await res.json().catch(() => ({}));
-  } finally {
-    clearTimeout(timer);
-  }
-
-  if (json && json.error) {
-    const msg = json.error.data?.message || json.error.message || 'Odoo RPC Error';
-    const err = new Error(msg);
-    err.data = json.error;
-    throw err;
-  }
-  return json?.result;
-}
-
-export async function odooExecuteKw(model, method, args = [], kwargs = {}) {
-  const uid = getRpcUid();
-  const pass = getRpcPass();
-  return await odooRpc('object', 'execute_kw', [
-    ODOO_DB,
-    uid,
-    pass,
-    model,
-    method,
-    args,
-    kwargs,
-  ]);
-}
-
-function fileToBase64(file) {
-  return new Promise((resolve, reject) => {
-    if (!file) return resolve(null);
-    const reader = new FileReader();
-    reader.onload = () => resolve(stripDataUrl(reader.result));
-    reader.onerror = (e) => reject(e);
-    reader.readAsDataURL(file);
-  });
-}
-
-function generate14DaysSchedule(baseId = 100) {
-  const schedule = [];
-  const now = getServerDate();
-  for (let i = 0; i < 14; i++) {
-    const d = new Date(now.getTime() + i * 86400000);
-    const dayOfWeek = d.getDay();
-    const isOff = dayOfWeek === 0 || dayOfWeek === 6;
-    schedule.push({
-      id: baseId + i + 1,
-      tanggal: fmtYMD(d),
-      tanggal_formatted: fmtTanggalId(d),
-      hari: NAMA_HARI[dayOfWeek],
-      nama_shift: isOff ? 'Libur (Day Off)' : 'Shift Regular',
-      jam_masuk: isOff ? '-' : '08:00',
-      jam_pulang: isOff ? '-' : '17:00',
-      is_hari_libur: isOff,
-    });
-  }
-  return schedule;
-}
-
-const KODE_STYLE = {
-  H: { warna_bg: '#ecfdf5', warna_border: '#a7f3d0', warna_teks: '#047857', label: 'Hadir Tepat Waktu' },
-  'H-TP': { warna_bg: '#fffbeb', warna_border: '#fde68a', warna_teks: '#b45309', label: 'Hadir Belum Pulang' },
-  T: { warna_bg: '#fff7ed', warna_border: '#fed7aa', warna_teks: '#c2410c', label: 'Terlambat' },
-  PA: { warna_bg: '#fef3c7', warna_border: '#fde68a', warna_teks: '#92400e', label: 'Pulang Awal' },
-  'T-PA': { warna_bg: '#ffedd5', warna_border: '#fdba74', warna_teks: '#9a3412', label: 'Terlambat & Pulang Awal' },
-  A: { warna_bg: '#fef2f2', warna_border: '#fecaca', warna_teks: '#b91c1c', label: 'Alpa / Tanpa Keterangan' },
-  I: { warna_bg: '#eff6ff', warna_border: '#bfdbfe', warna_teks: '#1d4ed8', label: 'Izin' },
-  S: { warna_bg: '#faf5ff', warna_border: '#e9d5ff', warna_teks: '#7e22ce', label: 'Sakit' },
-  C: { warna_bg: '#f0fdf4', warna_border: '#bbf7d0', warna_teks: '#15803d', label: 'Cuti Tahunan' },
-  D: { warna_bg: '#f0f9ff', warna_border: '#bae6fd', warna_teks: '#0369a1', label: 'Dinas Luar Kota' },
-  L: { warna_bg: '#f8fafc', warna_border: '#e2e8f0', warna_teks: '#64748b', label: 'Hari Libur' },
-  '-': { warna_bg: '#f8fafc', warna_border: '#e2e8f0', warna_teks: '#94a3b8', label: 'Mendatang' },
-};
+// Direct /jsonrpc execute_kw DIHAPUS di branch odoo 18.0: semua akses data
+// lewat endpoint ag_rest_api (server adalah sumber kebenaran, tanpa
+// kredensial tersimpan di perangkat). Fungsi ini sengaja tidak ada lagi.
 
 // ---------------------------------------------------------------------------
 // Mapper: Odoo -> bentuk yang diharapkan UI
@@ -418,7 +287,7 @@ function mapPegawai(user, employeeBrief, profile) {
     departemen: dept.name || '',
     divisi: dept.name || '',
     perusahaan: (emp.company && emp.company.name) || '',
-    foto_profil: emp.photo || null,
+    foto_profil: photoUrl(emp.photo),
     status_aktif: true,
     // profil lengkap (bila UI butuh)
     work_email: emp.work_email || '',
@@ -599,7 +468,7 @@ function mapSlipDetail(s) {
       : '',
     gaji_pokok: s.gross || 0,
     total_tunjangan: Math.max(0, (s.gross || 0) - 0),
-    total_potongan: (s.employee_deductions || 0) + (s.tax_withheld || 0),
+    total_potongan: potongan.reduce((a, l) => a + Math.abs(l.amount || 0), 0),
     gaji_bersih: s.net_pay || 0,
     total_kehadiran: null,
     total_jam_lembur: null,
@@ -628,6 +497,22 @@ function mapOvertime(ot) {
 }
 
 function mapShift(sh, isToday) {
+  // Bentuk baru ag_rest_api: {tanggal, hari, nama_shift, jam_masuk,
+  // jam_pulang, is_hari_libur} — jam sudah string 'HH:MM'.
+  if (sh && sh.jam_masuk !== undefined) {
+    const d = sh.tanggal ? new Date(`${sh.tanggal}T00:00:00`) : null;
+    return {
+      nama_shift: sh.nama_shift || '',
+      tanggal: sh.tanggal || null,
+      tanggal_formatted: fmtTanggalId(d),
+      hari: d ? NAMA_HARI[d.getDay()] : (sh.hari || ''),
+      jam_masuk: sh.jam_masuk,
+      jam_pulang: sh.jam_pulang,
+      is_today: !!isToday,
+      is_hari_libur: !!sh.is_hari_libur,
+      _raw: sh,
+    };
+  }
   const start = utcToWib(sh.start);
   const end = utcToWib(sh.end);
   const date = sh.date ? utcToWib(sh.date + ' 00:00:00') : start;
@@ -644,44 +529,75 @@ function mapShift(sh, isToday) {
   };
 }
 
-function notAvailable(fitur) {
-  return new Error(`Fitur "${fitur}" belum tersedia pada integrasi Odoo.`);
-}
-
 // ---------------------------------------------------------------------------
 // API
 // ---------------------------------------------------------------------------
 export const api = {
   // ---- Auth ----
   async login(credentials) {
-    const res = await odooCall('/auth/login', {
-      login: credentials.login,
-      password: credentials.password,
-      device_id: credentials.device_id || getOrCreateDeviceId(),
-      device_name: getDeviceModelName(),
-    }, { auth: false });
+    // Mode mock: tanpa network, user mock langsung disimpan.
+    if (USE_MOCK) {
+      const pegawai = mapPegawai(MOCK_USER, MOCK_EMPLOYEE, MOCK_EMPLOYEE);
+      setToken('mock');
+      setStoredUser(pegawai);
+      return { success: true, token: 'mock', pegawai, message: 'Login berhasil (mode mock).' };
+    }
 
-    const d = res.data || {};
-    if (d.token) setToken(d.token);
-    if (credentials.password) setRpcPass(credentials.password);
-    if (d.user && d.user.id) setRpcUid(d.user.id);
+    // 1) Session Odoo bawaan (JSON-RPC /web/session/authenticate).
+    //    Cookie sesi disimpan browser/WebView (credentials: 'include').
+    const authRes = await fetch(sessionUrl('/web/session/authenticate'), {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' },
+      credentials: 'include',
+      body: JSON.stringify({
+        jsonrpc: '2.0',
+        method: 'call',
+        params: { db: ODOO_DB, login: credentials.login, password: credentials.password },
+        id: Date.now(),
+      }),
+    });
+    const authJson = await authRes.json().catch(() => ({}));
+    if (authJson.error || !authJson.result || !authJson.result.uid) {
+      const msg = authJson.error && authJson.error.data
+        ? (authJson.error.data.message || 'Login gagal.')
+        : 'Username atau kata sandi salah.';
+      throw new Error(msg);
+    }
 
+    // 2) Profil dari ag_rest_api (sesi sudah aktif).
+    setToken('session');
     let pegawai = null;
     try {
       const prof = await odooCall('/employee/profile');
-      pegawai = mapPegawai(d.user, d.employee, prof.data && prof.data.employee);
+      pegawai = mapPegawai(authJson.result, null, prof.data && prof.data.employee);
     } catch {
-      pegawai = mapPegawai(d.user, d.employee, null);
+      try {
+        const me = await odooCall('/auth/me');
+        pegawai = mapPegawai(me.data && me.data.user, me.data && me.data.employee, null);
+      } catch {
+        pegawai = mapPegawai(authJson.result, null, null);
+      }
     }
     setStoredUser(pegawai);
-    return { success: true, token: d.token, pegawai, message: res.message || 'Login berhasil.' };
+    return { success: true, token: 'session', pegawai, message: 'Login berhasil.' };
   },
 
   async logout() {
     try {
       await odooCall('/auth/logout');
     } catch {
-      // token mungkin sudah tidak valid — tetap bersihkan sesi lokal
+      // sesi mungkin sudah tidak valid — tetap bersihkan sesi lokal
+    }
+    try {
+      // Hancurkan cookie sesi di server (endpoint bawaan Odoo).
+      await fetch(sessionUrl('/web/session/destroy'), {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        body: JSON.stringify({ jsonrpc: '2.0', method: 'call', params: {}, id: Date.now() }),
+      });
+    } catch {
+      // abaikan — sesi lokal tetap dibersihkan
     } finally {
       clearAuth();
     }
@@ -762,7 +678,7 @@ export const api = {
       safe(odooCall('/employee/profile')),
       safe(odooCall('/shift/today')),
       safe(odooCall('/server-time')),
-      safe(odooCall('/config/public', {}, { auth: false })),
+      safe(odooCall('/config/public')),
     ]);
 
     if (srvTime && srvTime.data && srvTime.data.timestamp) {
@@ -843,7 +759,7 @@ export const api = {
     const res = await odooCall(path, {
       latitude: data.latitude || 0,
       longitude: data.longitude || 0,
-      mock_detected: false,
+      mock_detected: !!data.mock_detected,
       device_name: getDeviceModelName(),
       face_score: data.face_similarity != null ? Number(data.face_similarity) : 0,
       photo: stripDataUrl(data.foto),
@@ -980,17 +896,20 @@ export const api = {
   },
 
   async ajukanLembur(payload) {
-    try {
-      const res = await odooCall('/overtime/request', {
-        date: payload.tanggal_lembur,
-        time_from: payload.jam_mulai,
-        time_to: payload.jam_selesai,
-        notes: payload.keterangan_tugas,
-      });
-      return { success: true, message: res.message || 'Pengajuan lembur berhasil dikirim.' };
-    } catch {
-      return { success: true, message: 'Pengajuan lembur berhasil dikirim.' };
+    // Kontrak ag_rest_api: {date, notes, proposed_hours}.
+    // proposed_hours dihitung dari jam_mulai/jam_selesai bila ada.
+    let proposed = Number(payload.durasi_jam || payload.proposed_hours || 0);
+    if (!proposed && payload.jam_mulai && payload.jam_selesai) {
+      const [h1, m1] = String(payload.jam_mulai).split(':').map(Number);
+      const [h2, m2] = String(payload.jam_selesai).split(':').map(Number);
+      proposed = Math.max(0, (h2 * 60 + m2 - h1 * 60 - m1) / 60);
     }
+    const res = await odooCall('/overtime/request', {
+      date: payload.tanggal_lembur,
+      notes: payload.keterangan_tugas,
+      proposed_hours: proposed,
+    });
+    return { success: true, message: res.message || 'Pengajuan lembur berhasil dikirim.' };
   },
 
   // ---- Jadwal / Shift ----

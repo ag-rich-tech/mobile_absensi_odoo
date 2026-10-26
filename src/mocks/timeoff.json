@@ -1,0 +1,5 @@
+{
+  "types": {"status": "success", "message": "OK", "data": {"items": [{"id": 2, "name": "Sick Time Off", "requires_allocation": false, "virtual_remaining_leaves": 0}, {"id": 4, "name": "Unpaid", "requires_allocation": false, "virtual_remaining_leaves": 0}]}},
+  "history": {"status": "success", "message": "OK", "data": {"items": [{"id": 5, "employee_id": 194, "employee_name": "AG Test", "type": {"id": 2, "name": "Sick Time Off"}, "name": "Sakit", "date_from": "2026-12-07 00:00:00", "date_to": "2026-12-08 23:59:59", "number_of_days": 2.0, "state": "confirm", "state_label": "To Approve"}]}},
+  "request": {"status": "success", "message": "Pengajuan terkirim.", "data": {"leave": {"id": 5, "state": "confirm"}}}
+}

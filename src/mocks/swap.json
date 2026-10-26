@@ -1,0 +1,9 @@
+{
+  "count": {"status": "success", "message": "OK", "data": {"count": 0}},
+  "init": {"status": "success", "message": "OK", "data": {"rekan_list": [{"id": 195, "nama_lengkap": "Budi", "jabatan": "Staff", "departemen": ""}], "jadwal_pengaju": [{"tanggal": "2026-10-26", "hari": "Monday", "nama_shift": "Shift", "jam_masuk": "08:00", "jam_pulang": "17:00", "is_hari_libur": false}], "pending_masuk_count": 0}},
+  "colleague_schedule": {"status": "success", "message": "OK", "data": {"jadwal": [{"tanggal": "2026-10-26", "hari": "Monday", "nama_shift": "Shift", "jam_masuk": "08:00", "jam_pulang": "17:00", "is_hari_libur": false}]}},
+  "submit": {"status": "success", "message": "Pengajuan tukar shift berhasil dikirim ke rekan kerja!", "data": {"id": 3}},
+  "history": {"status": "success", "message": "OK", "data": {"permintaan_masuk": [], "pengajuan_saya": [{"id": 3, "pengaju_id": 194, "pegawai_tujuan_id": 195, "rekan": {"nama_lengkap": "Budi"}, "status": "menunggu_rekan", "status_label": "Menunggu Rekan", "alasan": "Keperluan keluarga", "catatan_rekan": ""}], "pending_masuk_count": 0}},
+  "respond": {"status": "success", "message": "Permintaan tukar shift berhasil disetujui.", "data": {}},
+  "cancel": {"status": "success", "message": "Pengajuan tukar shift berhasil dibatalkan.", "data": {}}
+}

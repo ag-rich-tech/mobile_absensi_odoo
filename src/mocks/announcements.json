@@ -1,0 +1,3 @@
+{
+  "list": {"status": "success", "message": "OK", "data": {"count": 1, "items": [{"id": 1, "title": "Uji Pengumuman", "body": "<p>Isi pengumuman uji.</p>", "publish_date": null, "pinned": true}]}}
+}

@@ -1,0 +1,4 @@
+{
+  "list": {"status": "success", "message": "OK", "data": {"items": [{"id": 3, "name": "SLIP/003", "date_from": "2026-10-01", "date_to": "2026-10-31", "state": "done", "state_label": "Selesai"}]}},
+  "detail": {"status": "success", "message": "OK", "data": {"payslip": {"id": 3, "name": "SLIP/003", "date_from": "2026-10-01", "date_to": "2026-10-31", "state": "done", "state_label": "Selesai", "gross": 5000000, "net_pay": 4500000, "currency": "IDR", "lines": [{"name": "Basic Salary", "code": "BASIC", "category": "BASIC", "amount": 5000000}]}}}
+}

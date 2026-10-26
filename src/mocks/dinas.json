@@ -1,0 +1,4 @@
+{
+  "list": {"status": "success", "message": "OK", "data": {"items": [{"id": 8, "kota_tujuan": "Bandung", "instansi_tujuan": "Klien X", "tanggal_mulai": "2026-12-14", "tanggal_selesai": "2026-12-15", "keperluan": "Bandung - Klien X: Survey", "status": "menunggu", "dokumen_url": null}]}},
+  "request": {"status": "success", "message": "Pengajuan dinas berhasil dikirim.", "data": {"leave_id": 8}}
+}

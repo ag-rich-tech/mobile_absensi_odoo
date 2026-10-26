@@ -1,0 +1,7 @@
+{
+  "jenis": {"status": "success", "message": "OK", "data": {"items": [{"id": 10, "name": "Transport"}]}},
+  "list": {"status": "success", "message": "OK", "data": {"items": [{"id": 4, "name": "Uji reimburse", "date": "2026-10-26", "product": "Transport", "total_amount": 50000, "state": "draft", "sheet_id": 2, "description": "Uji reimburse"}]}},
+  "detail": {"status": "success", "message": "OK", "data": {"expense": {"id": 4, "name": "Uji reimburse", "date": "2026-10-26", "product": "Transport", "quantity": 1, "price_unit": 50000, "total_amount": 50000, "state": "draft", "sheet_id": 2, "description": "Uji reimburse"}}},
+  "submit": {"status": "success", "message": "Pengajuan reimbursement berhasil dikirim.", "data": {"expense_id": 4, "sheet_id": 2}},
+  "approve": {"status": "success", "message": "Berhasil diproses.", "data": {"sheet_id": 2}}
+}

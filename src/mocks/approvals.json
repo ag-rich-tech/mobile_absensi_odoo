@@ -1,0 +1,4 @@
+{
+  "inbox": {"status": "success", "message": "OK", "data": {"count": 1, "items": [{"id": 5, "employee_id": 195, "employee_name": "Budi", "type": {"id": 2, "name": "Sick Time Off"}, "name": "Sakit", "date_from": "2026-12-07 00:00:00", "date_to": "2026-12-08 23:59:59", "number_of_days": 2.0, "state": "confirm", "state_label": "To Approve"}]}},
+  "act": {"status": "success", "message": "Berhasil diproses.", "data": {"leave": {"id": 5, "state": "validate"}}}
+}
