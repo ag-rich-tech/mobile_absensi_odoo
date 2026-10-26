@@ -1,14 +1,128 @@
 {
-  "summary": {"status": "success", "message": "OK", "data": {
-    "user": {"id": 15, "name": "AG Test", "login": "agtest"},
-    "employee_brief": {"id": 194, "name": "AG Test", "job": {"id": 1, "name": "Staff"}, "department": null, "company": {"id": 1, "name": "My Company"}, "work_email": "agtest@example.com", "work_phone": "", "mobile_phone": "", "photo": null},
-    "employee": {"id": 194, "name": "AG Test", "job": {"id": 1, "name": "Staff"}, "department": null, "company": {"id": 1, "name": "My Company"}, "work_email": "agtest@example.com", "work_phone": "", "mobile_phone": "", "photo": null, "barcode": "", "pin": "", "manager": null, "coach": null, "address": null, "birthday": null, "gender": "", "marital": "", "nik": "", "npwp": "", "bpjs_ketenagakerjaan": "", "bpjs_kesehatan": "", "ptkp_status": "", "is_face_registered": false, "face_enrolled_at": null, "login": "agtest"},
-    "attendance": {"checked_in": true, "open_attendance": {"id": 12, "check_in": "2026-10-26 01:00:00", "check_out": null, "worked_hours": 0.0, "distance_in_m": 0, "distance_out_m": 0, "mock_in": false, "mock_out": false}},
-    "shifts_today": [{"tanggal": "2026-10-26", "hari": "Monday", "nama_shift": "Shift", "jam_masuk": "08:00", "jam_pulang": "17:00", "is_hari_libur": false}],
-    "history": [{"id": 12, "check_in": "2026-10-26 01:00:00", "check_out": "2026-10-26 10:00:00", "worked_hours": 9.0, "distance_in_m": 0, "distance_out_m": 0, "mock_in": false, "mock_out": false}],
-    "config": {"office_lat": -6.2, "office_lng": 106.8, "office_radius_m": 100.0, "features": {}},
-    "server_time": {"timestamp": 1792987782}
-  }},
-  "config": {"status": "success", "message": "OK", "data": {"office_lat": -6.2, "office_lng": 106.8, "office_radius_m": 100.0, "features": {}}},
-  "server_time": {"status": "success", "message": "OK", "data": {"timestamp": 1792987782, "utc": "2026-10-26 04:09:42", "user_tz": "Asia/Jakarta"}}
+  "summary": {
+    "status": "success",
+    "message": "OK",
+    "data": {
+      "user": {
+        "id": 15,
+        "name": "AG Test",
+        "login": "agtest"
+      },
+      "employee_brief": {
+        "id": 194,
+        "name": "AG Test",
+        "job": {
+          "id": 1,
+          "name": "Staff"
+        },
+        "department": null,
+        "company": {
+          "id": 1,
+          "name": "My Company"
+        },
+        "work_email": "agtest@example.com",
+        "work_phone": "",
+        "mobile_phone": "",
+        "photo": null
+      },
+      "employee": {
+        "id": 194,
+        "name": "AG Test",
+        "job": {
+          "id": 1,
+          "name": "Staff"
+        },
+        "department": null,
+        "company": {
+          "id": 1,
+          "name": "My Company"
+        },
+        "work_email": "agtest@example.com",
+        "work_phone": "",
+        "mobile_phone": "",
+        "photo": null,
+        "barcode": "",
+        "pin": "",
+        "manager": null,
+        "coach": null,
+        "address": null,
+        "birthday": null,
+        "gender": "",
+        "marital": "",
+        "nik": "",
+        "npwp": "",
+        "bpjs_ketenagakerjaan": "",
+        "bpjs_kesehatan": "",
+        "ptkp_status": "",
+        "is_face_registered": false,
+        "face_enrolled_at": null,
+        "login": "agtest",
+        "location_policy": "wfo"
+      },
+      "attendance": {
+        "checked_in": true,
+        "open_attendance": {
+          "id": 12,
+          "check_in": "2026-10-26 01:00:00",
+          "check_out": null,
+          "worked_hours": 0.0,
+          "distance_in_m": 0,
+          "distance_out_m": 0,
+          "mock_in": false,
+          "mock_out": false
+        }
+      },
+      "shifts_today": [
+        {
+          "tanggal": "2026-10-26",
+          "hari": "Monday",
+          "nama_shift": "Shift",
+          "jam_masuk": "08:00",
+          "jam_pulang": "17:00",
+          "is_hari_libur": false
+        }
+      ],
+      "history": [
+        {
+          "id": 12,
+          "check_in": "2026-10-26 01:00:00",
+          "check_out": "2026-10-26 10:00:00",
+          "worked_hours": 9.0,
+          "distance_in_m": 0,
+          "distance_out_m": 0,
+          "mock_in": false,
+          "mock_out": false
+        }
+      ],
+      "config": {
+        "office_lat": -6.2,
+        "office_lng": 106.8,
+        "office_radius_m": 100.0,
+        "features": {}
+      },
+      "server_time": {
+        "timestamp": 1792987782
+      }
+    }
+  },
+  "config": {
+    "status": "success",
+    "message": "OK",
+    "data": {
+      "office_lat": -6.2,
+      "office_lng": 106.8,
+      "office_radius_m": 100.0,
+      "features": {},
+      "location_policy": "wfo"
+    }
+  },
+  "server_time": {
+    "status": "success",
+    "message": "OK",
+    "data": {
+      "timestamp": 1792987782,
+      "utc": "2026-10-26 04:09:42",
+      "user_tz": "Asia/Jakarta"
+    }
+  }
 }

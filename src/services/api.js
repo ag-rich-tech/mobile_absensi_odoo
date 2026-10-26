@@ -307,6 +307,8 @@ function mapPegawai(user, employeeBrief, profile) {
     // status wajah biometrik (dari server)
     is_face_registered: !!emp.is_face_registered,
     face_enrolled_at: emp.face_enrolled_at || null,
+    // policy lokasi (dari server, ag_rest_api): 'wfo' | 'anywhere'
+    location_policy: emp.location_policy || 'wfo',
     // mentah (bila UI butuh)
     _odoo_user: user || null,
     _odoo_employee: emp || null,

@@ -493,7 +493,8 @@ export default function DashboardPage({ user: initialUser, onLogout, onStartAtte
   const tampilkanOpsiIstirahat = sudahMasuk && !sudahPulang && isSudahWaktuIstirahat && statusIstirahat === 'belum';
   const sedangIstirahat = sudahMasuk && !sudahPulang && statusIstirahat === 'istirahat';
 
-  const isInsideGeofence = distanceToOffice !== null ? distanceToOffice <= (lokasi?.radius_meter || 100) : true;
+  // Server mengirim radius_m (bukan radius_meter) — pakai kunci yang benar.
+  const isInsideGeofence = distanceToOffice !== null ? distanceToOffice <= (lokasi?.radius_m || 100) : true;
 
   // Status Hari Libur & Hari Kerja
   const isHariLibur = Boolean(jamKerja?.is_hari_libur || !jamKerja?.id || jamKerja?.ada_jadwal_kerja === false);
