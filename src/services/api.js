@@ -5,10 +5,14 @@
  *
  * Pola baru: POST JSON biasa (body = params), response
  * {"status":"success"|"error","message":...,"data":...}.
- * Auth: session Odoo — login via /web/session/authenticate bawaan Odoo,
- * lalu semua endpoint memakai cookie sesi itu (credentials: 'include').
- * TIDAK ADA lagi Bearer token, password RPC di localStorage, maupun
- * direct /jsonrpc execute_kw (semua sudah dihapus di branch ini).
+ * Auth: token Bearer (modul ag_rest_api 18.0.1.2.3, pindah penuh dari
+ * session) — login via POST {API_BASE}/auth/token (db + login +
+ * password) -> token; semua endpoint memakai header
+ * Authorization: Bearer <token>. Cookie sesi TIDAK lagi dipakai
+ * (credentials: 'omit'); token disimpan di localStorage (bukan
+ * password). 401 NO_TOKEN / INVALID_TOKEN / TOKEN_EXPIRED ->
+ * clearAuth (app kembali ke layar login). Direct /jsonrpc
+ * execute_kw tetap tidak ada di branch ini.
  *
  * Semua target server dibaca dari .env lewat src/config.js.
  * Mode mock: VITE_USE_MOCK=true -> mock JSON lokal (src/mocks/).
@@ -22,7 +26,7 @@
 // Konfigurasi — sesuaikan bila server/database berubah
 // ---------------------------------------------------------------------------
 import * as adapters from './apiAdapters.js';
-import { ODOO_URL, ODOO_DB, API_BASE, USE_MOCK, apiUrl, sessionUrl, photoUrl } from '../config.js';
+import { ODOO_URL, ODOO_DB, API_BASE, USE_MOCK, apiUrl, photoUrl } from '../config.js';
 import { getMockResponse, MOCK_USER, MOCK_EMPLOYEE } from '../mocks.js';
 
 // Kompatibilitas: kode lama mengimpor ODOO_BASE/ODOO_DB dari modul ini.
@@ -215,20 +219,30 @@ export async function odooCall(path, params = {}, { timeoutMs = 30000 } = {}) {
     const ctrl = new AbortController();
     const timer = setTimeout(() => ctrl.abort(), timeoutMs);
     try {
+      // Token Bearer eksplisit (18.0.1.2.3). Penanda lama 'session'
+      // dari versi app sebelumnya TIDAK dikirim sebagai Bearer —
+      // server akan menjawab NO_TOKEN dan app kembali ke login
+      // (pengguna wajib login ulang satu kali sesudah update app).
+      const headers = {
+        'Content-Type': 'application/json',
+        'Accept': 'application/json',
+      };
+      const tok = getToken();
+      if (tok && tok !== 'session' && tok !== 'mock') {
+        headers['Authorization'] = `Bearer ${tok}`;
+      }
       const res = await fetch(apiUrl(path), {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Accept': 'application/json',
-        },
-        credentials: 'include',
+        headers,
+        // Pindah penuh ke token: tidak ada lagi ketergantungan cookie.
+        credentials: 'omit',
         body: JSON.stringify(params || {}),
         signal: ctrl.signal,
       });
       json = await res.json().catch(() => ({}));
       // Server menjawab JSON error juga untuk status non-2xx (mis. 401).
       if (!res.ok && json.status !== 'error') {
-        json = { status: 'error', code: res.status === 401 ? 'NO_SESSION' : 'ERROR', message: `Server menjawab HTTP ${res.status}.` };
+        json = { status: 'error', code: res.status === 401 ? 'NO_TOKEN' : 'ERROR', message: `Server menjawab HTTP ${res.status}.` };
       }
     } finally {
       clearTimeout(timer);
@@ -249,7 +263,10 @@ export async function odooCall(path, params = {}, { timeoutMs = 30000 } = {}) {
   if (result.status === 'error') {
     const err = new Error(result.message || 'Terjadi kesalahan pada server Odoo.');
     err.code = result.code || 'ERROR';
-    if (err.code === 'NO_SESSION') {
+    // Token hilang / salah / kedaluwarsa -> bersihkan auth lokal agar
+    // app kembali ke layar login. NO_SESSION dipertahankan untuk
+    // kompatibilitas dengan server lama (pra-1.2.3) selama transisi.
+    if (['NO_TOKEN', 'INVALID_TOKEN', 'TOKEN_EXPIRED', 'NO_SESSION'].includes(err.code)) {
       clearAuth();
       err.status = 401;
     }
@@ -594,61 +611,44 @@ export const api = {
       return { success: true, token: 'mock', pegawai, message: 'Login berhasil (mode mock).' };
     }
 
-    // 1) Session Odoo bawaan (JSON-RPC /web/session/authenticate).
-    //    Cookie sesi disimpan browser/WebView (credentials: 'include').
-    const authRes = await fetch(sessionUrl('/web/session/authenticate'), {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' },
-      credentials: 'include',
-      body: JSON.stringify({
-        jsonrpc: '2.0',
-        method: 'call',
-        params: { db: ODOO_DB, login: credentials.login, password: credentials.password },
-        id: Date.now(),
-      }),
+    // 1) Token Bearer dari modul ag_rest_api (18.0.1.2.3).
+    //    odooCall melempar Error berkode INVALID_CREDENTIALS bila
+    //    kredensial salah (pesan server diteruskan ke UI).
+    const tokRes = await odooCall('/auth/token', {
+      db: ODOO_DB,
+      login: credentials.login,
+      password: credentials.password,
+      device: getOrCreateDeviceId(),
     });
-    const authJson = await authRes.json().catch(() => ({}));
-    if (authJson.error || !authJson.result || !authJson.result.uid) {
-      const msg = authJson.error && authJson.error.data
-        ? (authJson.error.data.message || 'Login gagal.')
-        : 'Username atau kata sandi salah.';
-      throw new Error(msg);
+    const realToken = tokRes.data && tokRes.data.token;
+    if (!realToken) {
+      throw new Error('Login gagal: server tidak mengembalikan token.');
     }
 
-    // 2) Profil dari ag_rest_api (sesi sudah aktif).
-    setToken('session');
+    // 2) Profil dari ag_rest_api (Bearer sudah aktif).
+    setToken(realToken);
     let pegawai = null;
     try {
       const prof = await odooCall('/employee/profile');
-      pegawai = mapPegawai(authJson.result, null, prof.data && prof.data.employee);
+      pegawai = mapPegawai(null, null, prof.data && prof.data.employee);
     } catch {
       try {
         const me = await odooCall('/auth/me');
         pegawai = mapPegawai(me.data && me.data.user, me.data && me.data.employee, null);
       } catch {
-        pegawai = mapPegawai(authJson.result, null, null);
+        pegawai = mapPegawai(tokRes.data && tokRes.data.user, null, null);
       }
     }
     setStoredUser(pegawai);
-    return { success: true, token: 'session', pegawai, message: 'Login berhasil.' };
+    return { success: true, token: realToken, pegawai, message: 'Login berhasil.' };
   },
 
   async logout() {
     try {
+      // Mencabut token Bearer di server (endpoint /auth/logout).
       await odooCall('/auth/logout');
     } catch {
-      // sesi mungkin sudah tidak valid — tetap bersihkan sesi lokal
-    }
-    try {
-      // Hancurkan cookie sesi di server (endpoint bawaan Odoo).
-      await fetch(sessionUrl('/web/session/destroy'), {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        credentials: 'include',
-        body: JSON.stringify({ jsonrpc: '2.0', method: 'call', params: {}, id: Date.now() }),
-      });
-    } catch {
-      // abaikan — sesi lokal tetap dibersihkan
+      // token mungkin sudah tidak valid — tetap bersihkan lokal
     } finally {
       clearAuth();
     }

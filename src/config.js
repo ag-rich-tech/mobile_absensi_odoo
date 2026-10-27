@@ -13,13 +13,12 @@
  * Perilaku dev vs produksi:
  *   - `npm run dev` (import.meta.env.DEV): fetch memakai path RELATIF
  *     sehingga vite proxy (vite.config.js) meneruskannya ke VITE_ODOO_URL
- *     dalam satu origin — cookie sesi Odoo ikut terkirim.
+ *     dalam satu origin.
  *   - build produksi / APK: fetch memakai URL ABSOLUT VITE_ODOO_URL.
- *     Catatan: cookie sesi Odoo tidak punya atribut SameSite sehingga
- *     browser menganggapnya Lax — fetch lintas origin dari WebView
- *     Capacitor kemungkinan tidak membawa cookie. Untuk APK produksi,
- *     sajikan API lewat origin yang sama (reverse proxy satu origin).
- *     Jangan pernah mematikan auth untuk mengatasi ini.
+ * Auth token Bearer (modul ag_rest_api 18.0.1.2.3): token dikirim
+ * eksplisit lewat header Authorization, jadi tidak ada lagi masalah
+ * cookie lintas origin di WebView Capacitor dan tidak perlu reverse
+ * proxy satu origin. Jangan pernah mematikan auth untuk mengatasi ini.
  */
 
 const env = import.meta.env || {};
@@ -46,7 +45,7 @@ export function sessionUrl(path) {
 
 /**
  * URL foto profil dari path /web/image/... yang dikirim server.
- * Di dev: path relatif (ikut proxy /web, cookie sesi terkirim).
+ * Di dev: path relatif (ikut proxy /web).
  * Di produksi: absolut ke VITE_ODOO_URL.
  */
 export function photoUrl(path) {

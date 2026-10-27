@@ -4,11 +4,11 @@ import { defineConfig, loadEnv } from 'vite'
 // Proxy dev dibaca dari .env (SATU sumber kebenaran, sama seperti src/config.js):
 //   VITE_ODOO_URL -> target proxy (default https://odoo18.hiddenlab.me)
 //   VITE_API_BASE -> prefix API yang di-proxy (default /ag_rest_api/v1)
-// Proxy membuat dev server satu origin dengan API sehingga cookie sesi Odoo
-// ikut terkirim. Prefix lama /api, /storage, dan /jsonrpc (Odoo 14) DIHAPUS:
+// Proxy membuat dev server satu origin dengan API (tidak ada lagi
+// ketergantungan cookie sejak token Bearer 18.0.1.2.3).
+// Prefix lama /api, /storage, dan /jsonrpc (Odoo 14) DIHAPUS:
 // aplikasi branch odoo 18.0 tidak lagi memakainya.
-// '/web' ikut di-proxy agar foto profil /web/image/... bisa dimuat dengan
-// cookie sesi yang sama saat dev.
+// '/web' ikut di-proxy agar foto profil /web/image/... bisa dimuat saat dev.
 
 // https://vite.dev/config/
 export default defineConfig(({ mode }) => {
