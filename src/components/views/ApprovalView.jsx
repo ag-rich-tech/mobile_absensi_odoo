@@ -511,12 +511,15 @@ export default function ApprovalView({ onBack }) {
                     fontWeight: '800',
                     fontSize: '14px',
                     flexShrink: 0,
-                    overflow: 'hidden'
+                    overflow: 'hidden',
+                    position: 'relative'
                   }}>
-                    {pemohon.foto ? (
-                      <img src={pemohon.foto} alt={pemohon.nama} style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
-                    ) : (
-                      <span>{(pemohon.nama || '?').slice(0, 2).toUpperCase()}</span>
+                    {/* Inisial selalu di bawah; img menutupinya bila
+                        berhasil dimuat, dan hilang sendiri (onError)
+                        bila URL foto 404 sehingga inisial tampil. */}
+                    <span>{(pemohon.nama || '?').slice(0, 2).toUpperCase()}</span>
+                    {pemohon.foto && (
+                      <img src={pemohon.foto} alt={pemohon.nama} onError={(e) => { e.currentTarget.style.display = 'none'; }} style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', objectFit: 'cover' }} />
                     )}
                   </div>
                   <div style={{ flex: 1, minWidth: 0 }}>

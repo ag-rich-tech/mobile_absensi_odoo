@@ -199,8 +199,9 @@ export default function DaftarKaryawanView({ onBack }) {
                   <tr key={emp.id || idx} style={{ borderBottom: idx === filteredList.length - 1 ? 'none' : '1px solid var(--border-light)' }}>
                     <td style={{ padding: '12px 14px', verticalAlign: 'middle' }}>
                       <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-                        <div style={{ width: '38px', height: '38px', borderRadius: '50%', backgroundColor: '#ffedd5', border: '1.5px solid #fed7aa', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0, overflow: 'hidden', fontWeight: '800', fontSize: '12px', color: 'var(--primary-700)' }}>
-                          {emp.foto ? <img src={emp.foto} alt={emp.nama} style={{ width: '100%', height: '100%', objectFit: 'cover' }} /> : <span>{emp.inisial || 'K'}</span>}
+                        <div style={{ width: '38px', height: '38px', borderRadius: '50%', backgroundColor: '#ffedd5', border: '1.5px solid #fed7aa', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0, overflow: 'hidden', fontWeight: '800', fontSize: '12px', color: 'var(--primary-700)', position: 'relative' }}>
+                          <span>{emp.inisial || 'K'}</span>
+                          {emp.foto && <img src={emp.foto} alt={emp.nama} onError={(e) => { e.currentTarget.style.display = 'none'; }} style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', objectFit: 'cover' }} />}
                         </div>
                         <div>
                           <span style={{ fontSize: '13px', fontWeight: '700', color: 'var(--text-main)', display: 'block' }}>{emp.nama}</span>

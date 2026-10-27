@@ -193,7 +193,8 @@ export default function ProfileView({ user, onBack, onLogout, onOpenDenda, onOpe
             justifyContent: 'center',
             boxShadow: '0 6px 16px rgba(234, 88, 12, 0.35)',
             overflow: 'hidden',
-            border: '2.5px solid rgba(255, 255, 255, 0.2)'
+            border: '2.5px solid rgba(255, 255, 255, 0.2)',
+            position: 'relative'
           }}>
             {previewFoto ? (
               <img
@@ -201,14 +202,18 @@ export default function ProfileView({ user, onBack, onLogout, onOpenDenda, onOpe
                 alt="Preview Foto Baru"
                 style={{ width: '100%', height: '100%', objectFit: 'cover' }}
               />
-            ) : fotoProfilUrl ? (
-              <img
-                src={fotoProfilUrl}
-                alt={user?.nama_lengkap || 'Pegawai'}
-                style={{ width: '100%', height: '100%', objectFit: 'cover' }}
-              />
             ) : (
-              user?.inisial || 'P'
+              <>
+                {user?.inisial || 'P'}
+                {fotoProfilUrl && (
+                  <img
+                    src={fotoProfilUrl}
+                    alt={user?.nama_lengkap || 'Pegawai'}
+                    onError={(e) => { e.currentTarget.style.display = 'none'; }}
+                    style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', objectFit: 'cover' }}
+                  />
+                )}
+              </>
             )}
           </div>
 

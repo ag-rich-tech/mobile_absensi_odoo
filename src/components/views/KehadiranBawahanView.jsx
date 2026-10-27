@@ -363,28 +363,33 @@ export default function KehadiranBawahanView({ onBack }) {
           gap: '12px',
           boxShadow: '0 2px 8px rgba(0,0,0,0.03)'
         }}>
-          {selectedBawahan.foto ? (
-            <img
-              src={selectedBawahan.foto}
-              alt={selectedBawahan.nama}
-              style={{ width: '46px', height: '46px', borderRadius: '12px', objectFit: 'cover', border: '1.5px solid #cbd5e1' }}
-            />
-          ) : (
-            <div style={{
-              width: '46px',
-              height: '46px',
-              borderRadius: '12px',
-              background: 'linear-gradient(135deg, #0284c7 0%, #0369a1 100%)',
-              color: '#ffffff',
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'center',
-              fontWeight: '800',
-              fontSize: '15px'
-            }}>
-              {selectedBawahan.inisial || selectedBawahan.nama.substring(0, 2).toUpperCase()}
-            </div>
-          )}
+          {/* Avatar: inisial selalu di bawah; img menutupinya bila
+              berhasil dimuat, hilang sendiri (onError) bila URL 404. */}
+          <div style={{
+            width: '46px',
+            height: '46px',
+            borderRadius: '12px',
+            background: 'linear-gradient(135deg, #0284c7 0%, #0369a1 100%)',
+            color: '#ffffff',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            fontWeight: '800',
+            fontSize: '15px',
+            position: 'relative',
+            overflow: 'hidden',
+            flexShrink: 0
+          }}>
+            {selectedBawahan.inisial || selectedBawahan.nama.substring(0, 2).toUpperCase()}
+            {selectedBawahan.foto && (
+              <img
+                src={selectedBawahan.foto}
+                alt={selectedBawahan.nama}
+                onError={(e) => { e.currentTarget.style.display = 'none'; }}
+                style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', objectFit: 'cover', border: '1.5px solid #cbd5e1', borderRadius: '12px' }}
+              />
+            )}
+          </div>
 
           <div style={{ flex: 1, minWidth: 0 }}>
             <h3 style={{ fontSize: '14px', fontWeight: '800', color: '#0f172a', margin: '0 0 2px', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
@@ -1129,29 +1134,33 @@ export default function KehadiranBawahanView({ onBack }) {
                   alignItems: 'center'
                 }}
               >
-                {/* Foto Avatar */}
-                {bawahan.foto ? (
-                  <img
-                    src={bawahan.foto}
-                    alt={bawahan.nama}
-                    style={{ width: '32px', height: '32px', borderRadius: '8px', objectFit: 'cover', border: '1px solid #e2e8f0' }}
-                  />
-                ) : (
-                  <div style={{
-                    width: '32px',
-                    height: '32px',
-                    borderRadius: '8px',
-                    background: 'linear-gradient(135deg, #0284c7 0%, #0369a1 100%)',
-                    color: '#ffffff',
-                    display: 'flex',
-                    alignItems: 'center',
-                    justifyContent: 'center',
-                    fontWeight: '800',
-                    fontSize: '12px'
-                  }}>
-                    {bawahan.inisial}
-                  </div>
-                )}
+                {/* Foto Avatar: inisial di bawah, img menutupinya
+                    bila termuat; onError menyembunyikan img bila 404. */}
+                <div style={{
+                  width: '32px',
+                  height: '32px',
+                  borderRadius: '8px',
+                  background: 'linear-gradient(135deg, #0284c7 0%, #0369a1 100%)',
+                  color: '#ffffff',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  fontWeight: '800',
+                  fontSize: '12px',
+                  position: 'relative',
+                  overflow: 'hidden',
+                  flexShrink: 0
+                }}>
+                  {bawahan.inisial}
+                  {bawahan.foto && (
+                    <img
+                      src={bawahan.foto}
+                      alt={bawahan.nama}
+                      onError={(e) => { e.currentTarget.style.display = 'none'; }}
+                      style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', objectFit: 'cover', border: '1px solid #e2e8f0', borderRadius: '8px' }}
+                    />
+                  )}
+                </div>
 
                 {/* Nama & Jabatan */}
                 <div style={{ minWidth: 0, marginRight: '8px' }}>
