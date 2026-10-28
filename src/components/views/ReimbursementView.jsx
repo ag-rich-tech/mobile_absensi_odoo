@@ -499,6 +499,12 @@ export default function ReimbursementView({ onBack }) {
                       </p>
                     </div>
 
+                    {item.dokumen_terlampir && (
+                      <div style={{ fontSize: '11px', color: '#64748b' }}>
+                        📎 Dokumen nota terlampir
+                      </div>
+                    )}
+
                     {/* Catatan Admin jika ada */}
                     {item.catatan_admin && (
                       <div style={{
