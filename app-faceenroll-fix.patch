@@ -1,0 +1,40 @@
+diff --git a/src/pages/FaceEnrollmentPage.jsx b/src/pages/FaceEnrollmentPage.jsx
+index a8726c9..f86c71e 100644
+--- a/src/pages/FaceEnrollmentPage.jsx
++++ b/src/pages/FaceEnrollmentPage.jsx
+@@ -229,7 +229,7 @@ export default function FaceEnrollmentPage({ user, onBack, onSuccess }) {
+       // Konversi Float32Array ke Array murni agar JSON serializable
+       const descriptorArray = Array.from(descriptorToSave);
+ 
+-      const res = await api.enrollFace({
++      const res = await api.registerFace({
+         face_descriptor: descriptorArray,
+         foto: photoData
+       });
+@@ -252,13 +252,14 @@ export default function FaceEnrollmentPage({ user, onBack, onSuccess }) {
+     } catch (err) {
+       console.error('Enroll error:', err);
+       // Tampilkan pesan spesifik berdasarkan tipe error
+-      if (err.status === 0 || err.name === 'TypeError' || err.name === 'AbortError') {
++      if (err.status === 0 || err.name === 'AbortError') {
+         if (submitPhase === 'fallback') {
+           setErrorMessage('Koneksi tidak stabil. Enroll gagal setelah percobaan kedua.');
+         } else {
+           setSubmitPhase('fallback');
+-          setGuideText('Koneksi lambat, mengirim tanpa foto...');
+-          // Biarkan enrollFace fallback-nya sendiri yang coba ulang
++          setGuideText('Koneksi lambat, coba lagi...');
++          // Retry tanpa foto sudah ditangani di dalam registerFace;
++          // fase ini hanya menandai gagal jaringan berturut-turut.
+           throw err;
+         }
+       } else {
+@@ -597,7 +598,7 @@ export default function FaceEnrollmentPage({ user, onBack, onSuccess }) {
+           {isSubmitting ? (
+             <>
+               <RefreshCw size={17} className="spin-animation" />
+-              <span>{submitPhase === 'fallback' ? 'Mengirim tanpa foto...' : 'Mengunggah Foto...'}</span>
++              <span>{submitPhase === 'fallback' ? 'Mengirim ulang...' : 'Mengunggah Foto...'}</span>
+             </>
+           ) : (
+             <>
