@@ -9,21 +9,21 @@
  * Kembalikan null bila path tidak punya mock -> pemanggil boleh
  * memutuskan fallback (mis. tetap error jaringan).
  */
-import auth from './mocks/auth.json';
-import dashboard from './mocks/dashboard.json';
-import attendance from './mocks/attendance.json';
-import face from './mocks/face.json';
-import timeoff from './mocks/timeoff.json';
-import approvals from './mocks/approvals.json';
-import announcements from './mocks/announcements.json';
-import payslip from './mocks/payslip.json';
-import overtime from './mocks/overtime.json';
-import shift from './mocks/shift.json';
-import employee from './mocks/employee.json';
-import reimbursement from './mocks/reimbursement.json';
-import dinas from './mocks/dinas.json';
-import swap from './mocks/swap.json';
-import misc from './mocks/misc.json';
+import auth from './mocks/auth.json' with { type: 'json' };
+import dashboard from './mocks/dashboard.json' with { type: 'json' };
+import attendance from './mocks/attendance.json' with { type: 'json' };
+import face from './mocks/face.json' with { type: 'json' };
+import timeoff from './mocks/timeoff.json' with { type: 'json' };
+import approvals from './mocks/approvals.json' with { type: 'json' };
+import announcements from './mocks/announcements.json' with { type: 'json' };
+import payslip from './mocks/payslip.json' with { type: 'json' };
+import overtime from './mocks/overtime.json' with { type: 'json' };
+import shift from './mocks/shift.json' with { type: 'json' };
+import employee from './mocks/employee.json' with { type: 'json' };
+import reimbursement from './mocks/reimbursement.json' with { type: 'json' };
+import dinas from './mocks/dinas.json' with { type: 'json' };
+import swap from './mocks/swap.json' with { type: 'json' };
+import misc from './mocks/misc.json' with { type: 'json' };
 
 const TABLE = {
   '/auth/me': auth.me,

@@ -21,7 +21,9 @@
  * proxy satu origin. Jangan pernah mematikan auth untuk mengatasi ini.
  */
 
-const env = import.meta.env || {};
+// Prefer Vite-injected import.meta.env; fall back to process.env so the
+// standalone Node self-check (test_adapters.js) can enable mock mode.
+const env = (typeof import.meta !== 'undefined' && import.meta.env) || process.env;
 
 export const ODOO_URL = (env.VITE_ODOO_URL || 'https://odoo18.hiddenlab.me').replace(/\/$/, '');
 export const ODOO_DB = env.VITE_ODOO_DB || 'tester';

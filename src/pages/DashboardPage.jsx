@@ -9,6 +9,14 @@ import {
 import AttendanceModal from '../components/AttendanceModal';
 import BottomNav from '../components/BottomNav';
 import api, { getServerDate, formatTime24 } from '../services/api';
+import { checkFakeGps } from '../services/fakeGpsService.js';
+import {
+  startBackgroundTracking,
+  stopBackgroundTracking,
+  shouldSendTrackingPing,
+  markTrackingPingSent,
+  resetTrackingPingThrottle,
+} from '../services/backgroundTracking.js';
 import RiwayatView from '../components/views/RiwayatView';
 import IzinView from '../components/views/IzinView';
 import DinasView from '../components/views/DinasView';
@@ -480,25 +488,45 @@ export default function DashboardPage({ user: initialUser, onLogout, onStartAtte
   // KUNCI: Jika batas akhir pulang telah terlewati, status masuk di-reset agar kembali ke status Absen Masuk untuk sesi berikutnya!
   const sudahMasuk = Boolean(sudahMasukRaw) && !isBatasPulangTerlewati;
 
-  // Live Tracking: kirim ping lokasi tiap 60 detik selama sesi clock-in aktif.
+  // Live Tracking: kirim ping lokasi tiap 1 JAM selama sesi clock-in aktif.
   // Server (hris.tracking.ping) hanya menerima bila ada sesi berjalan.
+  // Hemat baterai: ping rutin pakai akurasi rendah (enableHighAccuracy:
+  // false = posisi Wi-Fi/seluler, tanpa kunci GPS presisi); GPS presisi
+  // tetap hanya di jalur check-in/out. Throttle 1 jam dipakai BERSAMA
+  // watcher background (backgroundTracking.js) supaya total kiriman ke
+  // server maksimal 1/jam, baik dari foreground maupun background.
   useEffect(() => {
     if (!sudahMasuk) return;
     let stopped = false;
+    resetTrackingPingThrottle();
 
     const sendPing = () => {
       if (stopped || !navigator.geolocation) return;
       navigator.geolocation.getCurrentPosition(
         async (pos) => {
           if (stopped) return;
+          // Deteksi GPS palsu yang sesungguhnya (plugin native Android
+          // + heuristik di fakeGpsService). Gagal deteksi = tetap kirim
+          // dengan flag false supaya ping audit tidak hilang hanya
+          // karena detector error.
+          let isFake = false;
+          try {
+            const fake = await checkFakeGps(pos.coords);
+            isFake = Boolean(fake && fake.isFake);
+          } catch {
+            isFake = false;
+          }
+          if (stopped) return;
+          if (!shouldSendTrackingPing()) return;
           try {
             await api.sendTrackingPing({
               latitude: pos.coords.latitude,
               longitude: pos.coords.longitude,
               accuracy_m: pos.coords.accuracy || 0,
               battery_level: null,
-              mock_detected: false,
+              mock_detected: isFake,
             });
+            markTrackingPingSent();
           } catch {
             // Server menolak bila sesi berakhir / duplikat interval — abaikan
           }
@@ -509,10 +537,16 @@ export default function DashboardPage({ user: initialUser, onLogout, onStartAtte
     };
 
     sendPing(); // langsung kirim sekali saat mulai
-    const trackInterval = setInterval(sendPing, 60000);
+    const trackInterval = setInterval(sendPing, 3600000); // 1 jam
+    // Pelacakan background Android (foreground service + notifikasi
+    // permanen, plugin @capacitor-community/background-geolocation).
+    // Gagal mulai (plugin belum di-install/sync, bukan Android, izin
+    // ditolak) TIDAK menghentikan ping foreground di atas.
+    startBackgroundTracking().catch(() => {});
     return () => {
       stopped = true;
       clearInterval(trackInterval);
+      stopBackgroundTracking().catch(() => {});
     };
   }, [sudahMasuk]);
 

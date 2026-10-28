@@ -425,6 +425,8 @@ export async function ajukanReimbursement(payload) {
   const res = await odooCall('/reimbursement/submit', {
     description: keterangan,
     total_amount: nominal,
+    unit_amount: nominal, // Odoo hr.expense needs unit_amount to compute total_amount
+    quantity: 1,
     expense_date: tanggal,
     ...(jenis ? { product_id: jenis } : {}),
     ...(docBase64 ? { attachment: docBase64, filename: docName } : {}),

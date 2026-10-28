@@ -1,5 +1,8 @@
 {
   "appId": "com.mobileabsensi.app",
   "appName": "Ali Attendance",
-  "webDir": "dist"
+  "webDir": "dist",
+  "android": {
+    "useLegacyBridge": true
+  }
 }
