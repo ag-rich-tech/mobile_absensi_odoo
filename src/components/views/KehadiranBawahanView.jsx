@@ -1,6 +1,6 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import {
-  ChevronLeft, Users, Calendar, Search, ChevronRight, X, Clock,
+  ChevronLeft, Users, Calendar, Search, ChevronRight, ChevronDown, X, Clock,
   MapPin, AlertTriangle, CheckCircle2, ShieldAlert, Sparkles,
   Info, RefreshCw, Coffee, AlertCircle, Building, UserCheck
 } from 'lucide-react';
@@ -10,6 +10,132 @@ const NAMA_BULAN = [
   'Januari', 'Februari', 'Maret', 'April', 'Mei', 'Juni',
   'Juli', 'Agustus', 'September', 'Oktober', 'November', 'Desember'
 ];
+
+// Satu node pohon org chart (daftar bersarang, bisa expand/collapse).
+// Node user login (id === meId) memakai efek radar: dua cincin denyut
+// berulang di sekeliling avatar + chip "Anda" — penanda visual
+// "Anda di sini", bukan perubahan data. Node lain tidak berubah gaya.
+function OrgChartNode({ node, depth, meId, expanded, onToggle, meNodeRef }) {
+  const kids = node.children || [];
+  const isOpen = !!expanded[node.id];
+  const isMe = node.id === meId;
+  return (
+    <div>
+      <div
+        ref={isMe ? meNodeRef : null}
+        style={{
+          display: 'flex',
+          alignItems: 'center',
+          gap: '10px',
+          padding: '10px 12px',
+          marginLeft: depth === 0 ? 0 : 12,
+          marginBottom: '6px',
+          backgroundColor: isMe ? '#f0f9ff' : '#ffffff',
+          border: isMe ? '1.5px solid #bae6fd' : '1px solid var(--border-light)',
+          borderRadius: '12px',
+          cursor: kids.length ? 'pointer' : 'default',
+        }}
+        onClick={() => kids.length && onToggle(node.id)}
+      >
+        {/* Avatar + cincin radar (hanya node user login) */}
+        <div style={{ position: 'relative', flexShrink: 0, width: '32px', height: '32px' }}>
+          {isMe && (
+            <>
+              <span className="orgchart-radar-ring" style={{ animationDelay: '0s' }} />
+              <span className="orgchart-radar-ring" style={{ animationDelay: '1s' }} />
+            </>
+          )}
+          {node.foto ? (
+            <img
+              src={node.foto}
+              alt={node.nama}
+              style={{ position: 'relative', width: '32px', height: '32px', borderRadius: '8px', objectFit: 'cover', border: '1px solid #e2e8f0' }}
+            />
+          ) : (
+            <div style={{
+              position: 'relative',
+              width: '32px',
+              height: '32px',
+              borderRadius: '8px',
+              background: 'linear-gradient(135deg, #0284c7 0%, #0369a1 100%)',
+              color: '#ffffff',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              fontWeight: '800',
+              fontSize: '12px'
+            }}>
+              {node.inisial}
+            </div>
+          )}
+        </div>
+
+        {/* Nama & jabatan */}
+        <div style={{ minWidth: 0, flex: 1 }}>
+          <div style={{
+            fontSize: '13px',
+            fontWeight: '700',
+            color: '#0f172a',
+            whiteSpace: 'nowrap',
+            overflow: 'hidden',
+            textOverflow: 'ellipsis',
+            display: 'flex',
+            alignItems: 'center',
+            gap: '6px'
+          }}>
+            <span style={{ overflow: 'hidden', textOverflow: 'ellipsis' }}>{node.nama}</span>
+            {isMe && (
+              <span style={{
+                fontSize: '10px',
+                fontWeight: '800',
+                color: '#0369a1',
+                backgroundColor: '#e0f2fe',
+                borderRadius: '999px',
+                padding: '2px 8px',
+                flexShrink: 0
+              }}>
+                Anda
+              </span>
+            )}
+          </div>
+          <div style={{
+            fontSize: '10px',
+            color: '#94a3b8',
+            whiteSpace: 'nowrap',
+            overflow: 'hidden',
+            textOverflow: 'ellipsis'
+          }}>
+            {node.jabatan}{node.departemen ? ` • ${node.departemen}` : ''}
+          </div>
+        </div>
+
+        {/* Chevron expand/collapse */}
+        {kids.length > 0 && (
+          <span style={{ color: '#94a3b8', flexShrink: 0, display: 'flex' }}>
+            {isOpen ? <ChevronDown size={18} /> : <ChevronRight size={18} />}
+          </span>
+        )}
+      </div>
+
+      {/* Anak (hanya bila node terbuka) */}
+      {isOpen && kids.length > 0 && (
+        <div style={{ marginLeft: '16px', paddingLeft: '8px', borderLeft: '1.5px solid var(--border-light)' }}>
+          {kids.map((child) => (
+            <OrgChartNode
+              key={child.id}
+              node={child}
+              depth={depth + 1}
+              meId={meId}
+              expanded={expanded}
+              onToggle={onToggle}
+              meNodeRef={meNodeRef}
+            />
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
 
 export default function KehadiranBawahanView({ onBack }) {
   const currentDate = new Date();
@@ -29,6 +155,109 @@ export default function KehadiranBawahanView({ onBack }) {
   const [kalenderData, setKalenderData] = useState(null);
   const [isLoadingKalender, setIsLoadingKalender] = useState(false);
   const [selectedDayDetail, setSelectedDayDetail] = useState(null); // Modal detail tanggal
+
+  // State tab Org Chart (di dalam Tim Bawahan; tidak mengubah Kehadiran)
+  const [tabAktif, setTabAktif] = useState('kehadiran');
+  const [orgTree, setOrgTree] = useState([]);
+  const [orgMeId, setOrgMeId] = useState(null);
+  const [orgLoading, setOrgLoading] = useState(false);
+  const [orgError, setOrgError] = useState(null);
+  const [orgLoaded, setOrgLoaded] = useState(false);
+  const [orgExpanded, setOrgExpanded] = useState({});
+  const meNodeRef = useRef(null);
+  const orgScrolledRef = useRef(false);
+
+  // Muat pohon org chart (lazy: hanya saat tab pertama dibuka).
+  // Default: root + anak level 1 terbuka, level lebih dalam tertutup,
+  // DITAMBAH jalur dari root ke node user login agar node user selalu
+  // terlihat (tidak tertutup di dalam cabang yang collapsed).
+  const loadOrgChart = useCallback(async (silent = false) => {
+    if (!silent) setOrgLoading(true);
+    setOrgError(null);
+    try {
+      const res = await api.getTeamOrgChart();
+      if (!res.success) {
+        setOrgError(res.message || 'Gagal memuat org chart.');
+        return;
+      }
+      const tree = res.tree || [];
+      setOrgTree(tree);
+      setOrgMeId(res.me_id || null);
+      const next = {};
+      const markLevel = (nodes, level) => {
+        for (const n of nodes) {
+          if (level <= 1) next[n.id] = true;
+          markLevel(n.children || [], level + 1);
+        }
+      };
+      markLevel(tree, 0);
+      const findPath = (nodes, target, trail) => {
+        for (const n of nodes) {
+          if (n.id === target) return [...trail, n.id];
+          const hit = findPath(n.children || [], target, [...trail, n.id]);
+          if (hit) return hit;
+        }
+        return null;
+      };
+      const path = res.me_id ? findPath(tree, res.me_id, []) : null;
+      if (path) for (const id of path) next[id] = true;
+      setOrgExpanded(next);
+      setOrgLoaded(true);
+      orgScrolledRef.current = false;
+    } catch (err) {
+      console.error('Gagal memuat org chart:', err);
+      setOrgError(err.message || 'Terjadi kesalahan jaringan.');
+    } finally {
+      setOrgLoading(false);
+    }
+  }, []);
+
+  // Muat org chart sekali saat tab pertama dibuka.
+  useEffect(() => {
+    if (tabAktif === 'orgchart' && !orgLoaded && !orgLoading) {
+      loadOrgChart();
+    }
+  }, [tabAktif, orgLoaded, orgLoading, loadOrgChart]);
+
+  // Geser daftar ke node user saat tab Org Chart pertama dibuka
+  // (sekali per pemuatan; tidak menarik scroll saat expand/collapse).
+  useEffect(() => {
+    if (tabAktif !== 'orgchart' || !orgLoaded || orgScrolledRef.current) return;
+    const t = setTimeout(() => {
+      if (meNodeRef.current && meNodeRef.current.scrollIntoView) {
+        meNodeRef.current.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      }
+      orgScrolledRef.current = true;
+    }, 150);
+    return () => clearTimeout(t);
+  }, [tabAktif, orgLoaded, orgTree]);
+
+  const toggleOrgNode = (id) => {
+    setOrgExpanded((prev) => {
+      const next = { ...prev };
+      if (next[id]) delete next[id];
+      else next[id] = true;
+      return next;
+    });
+  };
+
+  const expandAllOrg = () => {
+    const next = {};
+    const walk = (nodes) => {
+      for (const n of nodes) {
+        if ((n.children || []).length) next[n.id] = true;
+        walk(n.children || []);
+      }
+    };
+    walk(orgTree);
+    setOrgExpanded(next);
+  };
+
+  const collapseAllOrg = () => setOrgExpanded({});
+
+  const countOrgNodes = (nodes) =>
+    nodes.reduce((acc, n) => acc + 1 + countOrgNodes(n.children || []), 0);
+  const orgCount = countOrgNodes(orgTree);
 
   const formatBulanTahunParam = (m, y) => {
     const mm = String(m).padStart(2, '0');
@@ -902,7 +1131,7 @@ export default function KehadiranBawahanView({ onBack }) {
 
         <button
           type="button"
-          onClick={() => loadDataBawahan(true)}
+          onClick={() => tabAktif === 'orgchart' ? loadOrgChart(true) : loadDataBawahan(true)}
           disabled={isRefreshing}
           title="Segarkan Data"
           style={{
@@ -919,6 +1148,54 @@ export default function KehadiranBawahanView({ onBack }) {
           }}
         >
           <RefreshCw size={16} className={isRefreshing ? 'animate-spin' : ''} />
+        </button>
+      </div>
+
+      {/* Tab Kehadiran / Org Chart (di dalam Tim Bawahan) */}
+      <div style={{ display: 'flex', gap: '8px' }}>
+        <button
+          type="button"
+          onClick={() => setTabAktif('kehadiran')}
+          style={{
+            flex: 1,
+            padding: '10px 12px',
+            borderRadius: '12px',
+            border: tabAktif === 'kehadiran' ? '1.5px solid #0284c7' : '1.5px solid var(--border-light)',
+            backgroundColor: tabAktif === 'kehadiran' ? '#e0f2fe' : '#ffffff',
+            color: tabAktif === 'kehadiran' ? '#0369a1' : '#64748b',
+            fontSize: '12px',
+            fontWeight: '800',
+            cursor: 'pointer',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            gap: '6px'
+          }}
+        >
+          <Users size={16} />
+          <span>Kehadiran</span>
+        </button>
+        <button
+          type="button"
+          onClick={() => setTabAktif('orgchart')}
+          style={{
+            flex: 1,
+            padding: '10px 12px',
+            borderRadius: '12px',
+            border: tabAktif === 'orgchart' ? '1.5px solid #0284c7' : '1.5px solid var(--border-light)',
+            backgroundColor: tabAktif === 'orgchart' ? '#e0f2fe' : '#ffffff',
+            color: tabAktif === 'orgchart' ? '#0369a1' : '#64748b',
+            fontSize: '12px',
+            fontWeight: '800',
+            cursor: 'pointer',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            gap: '6px'
+          }}
+        >
+          <Building size={16} />
+          <span>Org Chart</span>
         </button>
       </div>
 
@@ -955,6 +1232,8 @@ export default function KehadiranBawahanView({ onBack }) {
         </div>
       )}
 
+      {tabAktif === 'kehadiran' && (
+      <>
       {/* Baris Pemilih Bulan & Input Pencarian */}
       <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
         {/* Switch Bulan */}
@@ -1239,6 +1518,135 @@ export default function KehadiranBawahanView({ onBack }) {
             );
           })}
         </div>
+      )}
+      </>)}
+      {tabAktif === 'orgchart' && (
+        <>
+          <style>{`
+            .orgchart-radar-ring {
+              position: absolute;
+              inset: -4px;
+              border: 2px solid #0284c7;
+              border-radius: 12px;
+              animation: orgchart-radar 2s ease-out infinite;
+              pointer-events: none;
+            }
+            @keyframes orgchart-radar {
+              0% { transform: scale(1); opacity: 0.8; }
+              100% { transform: scale(1.5); opacity: 0; }
+            }
+          `}</style>
+
+          {/* Baris judul + Expand/Ciutkan */}
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+            <span style={{ fontSize: '12px', fontWeight: '800', color: 'var(--text-main)' }}>
+              Struktur Tim ({orgCount} karyawan)
+            </span>
+            <span style={{ display: 'flex', gap: '6px' }}>
+              <button
+                type="button"
+                onClick={expandAllOrg}
+                style={{
+                  padding: '4px 10px',
+                  borderRadius: '6px',
+                  border: '1px solid var(--border-light)',
+                  backgroundColor: '#ffffff',
+                  color: '#334155',
+                  fontSize: '11px',
+                  fontWeight: '700',
+                  cursor: 'pointer'
+                }}
+              >
+                Expand semua
+              </button>
+              <button
+                type="button"
+                onClick={collapseAllOrg}
+                style={{
+                  padding: '4px 10px',
+                  borderRadius: '6px',
+                  border: '1px solid var(--border-light)',
+                  backgroundColor: '#ffffff',
+                  color: '#334155',
+                  fontSize: '11px',
+                  fontWeight: '700',
+                  cursor: 'pointer'
+                }}
+              >
+                Ciutkan
+              </button>
+            </span>
+          </div>
+
+          {/* Isi tab Org Chart */}
+          {orgLoading ? (
+            <div style={{ padding: '40px 0', textAlign: 'center', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '8px' }}>
+              <RefreshCw size={24} className="animate-spin" color="var(--primary-600)" />
+              <span style={{ fontSize: '12px', color: 'var(--text-muted)' }}>Memuat org chart...</span>
+            </div>
+          ) : orgError ? (
+            <div style={{
+              backgroundColor: '#fef2f2',
+              border: '1px solid #fecaca',
+              borderRadius: 'var(--radius-md)',
+              padding: '12px 14px',
+              display: 'flex',
+              alignItems: 'center',
+              gap: '10px',
+            }}>
+              <AlertCircle size={18} style={{ color: '#b91c1c', flexShrink: 0 }} />
+              <span style={{ fontSize: '12px', color: '#991b1b', flex: 1 }}>{orgError}</span>
+              <button
+                type="button"
+                onClick={() => loadOrgChart()}
+                style={{
+                  padding: '4px 10px',
+                  borderRadius: '6px',
+                  border: '1px solid #fca5a5',
+                  backgroundColor: '#fff',
+                  color: '#b91c1c',
+                  fontSize: '11px',
+                  fontWeight: '700',
+                  cursor: 'pointer',
+                  flexShrink: 0,
+                }}
+              >
+                Coba lagi
+              </button>
+            </div>
+          ) : orgTree.length === 0 ? (
+            <div style={{
+              padding: '30px 20px',
+              textAlign: 'center',
+              backgroundColor: '#f8fafc',
+              borderRadius: '16px',
+              border: '1.5px dashed #cbd5e1',
+              color: '#64748b'
+            }}>
+              <Users size={32} style={{ margin: '0 auto 8px', opacity: 0.5 }} />
+              <p style={{ fontSize: '13px', fontWeight: '700', margin: '0 0 4px', color: '#334155' }}>
+                Belum Ada Data Struktur Tim
+              </p>
+              <span style={{ fontSize: '11px' }}>
+                Tidak ada data org chart yang bisa ditampilkan.
+              </span>
+            </div>
+          ) : (
+            <div style={{ display: 'flex', flexDirection: 'column' }}>
+              {orgTree.map((node) => (
+                <OrgChartNode
+                  key={node.id}
+                  node={node}
+                  depth={0}
+                  meId={orgMeId}
+                  expanded={orgExpanded}
+                  onToggle={toggleOrgNode}
+                  meNodeRef={meNodeRef}
+                />
+              ))}
+            </div>
+          )}
+        </>
       )}
     </div>
   );

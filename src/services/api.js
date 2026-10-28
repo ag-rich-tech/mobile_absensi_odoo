@@ -1064,6 +1064,7 @@ export const api = {
   getKehadiranBawahanStatus: adapters.getKehadiranBawahanStatus,
   getKehadiranBawahanList: adapters.getKehadiranBawahanList,
   getKalenderBawahan: adapters.getKalenderBawahan,
+  getTeamOrgChart: adapters.getTeamOrgChart,
   getReimbursementJenis: adapters.getReimbursementJenis,
   getReimbursement: adapters.getReimbursement,
   ajukanReimbursement: adapters.ajukanReimbursement,

@@ -166,6 +166,36 @@ export async function getKehadiranBawahanList(bulanParam) {
   }
 }
 
+// 1b. Org Chart Tim Bawahan (server-side: /team/org-chart).
+// Server sudah mengirim pohon bersarang (children rekursif) + me_id
+// (employee user login); adapter hanya menormalisasi field ke bentuk
+// yang dipakai view (nama/jabatan/departemen/foto/inisial) dan
+// menyelesaikan URL foto. Foto memakai pola yang sama seperti daftar
+// bawahan (photoUrl), avatar inisial sebagai fallback.
+function normalizeOrgNode(node) {
+  if (!node) return null;
+  return {
+    id: node.id,
+    nama: node.name || 'Karyawan',
+    jabatan: (typeof node.job === 'string' ? node.job : (node.job && node.job.name)) || 'Staff',
+    departemen: (typeof node.department === 'string' ? node.department : (node.department && node.department.name)) || '',
+    foto: photoUrl(node.photo),
+    inisial: inisialDariNama(node.name || '?'),
+    children: (node.children || []).map(normalizeOrgNode).filter(Boolean),
+  };
+}
+
+export async function getTeamOrgChart() {
+  try {
+    const res = await odooCall('/team/org-chart');
+    const tree = ((res.data && res.data.tree) || []).map(normalizeOrgNode).filter(Boolean);
+    return { success: true, tree, me_id: (res.data && res.data.me_id) || null };
+  } catch (err) {
+    console.error('getTeamOrgChart error:', err);
+    return { success: false, message: 'Gagal memuat org chart: ' + (err?.message || String(err)) };
+  }
+}
+
 export async function getKalenderBawahan(bawahanId, bulanParam) {
   const now = getServerDate();
   const ym = bulanParam || fmtYMD(now).slice(0, 7);
