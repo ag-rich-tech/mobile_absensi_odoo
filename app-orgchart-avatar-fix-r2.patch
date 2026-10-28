@@ -1,0 +1,39 @@
+diff --git a/src/components/views/KehadiranBawahanView.jsx b/src/components/views/KehadiranBawahanView.jsx
+index cbfbaae..176cd29 100644
+--- a/src/components/views/KehadiranBawahanView.jsx
++++ b/src/components/views/KehadiranBawahanView.jsx
+@@ -19,6 +19,7 @@ function OrgChartNode({ node, depth, meId, expanded, onToggle, meNodeRef }) {
+   const kids = node.children || [];
+   const isOpen = !!expanded[node.id];
+   const isMe = node.id === meId;
++  const [imgError, setImgError] = useState(false);
+   return (
+     <div>
+       <div
+@@ -45,10 +46,11 @@ function OrgChartNode({ node, depth, meId, expanded, onToggle, meNodeRef }) {
+               <span className="orgchart-radar-ring" style={{ animationDelay: '1s' }} />
+             </>
+           )}
+-          {node.foto ? (
++          {node.foto && !imgError ? (
+             <img
+               src={node.foto}
+-              alt={node.nama}
++              alt=""
++              onError={() => setImgError(true)}
+               style={{ position: 'relative', width: '32px', height: '32px', borderRadius: '8px', objectFit: 'cover', border: '1px solid #e2e8f0' }}
+             />
+           ) : (
+diff --git a/src/services/apiAdapters.js b/src/services/apiAdapters.js
+index 6997864..d6f07c9 100644
+--- a/src/services/apiAdapters.js
++++ b/src/services/apiAdapters.js
+@@ -179,7 +179,7 @@ function normalizeOrgNode(node) {
+     nama: node.name || 'Karyawan',
+     jabatan: (typeof node.job === 'string' ? node.job : (node.job && node.job.name)) || 'Staff',
+     departemen: (typeof node.department === 'string' ? node.department : (node.department && node.department.name)) || '',
+-    foto: photoUrl(node.photo),
++    foto: photoUrl(node.photo, getToken()),
+     inisial: inisialDariNama(node.name || '?'),
+     children: (node.children || []).map(normalizeOrgNode).filter(Boolean),
+   };

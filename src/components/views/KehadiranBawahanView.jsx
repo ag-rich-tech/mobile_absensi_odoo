@@ -19,6 +19,7 @@ function OrgChartNode({ node, depth, meId, expanded, onToggle, meNodeRef }) {
   const kids = node.children || [];
   const isOpen = !!expanded[node.id];
   const isMe = node.id === meId;
+  const [imgError, setImgError] = useState(false);
   return (
     <div>
       <div
@@ -45,10 +46,11 @@ function OrgChartNode({ node, depth, meId, expanded, onToggle, meNodeRef }) {
               <span className="orgchart-radar-ring" style={{ animationDelay: '1s' }} />
             </>
           )}
-          {node.foto ? (
+          {node.foto && !imgError ? (
             <img
               src={node.foto}
-              alt={node.nama}
+              alt=""
+              onError={() => setImgError(true)}
               style={{ position: 'relative', width: '32px', height: '32px', borderRadius: '8px', objectFit: 'cover', border: '1px solid #e2e8f0' }}
             />
           ) : (

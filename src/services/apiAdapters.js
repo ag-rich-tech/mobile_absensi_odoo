@@ -179,7 +179,7 @@ function normalizeOrgNode(node) {
     nama: node.name || 'Karyawan',
     jabatan: (typeof node.job === 'string' ? node.job : (node.job && node.job.name)) || 'Staff',
     departemen: (typeof node.department === 'string' ? node.department : (node.department && node.department.name)) || '',
-    foto: photoUrl(node.photo),
+    foto: photoUrl(node.photo, getToken()),
     inisial: inisialDariNama(node.name || '?'),
     children: (node.children || []).map(normalizeOrgNode).filter(Boolean),
   };
