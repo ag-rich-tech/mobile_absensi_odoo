@@ -165,6 +165,31 @@ export function fmtYMD(date) {
   return `${date.getFullYear()}-${pad2(date.getMonth() + 1)}-${pad2(date.getDate())}`;
 }
 
+// Formatter WIB — HANYA untuk output utcToWib(). utcToWib menggeser
+// epoch +7 jam sehingga komponen UTC tanggalnya = jam dinding WIB;
+// getter UTC di bawah ini membacanya tanpa geseran kedua (bug +14 jam
+// Okt 2026: fmtHM/fmtYMD lama memakai getter lokal sehingga di HP WIB
+// hasilnya UTC + 7 (fungsi) + 7 (render lokal)). Jangan dipakai untuk
+// tanggal lokal perangkat (now, getServerDate): itu tetap memakai
+// fmtHM/fmtTanggalId/fmtHariTanggal/fmtYMD dengan getter lokal.
+export function fmtHMWib(date) {
+  return date ? `${pad2(date.getUTCHours())}:${pad2(date.getUTCMinutes())}` : null;
+}
+
+export function fmtYMDWib(date) {
+  return date ? `${date.getUTCFullYear()}-${pad2(date.getUTCMonth() + 1)}-${pad2(date.getUTCDate())}` : null;
+}
+
+export function fmtTanggalIdWib(date) {
+  if (!date) return null;
+  return `${pad2(date.getUTCDate())} ${NAMA_BULAN[date.getUTCMonth()]} ${date.getUTCFullYear()}`;
+}
+
+export function fmtHariTanggalWib(date) {
+  if (!date) return null;
+  return `${NAMA_HARI[date.getUTCDay()]}, ${fmtTanggalIdWib(date)}`;
+}
+
 /** Ambil base64 murni dari data URL "data:image/jpeg;base64,...." */
 export function stripDataUrl(dataUrl) {
   if (!dataUrl) return null;
@@ -381,7 +406,42 @@ function mapLocations(cfgData, employee) {
   return { list: mapped, policy };
 }
 
-function mapAttendanceItem(att) {
+// Status presensi dari shift hari itu (jam 'HH:MM' server). Tidak ada
+// toleransi di server (_schedule_days hanya mengembalikan jam_masuk /
+// jam_pulang), jadi deadline = jam_masuk, pulang cepat = sebelum
+// jam_pulang. inD/outD adalah output utcToWib (komponen UTC-nya = jam
+// dinding WIB) sehingga deadline dibangun dari komponen UTC yang sama —
+// selisih +7 jam saling meniadakan. shift null (jadwal tak tersedia) ->
+// null: pemanggil memakai nilai lama sebagai fallback.
+function computeAttendanceStatus(inD, outD, shift) {
+  if (!shift || !shift.jam_masuk || shift.jam_masuk === '-') return null;
+  const res = {};
+  if (inD) {
+    const [h, m] = shift.jam_masuk.split(':').map(Number);
+    const deadline = new Date(Date.UTC(
+      inD.getUTCFullYear(), inD.getUTCMonth(), inD.getUTCDate(), h, m));
+    const diff = Math.round((inD - deadline) / 60000);
+    res.status_masuk = diff > 0 ? 'terlambat' : 'tepat_waktu';
+    res.menit_terlambat = diff > 0 ? diff : 0;
+  } else {
+    res.status_masuk = null;
+    res.menit_terlambat = 0;
+  }
+  if (outD && shift.jam_pulang && shift.jam_pulang !== '-') {
+    const [h, m] = shift.jam_pulang.split(':').map(Number);
+    const batas = new Date(Date.UTC(
+      outD.getUTCFullYear(), outD.getUTCMonth(), outD.getUTCDate(), h, m));
+    const diff = Math.round((batas - outD) / 60000);
+    res.status_pulang = diff > 0 ? 'pulang_cepat' : 'normal';
+    res.menit_pulang_cepat = diff > 0 ? diff : 0;
+  } else {
+    res.status_pulang = outD ? 'normal' : null;
+    res.menit_pulang_cepat = 0;
+  }
+  return res;
+}
+
+function mapAttendanceItem(att, shift = null) {
   const inD = utcToWib(att.check_in);
   const outD = utcToWib(att.check_out);
   let jamKerja = null;
@@ -389,23 +449,29 @@ function mapAttendanceItem(att) {
     const menit = Math.round((outD - inD) / 60000);
     jamKerja = `${Math.floor(menit / 60)}j ${menit % 60}m`;
   }
+  const st = computeAttendanceStatus(inD, outD, shift);
   return {
     id: att.id,
-    tanggal: inD ? fmtYMD(inD) : null,
-    hari_tanggal: fmtHariTanggal(inD),
-    jam_masuk: fmtHM(inD),
-    jam_pulang: fmtHM(outD),
+    tanggal: inD ? fmtYMDWib(inD) : null,
+    hari_tanggal: fmtHariTanggalWib(inD),
+    jam_masuk: fmtHMWib(inD),
+    jam_pulang: fmtHMWib(outD),
     jam_kerja: jamKerja,
-    // Odoo tidak menghitung keterlambatan tanpa acuan shift:
-    // netral agar tidak menyesatkan statistik.
-    status_masuk: inD ? 'tepat_waktu' : null,
-    status_pulang: outD ? 'normal' : null,
-    menit_terlambat: 0,
-    menit_pulang_cepat: 0,
+    // Bila shift tersedia, status dihitung sungguhan; bila tidak
+    // (jadwal gagal dimuat), pakai nilai lama agar tampilan tidak crash
+    // — tapi nilai itu BUKAN hasil hitung, jangan dibaca sebagai fakta.
+    status_masuk: st ? st.status_masuk : (inD ? 'tepat_waktu' : null),
+    status_pulang: st ? st.status_pulang : (outD ? 'normal' : null),
+    menit_terlambat: st ? st.menit_terlambat : 0,
+    menit_pulang_cepat: st ? st.menit_pulang_cepat : 0,
     jarak_masuk_meter: att.distance_in_m || 0,
     jarak_pulang_meter: att.distance_out_m || 0,
     mock_masuk: !!att.mock_in,
     mock_pulang: !!att.mock_out,
+    // Foto presensi (path server ag 1.2.14; token ditempel photoUrl
+    // karena <img> tidak bisa mengirim header Bearer).
+    foto_masuk: att.foto_masuk ? photoUrl(att.foto_masuk, getToken()) : null,
+    foto_pulang: att.foto_pulang ? photoUrl(att.foto_pulang, getToken()) : null,
     _raw: att,
   };
 }
@@ -423,8 +489,8 @@ function mapLeave(lv) {
     id: lv.id,
     jenis_izin: lv.type ? lv.type.name : '',
     label_jenis: lv.type ? lv.type.name : '',
-    tanggal_mulai: lv.date_from ? fmtTanggalId(utcToWib(lv.date_from)) : '',
-    tanggal_selesai: lv.date_to ? fmtTanggalId(utcToWib(lv.date_to)) : '',
+    tanggal_mulai: lv.date_from ? fmtTanggalIdWib(utcToWib(lv.date_from)) : '',
+    tanggal_selesai: lv.date_to ? fmtTanggalIdWib(utcToWib(lv.date_to)) : '',
     alasan: lv.name || '',
     status: lv.state,
     total_hari: lv.number_of_days,
@@ -597,19 +663,19 @@ function mapShift(sh, isToday) {
   return {
     nama_shift: sh.name || '',
     tanggal: sh.date || null,
-    tanggal_formatted: fmtTanggalId(date),
-    hari: date ? NAMA_HARI[date.getDay()] : '',
-    jam_masuk: fmtHM(start),
-    jam_pulang: fmtHM(end),
+    tanggal_formatted: fmtTanggalIdWib(date),
+    hari: date ? NAMA_HARI[date.getUTCDay()] : '',
+    jam_masuk: fmtHMWib(start),
+    jam_pulang: fmtHMWib(end),
     is_today: !!isToday,
     is_hari_libur: false,
     _raw: sh,
     id: sh.date || null,
     nama: sh.name || '',
-    jam_awal_masuk: fmtHM(start),
-    jam_akhir_masuk: fmtHM(start),
-    jam_awal_pulang: fmtHM(end),
-    jam_akhir_pulang: fmtHM(end),
+    jam_awal_masuk: fmtHMWib(start),
+    jam_akhir_masuk: fmtHMWib(start),
+    jam_awal_pulang: fmtHMWib(end),
+    jam_akhir_pulang: fmtHMWib(end),
     ada_jadwal_kerja: true,
   };
 }
@@ -719,23 +785,45 @@ export const api = {
       const stData = d.attendance || {};
       const openAtt = stData.open_attendance || null;
       const inD = openAtt ? utcToWib(openAtt.check_in) : null;
-      const absensi_hari_ini = {
-        sudah_masuk: !!stData.checked_in,
-        jam_masuk: fmtHM(inD),
-        sudah_pulang: false,
-        jam_pulang: null,
-        menit_terlambat: 0,
-        menit_pulang_cepat: 0,
-      };
 
       const shifts = d.shifts_today || [];
       const jam_kerja_hari_ini = shifts.length ? mapShift(shifts[0], true) : null;
+
+      // Status kartu hari ini dihitung dari shift hari ini (bukan hardcode).
+      const inSt = computeAttendanceStatus(inD, null, jam_kerja_hari_ini);
+      const absensi_hari_ini = {
+        sudah_masuk: !!stData.checked_in,
+        jam_masuk: fmtHMWib(inD),
+        sudah_pulang: false,
+        jam_pulang: null,
+        status_masuk: inSt ? inSt.status_masuk : null,
+        menit_terlambat: inSt ? inSt.menit_terlambat : 0,
+        menit_pulang_cepat: 0,
+      };
 
       const cfgData = d.config || {};
       const { list: semua_lokasi, policy } = mapLocations(cfgData, d.employee);
       const lokasi_kantor = semua_lokasi.length ? semua_lokasi[0] : null;
 
-      const riwayat_terakhir = (d.history || []).map(mapAttendanceItem);
+      // Jadwal 7 hari ke belakang untuk status riwayat kartu (ag 1.2.14:
+      // /shift/upcoming menerima start). Dibungkus safe() agar dashboard
+      // tidak jatuh ke legacy bila jadwal gagal dimuat — item tanpa shift
+      // memakai nilai lama sebagai fallback.
+      const weekAgo = new Date(getServerDate().getTime() - 7 * 86400000);
+      const schedRes = await safe(odooCall('/shift/upcoming', {
+        days: 8, start: fmtYMD(weekAgo),
+      }));
+      const shiftMap = {};
+      if (schedRes && schedRes.data && schedRes.data.items) {
+        for (const s of schedRes.data.items) {
+          if (s.tanggal) shiftMap[s.tanggal] = s;
+        }
+      }
+      const riwayat_terakhir = (d.history || []).map((a) => {
+        const inD0 = utcToWib(a.check_in);
+        const key = inD0 ? fmtYMDWib(inD0) : null;
+        return mapAttendanceItem(a, (key && shiftMap[key]) || null);
+      });
 
       return {
         success: true,
@@ -775,17 +863,20 @@ export const api = {
     const stData = (st && st.data) || {};
     const openAtt = stData.open_attendance || null;
     const inD = openAtt ? utcToWib(openAtt.check_in) : null;
-    const absensi_hari_ini = {
-      sudah_masuk: !!stData.checked_in,
-      jam_masuk: fmtHM(inD),
-      sudah_pulang: false,
-      jam_pulang: null,
-      menit_terlambat: 0,
-      menit_pulang_cepat: 0,
-    };
 
     const shifts = (shiftToday && shiftToday.data && shiftToday.data.items) || [];
     const jam_kerja_hari_ini = shifts.length ? mapShift(shifts[0], true) : null;
+
+    const inSt = computeAttendanceStatus(inD, null, jam_kerja_hari_ini);
+    const absensi_hari_ini = {
+      sudah_masuk: !!stData.checked_in,
+      jam_masuk: fmtHMWib(inD),
+      sudah_pulang: false,
+      jam_pulang: null,
+      status_masuk: inSt ? inSt.status_masuk : null,
+      menit_terlambat: inSt ? inSt.menit_terlambat : 0,
+      menit_pulang_cepat: 0,
+    };
 
     const cfgData = (cfg && cfg.data) || {};
     const { list: semua_lokasi, policy } = mapLocations(
@@ -871,13 +962,34 @@ export const api = {
     const m = bulan || now.getMonth() + 1;
     const y = tahun || now.getFullYear();
     const lastDay = new Date(y, m, 0).getDate();
-    const res = await odooCall('/attendance/history', {
-      date_from: `${y}-${pad2(m)}-01`,
-      date_to: `${y}-${pad2(m)}-${pad2(lastDay)}`,
-      limit: 100,
-    });
+    // Riwayat + jadwal bulan itu (ag 1.2.14: /shift/upcoming menerima
+    // start) agar status tiap item dihitung dari shift tanggalnya,
+    // bukan hardcode. Jadwal dibungkus safe(): gagal -> fallback lama.
+    const [res, schedRes] = await Promise.all([
+      odooCall('/attendance/history', {
+        date_from: `${y}-${pad2(m)}-01`,
+        date_to: `${y}-${pad2(m)}-${pad2(lastDay)}`,
+        limit: 100,
+      }),
+      safe(odooCall('/shift/upcoming', {
+        days: lastDay, start: `${y}-${pad2(m)}-01`,
+      })),
+    ]);
+    const shiftMap = {};
+    if (schedRes && schedRes.data && schedRes.data.items) {
+      for (const s of schedRes.data.items) {
+        if (s.tanggal) shiftMap[s.tanggal] = s;
+      }
+    }
     const items = (res.data && res.data.items) || [];
-    return { success: true, riwayat: items.map(mapAttendanceItem) };
+    return {
+      success: true,
+      riwayat: items.map((a) => {
+        const inD0 = utcToWib(a.check_in);
+        const key = inD0 ? fmtYMDWib(inD0) : null;
+        return mapAttendanceItem(a, (key && shiftMap[key]) || null);
+      }),
+    };
   },
 
   // ---- Izin / Cuti ----

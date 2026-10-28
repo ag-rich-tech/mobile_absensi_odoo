@@ -416,6 +416,20 @@ export default function AttendanceCapturePage({
     }
   }
 
+  // Rentang batas: bila awal == akhir (tidak ada toleransi di server,
+  // _schedule_days hanya mengembalikan jam_masuk/jam_pulang), tampilkan
+  // satu nilai saja, bukan "08:30 - 08:30".
+  const batasMasukText = (() => {
+    const a = jamKerja?.jam_awal_masuk || '07:00';
+    const b = jamKerja?.jam_akhir_masuk || '08:00';
+    return a === b ? a : `${a} - ${b}`;
+  })();
+  const batasPulangText = (() => {
+    const a = jamKerja?.jam_awal_pulang || '17:00';
+    const b = jamKerja?.jam_akhir_pulang || '20:00';
+    return a === b ? a : `${a} - ${b}`;
+  })();
+
   return (
     <div className="screen-scroll-area no-nav animate-fade-in" style={{
       backgroundColor: '#ffffff',
@@ -931,8 +945,8 @@ export default function AttendanceCapturePage({
           </div>
 
           <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '12px', color: 'var(--text-main)', fontWeight: '700' }}>
-            <span>Batas Masuk: {jamKerja?.jam_awal_masuk || '07:00'} - {jamKerja?.jam_akhir_masuk || '08:00'}</span>
-            <span>Batas Pulang: {jamKerja?.jam_awal_pulang || '17:00'} - {jamKerja?.jam_akhir_pulang || '20:00'}</span>
+            <span>Batas Masuk: {batasMasukText}</span>
+            <span>Batas Pulang: {batasPulangText}</span>
           </div>
 
           <div style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '11px', color: isWarningAturan ? 'var(--warning)' : 'var(--text-muted)', marginTop: '2px' }}>

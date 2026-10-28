@@ -55,13 +55,16 @@ export function sessionUrl(path) {
  * Foto employee ag_rest_api 18.0.1.2.9: /ag_rest_api/v1/employee/photo/<id>
  * memakai token query ?token= karena tag <img> tidak bisa mengirim
  * header Authorization (Okt 2026: /web/image selalu 404 tanpa sesi).
- * Token HANYA ditempel ke path foto employee itu, bukan URL lain.
+ * Foto presensi (ag 1.2.14): /ag_rest_api/v1/attendance/photo/<id>/masuk
+ * dan .../pulang — pola yang sama, jadi ikut ditempeli token di sini.
+ * Token HANYA ditempel ke kedua path foto itu, bukan URL lain.
  */
 export function photoUrl(path, token) {
   if (!path) return null;
   if (path.startsWith('data:') || path.startsWith('http')) return path;
   let url = IS_DEV ? path : `${ODOO_URL}${path}`;
-  if (token && path.startsWith('/ag_rest_api/v1/employee/photo/')) {
+  if (token && (path.startsWith('/ag_rest_api/v1/employee/photo/')
+    || path.startsWith('/ag_rest_api/v1/attendance/photo/'))) {
     url += `?token=${encodeURIComponent(token)}`;
   }
   return url;

@@ -20,7 +20,8 @@ import {
   getServerDate,
   fmtTanggalId,
   fmtYMD,
-  fmtHM,
+  fmtHMWib,
+  fmtYMDWib,
   utcToWib,
   pad2,
   NAMA_HARI,
@@ -217,7 +218,7 @@ export async function getKalenderBawahan(bawahanId, bulanParam) {
   const attMap = {};
   for (const a of d.attendance || []) {
     const inD = utcToWib(a.check_in);
-    if (inD) attMap[fmtYMD(inD)] = a;
+    if (inD) attMap[fmtYMDWib(inD)] = a;
   }
   const leaves = d.leaves || [];
 
@@ -256,9 +257,12 @@ export async function getKalenderBawahan(bawahanId, bulanParam) {
         summary.H_TP++;
       }
       detail_absensi = {
-        jam_masuk: fmtHM(inD),
-        jam_pulang: fmtHM(outD),
+        jam_masuk: fmtHMWib(inD),
+        jam_pulang: fmtHMWib(outD),
         shift: 'Shift Regular',
+        // Status kalender bawahan masih nilai lama: jadwal bawahan tidak
+        // tersedia lewat API (hanya /shift/* untuk diri sendiri), jadi
+        // belum bisa dihitung per tanggal — follow-up, bukan di sini.
         status_masuk: 'tepat_waktu',
         menit_terlambat: 0,
         status_pulang: outD ? 'normal' : null,
