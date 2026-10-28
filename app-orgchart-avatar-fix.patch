@@ -1,0 +1,75 @@
+--- a/src/services/apiAdapters.js
++++ b/src/services/apiAdapters.js
+@@ -16,6 +16,7 @@
+   odooCall,
+   getStoredUser,
+   setStoredUser,
++  getToken,
+   getServerDate,
+   fmtTanggalId,
+   fmtYMD,
+@@ -161,8 +162,25 @@
+ // Server sudah mengirim pohon bersarang (children rekursif) + me_id
+ // (employee user login); adapter hanya menormalisasi field ke bentuk
+ // yang dipakai view (nama/jabatan/departemen/foto/inisial) dan
+-// menyelesaikan URL foto. Foto memakai pola yang sama seperti daftar
+-// bawahan (photoUrl), avatar inisial sebagai fallback.
++// menyelesaikan URL foto. Avatar inisial sebagai fallback.
++//
++// PERBAIKAN AVATAR (v2): endpoint foto ag (/employee/photo/<id>)
++// WAJIB token — header Bearer atau query ?token= — dan tag <img>
++// TIDAK BISA mengirim header Authorization. Tanpa ?token=, endpoint
++// menjawab 401 dan <img> tampil rusak. Jadi URL foto org chart
++// ditempeli token login saat ini (mekanisme yang didokumentasikan
++// endpoint itu sendiri). URL data: tidak ditempeli (bukan URL foto
++// endpoint). Bila token tidak ada (sudah logout), URL dibiarkan apa
++// adanya — view akan jatuh ke inisial lewat onError.
++function photoUrlWithToken(path) {
++  const base = photoUrl(path);
++  if (!base || base.startsWith('data:')) return base;
++  const token = getToken();
++  if (!token) return base;
++  const sep = base.includes('?') ? '&' : '?';
++  return `${base}${sep}token=${encodeURIComponent(token)}`;
++}
++
+ function normalizeOrgNode(node) {
+   if (!node) return null;
+   return {
+@@ -170,7 +188,7 @@
+     nama: node.name || 'Karyawan',
+     jabatan: (typeof node.job === 'string' ? node.job : (node.job && node.job.name)) || 'Staff',
+     departemen: (typeof node.department === 'string' ? node.department : (node.department && node.department.name)) || '',
+-    foto: photoUrl(node.photo),
++    foto: photoUrlWithToken(node.photo),
+     inisial: inisialDariNama(node.name || '?'),
+     children: (node.children || []).map(normalizeOrgNode).filter(Boolean),
+   };
+--- a/src/components/views/KehadiranBawahanView.jsx
++++ b/src/components/views/KehadiranBawahanView.jsx
+@@ -19,6 +19,11 @@
+   const kids = node.children || [];
+   const isOpen = !!expanded[node.id];
+   const isMe = node.id === meId;
++  // Fallback avatar per node (v2): bila <img> gagal load (401/404/dll),
++  // sembunyikan img dan tampilkan avatar inisial — jangan pernah
++  // tampilkan ikon gambar rusak. alt="" agar tidak ada teks alt yang
++  // menumpuk subtitle saat img gagal.
++  const [imgError, setImgError] = useState(false);
+   return (
+     <div>
+       <div
+@@ -45,10 +50,11 @@
+               <span className="orgchart-radar-ring" style={{ animationDelay: '1s' }} />
+             </>
+           )}
+-          {node.foto ? (
++          {node.foto && !imgError ? (
+             <img
+               src={node.foto}
+-              alt={node.nama}
++              alt=""
++              onError={() => setImgError(true)}
+               style={{ position: 'relative', width: '32px', height: '32px', borderRadius: '8px', objectFit: 'cover', border: '1px solid #e2e8f0' }}
+             />
+           ) : (
