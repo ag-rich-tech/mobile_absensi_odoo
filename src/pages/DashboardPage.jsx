@@ -496,7 +496,13 @@ export default function DashboardPage({ user: initialUser, onLogout, onStartAtte
   // watcher background (backgroundTracking.js) supaya total kiriman ke
   // server maksimal 1/jam, baik dari foreground maupun background.
   useEffect(() => {
-    if (!sudahMasuk) return;
+    // Hanya selama sesi clock-in AKTIF (sudah masuk tapi BELUM
+    // pulang). Hari yang sudah pulang punya sudahMasuk=true (kartu
+    // menampilkan jamnya) tapi BUKAN sesi aktif — tanpa pengecualian
+    // ini efek tracking ikut jalan sesudah check-out: server menolak
+    // ping-nya (NOT_CHECKED_IN) sambil menguras baterai + menyalakan
+    // foreground service tanpa keperluan.
+    if (!sudahMasuk || sudahPulang) return;
     let stopped = false;
     resetTrackingPingThrottle();
 
@@ -548,7 +554,7 @@ export default function DashboardPage({ user: initialUser, onLogout, onStartAtte
       clearInterval(trackInterval);
       stopBackgroundTracking().catch(() => {});
     };
-  }, [sudahMasuk]);
+  }, [sudahMasuk, sudahPulang]);
 
   // Tombol Istirahat & Lewati aktif menggantikan tombol Masuk & Pulang
   const tampilkanOpsiIstirahat = sudahMasuk && !sudahPulang && isSudahWaktuIstirahat && statusIstirahat === 'belum';
@@ -1713,10 +1719,15 @@ export default function DashboardPage({ user: initialUser, onLogout, onStartAtte
                       alert(`Hari ini adalah hari libur (${namaHariLibur}). Anda tidak memiliki jadwal presensi kerja hari ini.`);
                       return;
                     }
+                    // Hari sudah pulang -> 'masuk' (sesi baru), sama
+                    // seperti perilaku sebelum kartu menampilkan jam
+                    // hari yang sudah pulang; 'pulang' tanpa sesi
+                    // terbuka hanya akan ditolak server.
+                    const aksiAbsen = sudahPulang ? 'masuk' : (sudahMasuk ? 'pulang' : 'masuk');
                     if (onStartAttendance) {
-                      onStartAttendance(sudahMasuk ? 'pulang' : 'masuk');
+                      onStartAttendance(aksiAbsen);
                     } else {
-                      setModalType(sudahMasuk ? 'pulang' : 'masuk');
+                      setModalType(aksiAbsen);
                     }
                   }}
                   style={{

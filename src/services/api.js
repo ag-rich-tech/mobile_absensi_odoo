@@ -441,6 +441,61 @@ function computeAttendanceStatus(inD, outD, shift) {
   return res;
 }
 
+/**
+ * Kartu presensi hari ini (dipakai getDashboard + getDashboardLegacy).
+ * Prioritas: (1) sesi TERBUKA (open_attendance) — perilaku lama;
+ * (2) bila tidak ada sesi terbuka, rekaman TERTUTUP hari ini dari
+ * history (kasus: sudah pulang). Tanpa (2), kartu langsung kosong
+ * sesudah check-out — padahal history dari server benar — dan
+ * tetap kosong sesudah logout+login, karena login hanya memuat
+ * ulang getDashboard yang juga hanya membaca open_attendance.
+ * "Hari ini" = tanggal WIB server (epoch server + 7 jam, dibaca
+ * lewat getter UTC) supaya tidak geser di batas hari dan tidak
+ * bergantung zona waktu HP.
+ */
+function buildAbsensiHariIni(stData, inD, shift, historyItems) {
+  if (stData && stData.open_attendance && inD) {
+    const inSt = computeAttendanceStatus(inD, null, shift);
+    return {
+      sudah_masuk: !!stData.checked_in,
+      jam_masuk: fmtHMWib(inD),
+      sudah_pulang: false,
+      jam_pulang: null,
+      status_masuk: inSt ? inSt.status_masuk : null,
+      menit_terlambat: inSt ? inSt.menit_terlambat : 0,
+      menit_pulang_cepat: 0,
+    };
+  }
+  const todayWib = fmtYMDWib(new Date(getServerDate().getTime() + 7 * 3600 * 1000));
+  const closedToday = (historyItems || [])
+    .filter((a) => a.check_in && fmtYMDWib(utcToWib(a.check_in)) === todayWib)
+    .sort((a, b) => String(b.check_in).localeCompare(String(a.check_in)))[0];
+  if (closedToday) {
+    const inD2 = utcToWib(closedToday.check_in);
+    const outD2 = utcToWib(closedToday.check_out);
+    const st2 = computeAttendanceStatus(inD2, outD2, shift);
+    return {
+      sudah_masuk: true,
+      jam_masuk: fmtHMWib(inD2),
+      sudah_pulang: !!outD2,
+      jam_pulang: fmtHMWib(outD2),
+      status_masuk: st2 ? st2.status_masuk : null,
+      menit_terlambat: st2 ? st2.menit_terlambat : 0,
+      status_pulang: st2 ? st2.status_pulang : null,
+      menit_pulang_cepat: st2 ? st2.menit_pulang_cepat : 0,
+    };
+  }
+  return {
+    sudah_masuk: false,
+    jam_masuk: null,
+    sudah_pulang: false,
+    jam_pulang: null,
+    status_masuk: null,
+    menit_terlambat: 0,
+    menit_pulang_cepat: 0,
+  };
+}
+
 function mapAttendanceItem(att, shift = null) {
   const inD = utcToWib(att.check_in);
   const outD = utcToWib(att.check_out);
@@ -790,16 +845,11 @@ export const api = {
       const jam_kerja_hari_ini = shifts.length ? mapShift(shifts[0], true) : null;
 
       // Status kartu hari ini dihitung dari shift hari ini (bukan hardcode).
-      const inSt = computeAttendanceStatus(inD, null, jam_kerja_hari_ini);
-      const absensi_hari_ini = {
-        sudah_masuk: !!stData.checked_in,
-        jam_masuk: fmtHMWib(inD),
-        sudah_pulang: false,
-        jam_pulang: null,
-        status_masuk: inSt ? inSt.status_masuk : null,
-        menit_terlambat: inSt ? inSt.menit_terlambat : 0,
-        menit_pulang_cepat: 0,
-      };
+      // Bila sesi sudah tertutup, buildAbsensiHariIni memakai rekaman
+      // tertutup hari ini dari history (lihat helper di atas).
+      const absensi_hari_ini = buildAbsensiHariIni(
+        stData, inD, jam_kerja_hari_ini, d.history || []
+      );
 
       const cfgData = d.config || {};
       const { list: semua_lokasi, policy } = mapLocations(cfgData, d.employee);
@@ -867,24 +917,13 @@ export const api = {
     const shifts = (shiftToday && shiftToday.data && shiftToday.data.items) || [];
     const jam_kerja_hari_ini = shifts.length ? mapShift(shifts[0], true) : null;
 
-    const inSt = computeAttendanceStatus(inD, null, jam_kerja_hari_ini);
-    const absensi_hari_ini = {
-      sudah_masuk: !!stData.checked_in,
-      jam_masuk: fmtHMWib(inD),
-      sudah_pulang: false,
-      jam_pulang: null,
-      status_masuk: inSt ? inSt.status_masuk : null,
-      menit_terlambat: inSt ? inSt.menit_terlambat : 0,
-      menit_pulang_cepat: 0,
-    };
-
-    const cfgData = (cfg && cfg.data) || {};
-    const { list: semua_lokasi, policy } = mapLocations(
-      cfgData, prof && prof.data && prof.data.employee);
-    const lokasi_kantor = semua_lokasi.length ? semua_lokasi[0] : null;
-
-    // riwayat 7 hari terakhir untuk kartu dashboard
+    // Riwayat 7 hari terakhir untuk kartu dashboard — dimuat di awal
+    // agar bisa dipakai fallback kartu hari ini bila sesi sudah
+    // tertutup (lihat buildAbsensiHariIni). Jendela yang sama dengan
+    // yang dipakai seksi "Presensi Terakhir", jadi kartu dan history
+    // tidak mungkin berbeda sumber.
     let riwayat_terakhir = [];
+    let historyItems = [];
     try {
       const now = getServerDate(); /* B#1b: jendela riwayat kartu dashboard pakai server time */
       const from = new Date(now); from.setDate(from.getDate() - 6);
@@ -893,8 +932,18 @@ export const api = {
         date_to: fmtYMD(now),
         limit: 7,
       });
-      riwayat_terakhir = ((h.data && h.data.items) || []).map(mapAttendanceItem);
+      historyItems = (h.data && h.data.items) || [];
+      riwayat_terakhir = historyItems.map(mapAttendanceItem);
     } catch { /* opsional */ }
+
+    const absensi_hari_ini = buildAbsensiHariIni(
+      stData, inD, jam_kerja_hari_ini, historyItems
+    );
+
+    const cfgData = (cfg && cfg.data) || {};
+    const { list: semua_lokasi, policy } = mapLocations(
+      cfgData, prof && prof.data && prof.data.employee);
+    const lokasi_kantor = semua_lokasi.length ? semua_lokasi[0] : null;
 
     return {
       success: true,
