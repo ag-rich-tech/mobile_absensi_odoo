@@ -210,17 +210,16 @@ export default function AttendanceCapturePage({
           setFaceSimilarity(matchResult.similarityScore);
 
           if (matchResult.isMatch) {
+            // TIDAK auto-submit lagi: posisi yang kurang pas ikut
+            // terkirim saat match pertama langsung memproses.
+            // Verifikasi hanya mengunci status; pengiriman tetap lewat
+            // tombol "Absen Sekarang" yang ditekan user (jalur manual
+            // handleAbsenSubmit sudah lengkap: foto dari video +
+            // cek Fake GPS + cek verifikasi + kirim).
             setFaceMatched(true);
             setIsFaceVerified(true);
             isVerifiedRef.current = true;
-            setFaceStatusText(`Wajah Cocok (${matchResult.similarityScore}%)! Memproses Presensi...`);
-
-            // LANGSUNG AMBIL SNAPSHOT & PROSES ABSEN SEGERA TANPA PERLU KUNCI FOTO / KLIK LAGI
-            const photoUrl = capturePhotoFromVideo();
-            if (photoUrl) {
-              autoSubmitAttendance(photoUrl, matchResult.similarityScore);
-              return;
-            }
+            setFaceStatusText(`Wajah Cocok (${matchResult.similarityScore}%)! Tekan "Absen Sekarang" untuk mengirim.`);
           } else {
             setFaceMatched(false);
             setFaceStatusText(`Wajah tidak sesuai (${matchResult.similarityScore}%). Mohon arahkan pas di tengah`);
@@ -318,57 +317,6 @@ export default function AttendanceCapturePage({
     const dataUrl = canvas.toDataURL('image/jpeg', 0.85);
     setCapturedPhoto(dataUrl);
     return dataUrl;
-  };
-
-  // Fungsi Auto-Submit Presensi Instan saat Wajah Terverifikasi
-  const autoSubmitAttendance = async (photoDataUrl, similarityScore) => {
-    if (isAutoSubmittingRef.current || isSubmitting) return;
-
-    if (locationData?.isFakeGps) {
-      setErrorMessage('Presensi dibatalkan: Terdeteksi manipulasi lokasi (Fake GPS).');
-      return;
-    }
-
-    isAutoSubmittingRef.current = true;
-    setIsSubmitting(true);
-    setErrorMessage('');
-
-    if (scanIntervalRef.current) {
-      clearInterval(scanIntervalRef.current);
-      scanIntervalRef.current = null;
-    }
-
-    try {
-      const coords = locationData?.coords || {
-        latitude: -6.143662253255497,
-        longitude: 106.6288537
-      };
-
-      const res = await api.absen({
-        tipe: type,
-        latitude: coords.latitude,
-        longitude: coords.longitude,
-        foto: photoDataUrl,
-        face_matched: true,
-        face_similarity: similarityScore,
-      });
-
-      if (res.success) {
-        playAttendanceSound(type);
-        setSuccessResult(res);
-        setTimeout(() => {
-          onSuccess(res.data);
-        }, 2000);
-      } else {
-        setErrorMessage(res.message || 'Presensi tidak dapat diproses.');
-        setIsSubmitting(false);
-        isAutoSubmittingRef.current = false;
-      }
-    } catch (err) {
-      setErrorMessage(err.message || 'Gagal memproses absensi. Periksa koneksi ke server.');
-      setIsSubmitting(false);
-      isAutoSubmittingRef.current = false;
-    }
   };
 
   // Kirim Absen ke Server & Validasi Aturan
@@ -671,7 +619,7 @@ export default function AttendanceCapturePage({
         {/* CARD CAMERA CONTAINER (Selalu Render Video di DOM) */}
         <div className="tablet-camera-card" style={{
           width: '100%',
-          height: '290px',
+          height: '380px',
           borderRadius: '24px',
           backgroundColor: '#0f172a',
           position: 'relative',
@@ -792,8 +740,8 @@ export default function AttendanceCapturePage({
           {hasFaceEnrolled && cameraActive && !capturedPhoto && (
             <div style={{
               position: 'absolute',
-              width: 'min(180px, 46vw)',
-              height: 'min(180px, 46vw)',
+              width: 'min(240px, 62vw)',
+              height: 'min(240px, 62vw)',
               borderRadius: '50%',
               border: isFaceVerified ? '3px solid #22c55e' : '3px solid rgba(56,189,248,0.6)',
               boxShadow: isFaceVerified
