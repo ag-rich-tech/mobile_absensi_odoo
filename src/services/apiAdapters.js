@@ -39,6 +39,40 @@ function fileToBase64(file) {
   });
 }
 
+// Nama login pegawai dari sesi Odoo (auth.me). Fallback 'unknown'.
+function getEmployeeName() {
+  try {
+    const u = getStoredUser();
+    const n = u && (u.name || u.login || u.display_name || '');
+    return String(n || '').trim().replace(/[^\w.-]+/g, '_').replace(/^_+|_+$/g, '') || 'unknown';
+  } catch {
+    return 'unknown';
+  }
+}
+// 'YYYY-MM-DD' -> 'dd.mm.yyyy'
+function fmtDdmmyyyy(ymd) {
+  const m = String(ymd || '').match(/^(\d{4})-(\d{2})-(\d{2})/);
+  return m ? `${m[3]}.${m[2]}.${m[1]}` : '';
+}
+// ekstensi dari MIME type
+function extFromType(t) {
+  const m = String(t || '').match(/(?:image|application)\/([a-zA-Z0-9.+-]+)/);
+  if (!m) return '';
+  const sub = m[1].toLowerCase();
+  const map = { jpeg: 'jpg', jpg: 'jpg', png: 'png', heic: 'heic', heif: 'heif', pdf: 'pdf' };
+  return map[sub] || sub;
+}
+// ekstensi dari nama file asli
+function extFromName(name) {
+  const m = String(name || '').match(/\.([a-zA-Z0-9]+)$/);
+  return m ? m[1].toLowerCase() : '';
+}
+// ekstensi dari dataURL (data:image/jpeg;base64,...)
+function extFromDataUrl(dataUrl) {
+  const m = String(dataUrl || '').match(/^data:([^;]+)/);
+  return m ? extFromType(m[1]) : '';
+}
+
 const KODE_STYLE = {
   H: { warna_bg: '#ecfdf5', warna_border: '#a7f3d0', warna_teks: '#047857', label: 'Hadir Tepat Waktu' },
   'H-TP': { warna_bg: '#fffbeb', warna_border: '#fde68a', warna_teks: '#b45309', label: 'Hadir Belum Pulang' },
@@ -396,10 +430,7 @@ export async function ajukanReimbursement(payload) {
   let nominal = 0;
   let keterangan = '';
   let docBase64 = null;
-  let docName = 'nota.jpg';
-  const empNama = (payload?.employee_name || '').trim().replace(/\s+/g, '_') || 'unknown';
-  const jenisLabel = String(payload?.jenis_label || payload?.reimbursement_jenis_id || 'operational').replace(/\s+/g, '_');
-  docName = `${jenisLabel}_${empNama}_${tanggal}.jpg`;
+  let docExt = 'jpg'; // default ekstensi
 
   if (payload instanceof FormData) {
     const j = payload.get('reimbursement_jenis_id');
@@ -408,7 +439,10 @@ export async function ajukanReimbursement(payload) {
     nominal = parseFloat(payload.get('nominal') || 0);
     keterangan = payload.get('keterangan') || '';
     const doc = payload.get('dokumen');
-    if (doc && doc.size > 0) docBase64 = await fileToBase64(doc);
+    if (doc && doc.size > 0) {
+      docBase64 = await fileToBase64(doc);
+      docExt = extFromType(doc.type) || extFromName(doc.name) || 'jpg';
+    }
   } else if (payload && typeof payload === 'object') {
     const j = payload.reimbursement_jenis_id;
     jenis = j && !Number.isNaN(Number(j)) ? Number(j) : null;
@@ -417,10 +451,17 @@ export async function ajukanReimbursement(payload) {
     keterangan = payload.keterangan || '';
     if (payload.dokumen instanceof File) {
       docBase64 = await fileToBase64(payload.dokumen);
+      docExt = extFromType(payload.dokumen.type) || extFromName(payload.dokumen.name) || 'jpg';
     } else if (typeof payload.dokumen === 'string') {
       docBase64 = stripDataUrl(payload.dokumen);
+      docExt = extFromDataUrl(payload.dokumen) || 'jpg';
     }
   }
+
+  // Nama dokumen di Odoo: namakaryawan_reimbursement_dd.mm.yyyy.<ext>
+  const empNama = getEmployeeName();
+  const tglFmt = fmtDdmmyyyy(tanggal);
+  const docName = `${empNama}_reimbursement_${tglFmt}.${docExt}`;
 
   const res = await odooCall('/reimbursement/submit', {
     description: keterangan,
