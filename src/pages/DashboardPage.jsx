@@ -340,32 +340,40 @@ export default function DashboardPage({ user: initialUser, onLogout, onStartAtte
       return Math.round(R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a)));
     };
 
-    if ('geolocation' in navigator) {
-      navigator.geolocation.getCurrentPosition(
-        (pos) => {
-          const lat = pos.coords.latitude;
-          const lon = pos.coords.longitude;
-          setUserLocation({ lat, lon });
+    // watchPosition (bukan one-shot): badge Dalam/Luar Area ikut
+    // berubah saat perangkat BERGERAK masuk/keluar zona. One-shot
+    // membuat badge basi bila app dibuka di luar zona lalu pemakai
+    // berjalan masuk (Okt 2026: "Luar Area" tidak auto-sync).
+    const handlePosition = (pos) => {
+      const lat = pos.coords.latitude;
+      const lon = pos.coords.longitude;
+      setUserLocation({ lat, lon });
 
-          let nearest = null;
-          let nearestDist = null;
-          for (const office of candidates) {
-            const d = haversine(lat, lon, office);
-            if (nearestDist === null || d < nearestDist) {
-              nearest = office;
-              nearestDist = d;
-            }
-          }
-          setNearestOffice(nearest);
-          setDistanceToOffice(nearestDist);
-        },
-        (err) => {
-          console.warn('GPS location fallback to office simulator:', err.message);
-          setNearestOffice(candidates[0]);
-          setDistanceToOffice(14); // Fallback jarak dekat untuk pengetesan desktop
-        },
-        { enableHighAccuracy: true, timeout: 6000 }
+      let nearest = null;
+      let nearestDist = null;
+      for (const office of candidates) {
+        const d = haversine(lat, lon, office);
+        if (nearestDist === null || d < nearestDist) {
+          nearest = office;
+          nearestDist = d;
+        }
+      }
+      setNearestOffice(nearest);
+      setDistanceToOffice(nearestDist);
+    };
+    const handlePositionError = (err) => {
+      console.warn('GPS location fallback to office simulator:', err.message);
+      setNearestOffice(candidates[0]);
+      setDistanceToOffice(14); // Fallback jarak dekat untuk pengetesan desktop
+    };
+
+    if ('geolocation' in navigator) {
+      const watchId = navigator.geolocation.watchPosition(
+        handlePosition,
+        handlePositionError,
+        { enableHighAccuracy: true, timeout: 6000, maximumAge: 0 }
       );
+      return () => navigator.geolocation.clearWatch(watchId);
     } else {
       setNearestOffice(candidates[0]);
       setDistanceToOffice(14);
@@ -557,16 +565,17 @@ export default function DashboardPage({ user: initialUser, onLogout, onStartAtte
               alignItems: 'center',
               justifyContent: 'center',
               boxShadow: '0 4px 10px rgba(234, 88, 12, 0.25)',
-              overflow: 'hidden'
+              overflow: 'hidden',
+              position: 'relative'
             }}>
-              {pegawai?.foto_profil ? (
+              {pegawai?.inisial || pegawai?.avatar || 'P'}
+              {pegawai?.foto_profil && (
                 <img
                   src={pegawai.foto_profil}
                   alt={pegawai?.nama_lengkap || 'Pegawai'}
-                  style={{ width: '100%', height: '100%', objectFit: 'cover' }}
+                  onError={(e) => { e.currentTarget.style.display = 'none'; }}
+                  style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', objectFit: 'cover' }}
                 />
-              ) : (
-                pegawai?.inisial || pegawai?.avatar || 'P'
               )}
             </div>
             {/* Status Online Green Dot */}

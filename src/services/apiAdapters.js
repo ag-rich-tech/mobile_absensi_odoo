@@ -127,27 +127,35 @@ export async function getKehadiranBawahanList(bulanParam) {
     }
     const fotoById = {};
     for (const e of (allRes.data && allRes.data.employees) || []) fotoById[e.id] = e.photo;
+    // Paralel per batch (Okt 2026: loop await sekuensial membuat daftar
+    // bawahan lambat — N round-trip berurutan, tiap call memindai DB
+    // lewat _find_token_db. Batch 10 menjaga server tetap waras.)
+    const BATCH = 10;
     const data = [];
-    for (const s of subs) {
-      let hadir = 0;
-      let izin = 0;
-      try {
-        const m = await odooCall('/subordinates/month', { employee_id: s.id, month, year });
-        hadir = ((m.data && m.data.attendance) || []).length;
-        izin = ((m.data && m.data.leaves) || []).length;
-      } catch {
-        // ringkasan boleh kosong bila bulan itu gagal dimuat
-      }
-      data.push({
-        id: s.id,
-        nama: s.name,
-        inisial: inisialDariNama(s.name),
-        nip: String(s.id),
-        jabatan: (typeof s.job === 'string' ? s.job : (s.job && s.job.name)) || 'Staff',
-        departemen: (typeof s.department === 'string' ? s.department : (s.department && s.department.name)) || '',
-        foto: photoUrl(fotoById[s.id]),
-        summary: { hadir, terlambat: 0, tidak_hadir: 0, izin, sakit: 0 },
-      });
+    for (let start = 0; start < subs.length; start += BATCH) {
+      const chunk = subs.slice(start, start + BATCH);
+      const chunkData = await Promise.all(chunk.map(async (s) => {
+        let hadir = 0;
+        let izin = 0;
+        try {
+          const m = await odooCall('/subordinates/month', { employee_id: s.id, month, year });
+          hadir = ((m.data && m.data.attendance) || []).length;
+          izin = ((m.data && m.data.leaves) || []).length;
+        } catch {
+          // ringkasan boleh kosong bila bulan itu gagal dimuat
+        }
+        return {
+          id: s.id,
+          nama: s.name,
+          inisial: inisialDariNama(s.name),
+          nip: String(s.id),
+          jabatan: (typeof s.job === 'string' ? s.job : (s.job && s.job.name)) || 'Staff',
+          departemen: (typeof s.department === 'string' ? s.department : (s.department && s.department.name)) || '',
+          foto: photoUrl(fotoById[s.id]),
+          summary: { hadir, terlambat: 0, tidak_hadir: 0, izin, sakit: 0 },
+        };
+      }));
+      data.push(...chunkData);
     }
     data.sort((a, b) => (a.nama || '').localeCompare(b.nama || ''));
     return { success: true, data };

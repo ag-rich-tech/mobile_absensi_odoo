@@ -579,6 +579,16 @@ function mapShift(sh, isToday) {
       is_today: !!isToday,
       is_hari_libur: !!sh.is_hari_libur,
       _raw: sh,
+      // Alias bentuk lama yang dibaca DashboardPage/JadwalView
+      // (id, nama, jendela masuk/pulang). Tanpa ini halaman
+      // menampilkan "undefined" + selalu "Hari Libur" (Okt 2026).
+      id: sh.tanggal || null,
+      nama: sh.nama_shift || '',
+      jam_awal_masuk: sh.jam_masuk,
+      jam_akhir_masuk: sh.jam_masuk,
+      jam_awal_pulang: sh.jam_pulang,
+      jam_akhir_pulang: sh.jam_pulang,
+      ada_jadwal_kerja: !sh.is_hari_libur,
     };
   }
   const start = utcToWib(sh.start);
@@ -594,6 +604,13 @@ function mapShift(sh, isToday) {
     is_today: !!isToday,
     is_hari_libur: false,
     _raw: sh,
+    id: sh.date || null,
+    nama: sh.name || '',
+    jam_awal_masuk: fmtHM(start),
+    jam_akhir_masuk: fmtHM(start),
+    jam_awal_pulang: fmtHM(end),
+    jam_akhir_pulang: fmtHM(end),
+    ada_jadwal_kerja: true,
   };
 }
 
