@@ -226,7 +226,8 @@ export default function AttendanceCapturePage({
             setFaceStatusText(`Wajah tidak sesuai (${matchResult.similarityScore}%). Mohon arahkan pas di tengah`);
           }
         } else {
-          setFaceStatusText('Wajah terdeteksi di kamera');
+          // Tanpa referensi lokal, pencocokan tidak pernah dicoba.
+          setFaceStatusText('Wajah belum terdaftar di perangkat ini — daftar ulang dulu');
         }
       } catch (e) {
         console.warn('Attendance face scan error:', e);
@@ -397,6 +398,13 @@ export default function AttendanceCapturePage({
     if (hasFaceEnrolled) {
       if (faceMatched || isFaceVerified) {
         finalFaceVerified = true;
+      } else if (!user?.face_descriptor) {
+        // Terdaftar di server tapi perangkat ini tidak punya referensi
+        // wajah (mis. habis login ulang / install ulang): pencocokan tidak
+        // pernah dicoba, jadi jangan tuduh wajahnya tidak cocok.
+        setErrorMessage('Wajah belum terdaftar di perangkat ini. Silakan daftar ulang wajah Anda, lalu absen kembali.');
+        setIsSubmitting(false);
+        return;
       } else {
         setErrorMessage('Verifikasi wajah belum cocok. Pastikan wajah Anda berada di tengah kamera.');
         setIsSubmitting(false);
@@ -607,6 +615,54 @@ export default function AttendanceCapturePage({
                 }}
               >
                 Daftar Wajah
+              </button>
+            )}
+          </div>
+        )}
+
+        {/* Banner: terdaftar di server tapi perangkat ini tanpa referensi wajah */}
+        {isWajibFace && hasFaceEnrolled && !user?.face_descriptor && (
+          <div style={{
+            marginBottom: '14px',
+            padding: '12px 14px',
+            borderRadius: 'var(--radius-md)',
+            backgroundColor: '#fffbeb',
+            border: '1.5px solid #fde68a',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'space-between',
+            gap: '10px'
+          }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+              <ShieldAlert size={22} style={{ color: '#d97706', flexShrink: 0 }} />
+              <div>
+                <p style={{ fontSize: '12px', fontWeight: '800', color: '#92400e', margin: 0 }}>
+                  Wajah Belum Terdaftar di Perangkat Ini
+                </p>
+                <p style={{ fontSize: '11px', color: '#b45309', margin: '2px 0 0 0' }}>
+                  Server bilang wajah Anda terdaftar, tapi HP ini tidak punya
+                  pembandingnya (mis. habis login ulang). Daftar ulang 1 kali,
+                  lalu absen kembali.
+                </p>
+              </div>
+            </div>
+            {onNavigateToEnrollment && (
+              <button
+                type="button"
+                onClick={onNavigateToEnrollment}
+                style={{
+                  padding: '7px 12px',
+                  borderRadius: 'var(--radius-sm)',
+                  backgroundColor: '#d97706',
+                  color: '#ffffff',
+                  border: 'none',
+                  fontSize: '11px',
+                  fontWeight: '700',
+                  cursor: 'pointer',
+                  whiteSpace: 'nowrap'
+                }}
+              >
+                Daftar Ulang
               </button>
             )}
           </div>

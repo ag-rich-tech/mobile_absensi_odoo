@@ -656,6 +656,17 @@ export const api = {
         pegawai = mapPegawai(tokRes.data && tokRes.data.user, null, null);
       }
     }
+    // Pertahankan referensi wajah lokal: server tidak pernah mengirim
+    // face_descriptor kembali, jadi login fresh tidak boleh menghapusnya.
+    // Tanpa ini, absen tidak akan pernah cocok sampai enroll ulang.
+    // Hanya bila server masih bilang terdaftar — bila server bilang tidak
+    // terdaftar (dicabut admin), descriptor lokal ikut dibuang.
+    if (pegawai.is_face_registered) {
+      const prevStored = getStoredUser();
+      if (prevStored && prevStored.face_descriptor) {
+        pegawai.face_descriptor = prevStored.face_descriptor;
+      }
+    }
     setStoredUser(pegawai);
     return { success: true, token: realToken, pegawai, message: 'Login berhasil.' };
   },
@@ -679,6 +690,14 @@ export const api = {
     ]);
     const d = me.data || {};
     const pegawai = mapPegawai(d.user, d.employee, prof && prof.data && prof.data.employee);
+    // Sama seperti login: jangan hapus referensi wajah lokal bila server
+    // masih bilang terdaftar (server tidak mengirim face_descriptor).
+    if (pegawai.is_face_registered) {
+      const prevStored = getStoredUser();
+      if (prevStored && prevStored.face_descriptor) {
+        pegawai.face_descriptor = prevStored.face_descriptor;
+      }
+    }
     setStoredUser(pegawai);
     return { success: true, pegawai };
   },
