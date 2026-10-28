@@ -304,7 +304,7 @@ function mapPegawai(user, employeeBrief, profile) {
     departemen: dept.name || '',
     divisi: dept.name || '',
     perusahaan: (emp.company && emp.company.name) || '',
-    foto_profil: photoUrl(emp.photo),
+    foto_profil: photoUrl(emp.photo, getToken()),
     status_aktif: true,
     // profil lengkap (bila UI butuh)
     work_email: emp.work_email || '',
@@ -776,7 +776,7 @@ export const api = {
     // riwayat 7 hari terakhir untuk kartu dashboard
     let riwayat_terakhir = [];
     try {
-      const now = new Date();
+      const now = getServerDate(); /* B#1b: jendela riwayat kartu dashboard pakai server time */
       const from = new Date(now); from.setDate(from.getDate() - 6);
       const h = await odooCall('/attendance/history', {
         date_from: fmtYMD(from),
@@ -848,7 +848,7 @@ export const api = {
   },
 
   async getRiwayat(bulan = null, tahun = null) {
-    const now = new Date();
+    const now = getServerDate(); /* B#1: akurat di semua zona/jam device (server time) */
     const m = bulan || now.getMonth() + 1;
     const y = tahun || now.getFullYear();
     const lastDay = new Date(y, m, 0).getDate();

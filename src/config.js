@@ -48,10 +48,23 @@ export function sessionUrl(path) {
  * Di dev: path relatif (ikut proxy /web).
  * Di produksi: absolut ke VITE_ODOO_URL.
  */
-export function photoUrl(path) {
+/**
+ * URL foto profil dari path yang dikirim server.
+ * Di dev: path relatif (ikut proxy).
+ * Di produksi: absolut ke VITE_ODOO_URL.
+ * Foto employee ag_rest_api 18.0.1.2.9: /ag_rest_api/v1/employee/photo/<id>
+ * memakai token query ?token= karena tag <img> tidak bisa mengirim
+ * header Authorization (Okt 2026: /web/image selalu 404 tanpa sesi).
+ * Token HANYA ditempel ke path foto employee itu, bukan URL lain.
+ */
+export function photoUrl(path, token) {
   if (!path) return null;
   if (path.startsWith('data:') || path.startsWith('http')) return path;
-  return IS_DEV ? path : `${ODOO_URL}${path}`;
+  let url = IS_DEV ? path : `${ODOO_URL}${path}`;
+  if (token && path.startsWith('/ag_rest_api/v1/employee/photo/')) {
+    url += `?token=${encodeURIComponent(token)}`;
+  }
+  return url;
 }
 
 // Kompatibilitas: nama lama yang dipakai kode lama.

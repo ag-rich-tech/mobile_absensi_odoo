@@ -14,6 +14,7 @@
  */
 import {
   odooCall,
+  getToken,
   getStoredUser,
   setStoredUser,
   getServerDate,
@@ -151,7 +152,7 @@ export async function getKehadiranBawahanList(bulanParam) {
           nip: String(s.id),
           jabatan: (typeof s.job === 'string' ? s.job : (s.job && s.job.name)) || 'Staff',
           departemen: (typeof s.department === 'string' ? s.department : (s.department && s.department.name)) || '',
-          foto: photoUrl(fotoById[s.id]),
+          foto: photoUrl(fotoById[s.id], getToken()),
           summary: { hadir, terlambat: 0, tidak_hadir: 0, izin, sakit: 0 },
         };
       }));
@@ -715,7 +716,7 @@ export async function getDaftarKaryawan() {
       // Server baru kirim job/department sebagai STRING (bukan tuple).
       jabatan: (typeof e.job === 'string' ? e.job : (e.job && e.job.name)) || 'Staff',
       departemen: (typeof e.department === 'string' ? e.department : (e.department && e.department.name)) || '',
-      foto: photoUrl(e.photo),
+      foto: photoUrl(e.photo, getToken()),
       work_email: e.work_email || '',
       work_phone: e.work_phone || '',
       manager: e.manager,
