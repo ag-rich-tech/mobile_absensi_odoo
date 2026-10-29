@@ -65,7 +65,7 @@ public class HeartbeatReceiver extends BroadcastReceiver {
     public void onReceive(Context context, Intent intent) {
         final BroadcastReceiver.PendingResult pendingResult = goAsync();
         PowerManager powerManager =
-                (PowerManager) context.getSystemService(Context.POWER_MANAGER);
+                (PowerManager) context.getSystemService(Context.POWER_SERVICE);
         PowerManager.WakeLock wakeLock = null;
         if (powerManager != null) {
             wakeLock = powerManager.newWakeLock(
