@@ -261,14 +261,20 @@ export default function LocationCheckPage({
   const isPetugasLapangan = Boolean(user?.is_petugas_lapangan || user?.ijinkan_wfa);
   const radius = officeCoords.radius;
   const isInside = distance !== null ? (distance <= radius || isPetugasLapangan) : false;
-  const canProceed = isInside && !isFakeGps;
+  // C24: clock-out TIDAK dibatasi radius (cerminan server — clock-out
+  // dari 22 km terbukti sukses). Gate radius hanya untuk 'masuk'.
+  // Gate fake-GPS tetap berlaku untuk keduanya; jarak tetap ditampilkan
+  // dan direkam untuk pulang.
+  const isPulang = !isMasuk;
+  const gateOk = isPulang || isInside;
+  const canProceed = gateOk && !isFakeGps;
 
   const handleProceedClick = () => {
     if (isFakeGps) {
       setShowFakeGpsModal(true);
       return;
     }
-    if (!isInside) return;
+    if (!gateOk) return;
 
     onProceed({
       type,
@@ -470,6 +476,37 @@ export default function LocationCheckPage({
               radius={radius}
               isInside={isInside && !isFakeGps}
             />
+          ) : gpsError ? (
+            // B14: GPS gagal JANGAN spinner abadi — tampilkan status
+            // gagal + tombol Periksa Ulang yang jelas.
+            <div style={{ width: '100%', height: '100%', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', color: 'var(--text-muted)', padding: '0 16px', boxSizing: 'border-box' }}>
+              <AlertCircle size={28} style={{ color: '#dc2626', marginBottom: '8px' }} />
+              <span style={{ fontSize: '12px', fontWeight: '700', color: '#dc2626' }}>GPS tidak tersedia</span>
+              <span style={{ fontSize: '11px', marginTop: '4px', textAlign: 'center' }}>{gpsError}</span>
+              <button
+                type="button"
+                onClick={handleFullRefresh}
+                disabled={isRefreshing || isCheckingFakeGps || isFetchingOffice}
+                style={{
+                  marginTop: '14px',
+                  height: '40px',
+                  padding: '0 18px',
+                  borderRadius: 'var(--radius-sm)',
+                  backgroundColor: '#ffffff',
+                  border: '2px solid var(--primary-600)',
+                  color: 'var(--primary-600)',
+                  fontSize: '12px',
+                  fontWeight: '800',
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '6px',
+                  cursor: 'pointer'
+                }}
+              >
+                <RefreshCw size={15} className={isRefreshing || isCheckingFakeGps || isFetchingOffice ? 'animate-spin' : ''} />
+                <span>Periksa Ulang</span>
+              </button>
+            </div>
           ) : (
             <div style={{ width: '100%', height: '100%', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', color: 'var(--text-muted)' }}>
               <Navigation size={28} className="animate-spin" style={{ color: 'var(--primary-500)', marginBottom: '8px' }} />
@@ -632,6 +669,15 @@ export default function LocationCheckPage({
                 <CheckCircle2 size={15} style={{ color: 'var(--success)', flexShrink: 0 }} />
                 <span>Titik lokasi valid! Anda berada dalam batas radius {radius}m.</span>
               </>
+            ) : isPulang ? (
+              <>
+                <AlertCircle size={15} style={{ color: 'var(--warning)', flexShrink: 0 }} />
+                <span>
+                  {distance !== null
+                    ? `Clock-out tidak dibatasi radius — Anda berada ${distance}m dari kantor, lokasi tetap direkam.`
+                    : 'Mendeteksi posisi GPS...'}
+                </span>
+              </>
             ) : (
               <>
                 <AlertCircle size={15} style={{ color: 'var(--warning)', flexShrink: 0 }} />
@@ -712,8 +758,9 @@ export default function LocationCheckPage({
               <span>Fake GPS Terdeteksi (Lihat Solusi)</span>
             </button>
           </div>
-        ) : !isInside ? (
-          /* KASUS 2: BELUM DI DALAM RADIUS KANTOR */
+        ) : !gateOk ? (
+          /* KASUS 2: BELUM DI DALAM RADIUS KANTOR (hanya untuk 'masuk';
+             'pulang' lolos lewat gateOk sehingga masuk KASUS 3) */
           <div style={{ display: 'flex', gap: '10px' }}>
             <button
               type="button"
@@ -742,27 +789,28 @@ export default function LocationCheckPage({
 
             <button
               type="button"
-              disabled={true}
-              title="Dekati lokasi kantor agar tombol aktif"
+              disabled={isMasuk}
+              onClick={isMasuk ? undefined : handleProceedClick}
+              title={isMasuk ? 'Dekati lokasi kantor agar tombol aktif' : 'Pulang dapat dilakukan dari lokasi mana saja'}
               style={{
                 flex: 1,
                 height: '50px',
                 borderRadius: 'var(--radius-md)',
-                backgroundColor: 'var(--bg-slate)',
-                border: '1px solid var(--border-light)',
-                color: 'var(--text-light)',
+                backgroundColor: isMasuk ? 'var(--bg-slate)' : 'var(--primary-gradient)',
+                border: isMasuk ? '1px solid var(--border-light)' : 'none',
+                color: isMasuk ? 'var(--text-light)' : '#ffffff',
                 fontSize: '14px',
                 fontWeight: '700',
                 display: 'flex',
                 alignItems: 'center',
                 justifyContent: 'center',
                 gap: '8px',
-                cursor: 'not-allowed',
-                opacity: 0.6
+                cursor: isMasuk ? 'not-allowed' : 'pointer',
+                opacity: isMasuk ? 0.6 : 1
               }}
             >
-              <Lock size={16} />
-              <span>Lanjutkan</span>
+              {isMasuk ? <Lock size={16} /> : <ArrowRight size={16} />}
+              <span>{isMasuk ? 'Lanjutkan' : 'Lanjutkan Pulang'}</span>
             </button>
           </div>
         ) : (

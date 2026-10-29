@@ -294,7 +294,15 @@ export async function odooCall(path, params = {}, { timeoutMs = 30000 } = {}) {
       }
       // Server menjawab JSON error juga untuk status non-2xx (mis. 401).
       if (!res.ok && json.status !== 'error') {
-        const stripped = text.replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 200);
+        // C26: buang dulu isi blok <script> (bisa memuat csrf_token
+        // live), baru strip tag lain, lalu potong — jangan pernah
+        // tampilkan badan HTML mentah ke pengguna.
+        const stripped = text
+          .replace(/<script\b[^>]*>[\s\S]*?<\/script\s*>/gi, ' ')
+          .replace(/<[^>]*>/g, ' ')
+          .replace(/\s+/g, ' ')
+          .trim()
+          .slice(0, 200);
         json = {
           status: 'error',
           code: res.status === 401 ? 'NO_TOKEN' : 'ERROR',
@@ -332,6 +340,23 @@ export async function odooCall(path, params = {}, { timeoutMs = 30000 } = {}) {
   return result; // {status:'success', message, data}
 }
 
+// C23: error autentikasi (token hilang/salah/kedaluwarsa). Pemanggil
+// WAJIB meneruskannya ke layar login, bukan menelannya jadi data kosong.
+export function isAuthError(err) {
+  return !!err && (err.status === 401
+    || ['NO_TOKEN', 'INVALID_TOKEN', 'TOKEN_EXPIRED', 'NO_SESSION'].includes(err.code));
+}
+
+// Strip HTML -> teks polos (C26/PNG-3): buang blok <script> dulu
+// (isinya bisa memuat csrf_token), baru strip tag lain.
+export function stripHtmlToText(html) {
+  return String(html || '')
+    .replace(/<script\b[^>]*>[\s\S]*?<\/script\s*>/gi, ' ')
+    .replace(/<[^>]*>/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
 // Direct /jsonrpc execute_kw DIHAPUS di branch odoo 18.0: semua akses data
 // lewat endpoint ag_rest_api (server adalah sumber kebenaran, tanpa
 // kredensial tersimpan di perangkat). Fungsi ini sengaja tidak ada lagi.
@@ -353,9 +378,11 @@ function mapPegawai(user, employeeBrief, profile) {
     nama: empName,
     nama_lengkap: empName,
     inisial,
-    // NIP: pakai barcode / PIN karyawan dari Odoo, fallback ke ID
-    nip: emp.barcode || emp.pin || (emp.id ? String(emp.id) : ''),
-    email: (user && user.login) || emp.work_email || '',
+    // C13: NIP = server nip -> barcode -> pin -> '-'. TIDAK PERNAH
+    // fallback ke id Odoo (id bukan NIP dan membocorkan nomor urut).
+    nip: emp.nip || emp.barcode || emp.pin || '-',
+    // PRF-B3: email kerja dari Odoo, bukan login user.
+    email: emp.work_email || (user && user.login) || '',
     no_hp: emp.mobile_phone || emp.work_phone || '',
     jabatan: (emp.job && emp.job.name) || '',
     departemen: dept.name || '',
@@ -383,6 +410,10 @@ function mapPegawai(user, employeeBrief, profile) {
     face_enrolled_at: emp.face_enrolled_at || null,
     // kode pendek pendaftaran wajah (barcode di form employee Odoo)
     face_code: emp.face_code || '',
+    // C5 (1.2.23): descriptor milik sendiri dari server (_emp_profile
+    // hanya mengirimkannya ke pemilik sendiri; list/bawahan tidak
+    // memuatnya). '' bila server tidak mengirim (server lama).
+    face_descriptor: emp.face_descriptor || '',
     // policy lokasi (dari server, ag_rest_api): 'wfo' | 'anywhere'
     location_policy: emp.location_policy || 'wfo',
     // lokasi yang diizinkan (wfo): kosong = semua lokasi perusahaan
@@ -398,6 +429,9 @@ function mapPegawai(user, employeeBrief, profile) {
     // jadwal_hari); kosong bila server belum mengirim.
     jadwal_ringkasan: emp.jadwal_ringkasan || '',
     jadwal_hari: emp.jadwal_hari || [],
+    // C4: false = karyawan tanpa kalender -> view tampil 'Belum ada
+    // jadwal', BUKAN 'Fleksibel' (yang menyiratkan pola fleksibel).
+    has_calendar: emp.has_calendar ?? null,
     // mentah (bila UI butuh)
     _odoo_user: user || null,
     _odoo_employee: emp || null,
@@ -557,7 +591,7 @@ function mapAttendanceItem(att, shift = null) {
     // Bila shift tersedia, status dihitung sungguhan; bila tidak
     // (jadwal gagal dimuat), pakai nilai lama agar tampilan tidak crash
     // — tapi nilai itu BUKAN hasil hitung, jangan dibaca sebagai fakta.
-    status_masuk: st ? st.status_masuk : (inD ? 'tepat_waktu' : null),
+    status_masuk: st ? st.status_masuk : null,
     status_pulang: st ? st.status_pulang : (outD ? 'normal' : null),
     menit_terlambat: st ? st.menit_terlambat : 0,
     menit_pulang_cepat: st ? st.menit_pulang_cepat : 0,
@@ -582,19 +616,35 @@ function stateLabelId(state) {
 }
 
 function mapLeave(lv) {
+  // D2-01: badge dari status_app server (menunggu/disetujui/ditolak/
+  // dibatalkan), BUKAN state mentah Odoo (confirm/validate/refuse).
+  // D2-02: dokumen tidak lagi hardcode null — baca dari server.
+  const statusApp = lv.status_app
+    || mapApprovalStatus(lv, lv.kategori === 'dinas' ? 'dinas' : 'cuti');
   return {
     id: lv.id,
+    jenis_id: lv.type ? lv.type.id : null,
     jenis_izin: lv.type ? lv.type.name : '',
     label_jenis: lv.type ? lv.type.name : '',
+    kategori: lv.kategori || '',
     tanggal_mulai: lv.date_from ? fmtTanggalIdWib(utcToWib(lv.date_from)) : '',
     tanggal_selesai: lv.date_to ? fmtTanggalIdWib(utcToWib(lv.date_to)) : '',
     alasan: lv.name || '',
-    status: lv.state,
+    status: statusApp,
+    state: lv.state,
     total_hari: lv.number_of_days,
+    // Durasi dihitung selisih kalender + 1 (lihat IzinView) -> label
+    // jujurnya 'Hari Kalender', bukan 'Hari Kerja'.
+    durasi_label: 'Hari Kalender',
     approval_info: { status_label: lv.state_label || stateLabelId(lv.state) },
     catatan_approval: '',
-    dokumen_url: null,
-    nama_dokumen: null,
+    dokumen_ada: !!lv.dokumen_ada,
+    dokumen_id: lv.dokumen_id ?? lv.attachment_id ?? null,
+    dokumen_url: lv.dokumen_url || null,
+    nama_dokumen: lv.nama_dokumen || null,
+    kota_tujuan: lv.kota_tujuan || null,
+    instansi_tujuan: lv.instansi_tujuan || null,
+    anggaran_biaya: lv.anggaran_biaya ?? null,
     _raw: lv,
   };
 }
@@ -630,32 +680,57 @@ function mapApprovalSteps(lv) {
 }
 
 function mapApprovalItem(lv) {
-  const modul = lv.kategori === 'dinas' ? 'dinas'
-    : (lv.modul === 'reimbursement' ? 'reimbursement' : 'cuti');
-  if (modul === 'reimbursement') {
-    const emp = lv.employee || {};
-    const status = mapApprovalStatus(lv, 'reimbursement');
-    const steps = mapApprovalSteps(lv);
+  // C16 (K1/APR-B1/B2): klasifikasi dari server `tipe`
+  // (cuti/dinas/lembur/reimbursement) — JANGAN `lv.modul` (tidak pernah
+  // dikirim server). Cabang lembur wajib ada: sebelumnya lembur jatuh
+  // ke cabang cuti dan aksinya salah rute (NOT_ALLOWED + risiko id
+  // antar-model bertabrakan menyetujui cuti orang lain).
+  const tipe = lv.tipe
+    || (lv.kategori === 'dinas' ? 'dinas'
+      : (lv.kategori === 'reimbursement' ? 'reimbursement'
+        : (lv.kategori === 'lembur' ? 'lembur' : 'cuti')));
+  const status = mapApprovalStatus(lv, tipe === 'reimbursement' ? 'reimbursement' : tipe);
+  const steps = mapApprovalSteps(lv);
+  // C29: jangan buang field server — pemohon lengkap, dokumen, dan
+  // field spesifik tiap tipe diteruskan apa adanya ke view.
+  const emp = lv.employee || {};
+  const pemohon = lv.pemohon || {};
+  const pemohonOut = {
+    nama: pemohon.nama || emp.name || lv.employee_name || '',
+    jabatan: pemohon.jabatan || (emp.job ? (emp.job.name || emp.job[1]) : '') || '',
+    departemen: pemohon.departemen || (emp.department ? (emp.department.name || emp.department[1]) : '') || '',
+    nip: pemohon.nip || emp.nip || '',
+    foto: pemohon.foto || emp.photo || null,
+  };
+  const dokumenAda = !!lv.dokumen_ada;
+  const dokumenId = lv.dokumen_id ?? lv.attachment_id ?? null;
+  if (tipe === 'reimbursement') {
+    const produk = lv.product
+      ? (Array.isArray(lv.product) ? (lv.product[1] || lv.product[0]) : lv.product)
+      : (lv.produk || '');
     return {
       id: lv.id,
+      tipe: 'reimbursement',
       pengajuan_id: lv.pengajuan_id || lv.sheet_id || lv.id,
       modul: 'reimbursement',
       label_modul: 'Klaim Reimbursement',
-      pemohon: {
-        nama: emp.name || lv.employee_name || '',
-        jabatan: emp.job ? (emp.job.name || emp.job[1]) : '',
-        departemen: emp.department ? (emp.department.name || emp.department[1]) : '',
-        nip: emp.nip || '',
-        foto: emp.photo || null,
-      },
+      pemohon: pemohonOut,
       created_at: lv.submit_date ? fmtTanggalId(utcToWib(lv.submit_date)) : '',
       status,
+      validation_type: lv.validation_type || null,
+      dokumen_ada: dokumenAda,
+      dokumen_id: dokumenId,
       detail: {
-        jenis_pengajuan: lv.product ? (Array.isArray(lv.product) ? lv.product[1] || lv.product[0] : lv.product) || 'Klaim Operasional' : 'Klaim Operasional',
+        jenis_pengajuan: produk || 'Klaim Operasional',
+        produk: produk || '',
         nominal: `Rp ${Number(lv.total_amount || 0).toLocaleString('id-ID')}`,
         nominal_raw: Number(lv.total_amount || 0),
-        tanggal_kuitansi: lv.expense_date || '',
-        keterangan: lv.description || '',
+        tanggal_kuitansi: lv.expense_date || lv.tanggal_nota || '',
+        tanggal_nota: lv.expense_date || lv.tanggal_nota || '',
+        keterangan: lv.description || lv.keterangan || '',
+        deskripsi: lv.description || lv.keterangan || '',
+        dokumen_ada: dokumenAda,
+        dokumen_id: dokumenId,
         dokumen_url: lv.attachment || lv.dokumen_url || null,
       },
       alur_steps: [],
@@ -666,29 +741,63 @@ function mapApprovalItem(lv) {
       _raw: lv,
     };
   }
-  const pemohon = lv.pemohon || {};
-  const status = mapApprovalStatus(lv, modul);
-  const steps = mapApprovalSteps(lv);
+  if (tipe === 'lembur') {
+    const tanggalLembur = lv.date
+      ? fmtTanggalId(utcToWib(lv.date + ' 00:00:00'))
+      : (lv.tanggal_lembur || '');
+    return {
+      id: lv.id,
+      tipe: 'lembur',
+      pengajuan_id: lv.id,
+      modul: 'lembur',
+      label_modul: 'Lembur',
+      pemohon: pemohonOut,
+      created_at: lv.date ? fmtTanggalId(utcToWib(lv.date + ' 00:00:00')) : '',
+      status,
+      validation_type: lv.validation_type || null,
+      dokumen_ada: dokumenAda,
+      dokumen_id: dokumenId,
+      detail: {
+        jenis_pengajuan: 'Lembur',
+        tanggal_lembur: tanggalLembur,
+        date_to: lv.date_to || null,
+        jam_mulai: lv.jam_mulai ?? null,
+        jam_selesai: lv.jam_selesai ?? null,
+        durasi_jam: lv.approved_hours ?? lv.proposed_hours ?? null,
+        upah: lv.upah_lembur ?? lv.total_upah_lembur ?? null,
+        upah_formatted: lv.upah_lembur_formatted ?? lv.total_upah_lembur_formatted ?? null,
+        keterangan: lv.name || lv.keterangan || '',
+        dokumen_ada: dokumenAda,
+        dokumen_id: dokumenId,
+      },
+      alur_steps: [],
+      catatan_saya: lv.catatan_saya || '',
+      is_current: true,
+      step_ke: steps.step_ke,
+      total_step: steps.total_step,
+      _raw: lv,
+    };
+  }
+  const modul = tipe === 'dinas' ? 'dinas' : 'cuti';
   const tanggalMulai = lv.tanggal_mulai
     || (lv.date_from ? fmtTanggalId(utcToWib(lv.date_from)) : '');
   const tanggalSelesai = lv.tanggal_selesai
     || (lv.date_to ? fmtTanggalId(utcToWib(lv.date_to)) : '');
   return {
     id: lv.id,
+    tipe: modul,
     pengajuan_id: lv.id,
     modul,
     label_modul: modul === 'dinas' ? 'Dinas Luar Kota' : 'Cuti / Izin',
-    pemohon: {
-      nama: pemohon.nama || lv.employee_name || '',
-      jabatan: pemohon.jabatan || '',
-      departemen: pemohon.departemen || '',
-      nip: pemohon.nip || '',
-      foto: pemohon.foto || null,
-    },
+    pemohon: pemohonOut,
     created_at: lv.date_from ? fmtTanggalId(utcToWib(lv.date_from)) : '',
     status,
+    validation_type: lv.validation_type || null,
+    dokumen_ada: dokumenAda,
+    dokumen_id: dokumenId,
     detail: {
       jenis: lv.jenis || (lv.type ? lv.type.name : ''),
+      jenis_pengajuan: lv.jenis || (lv.type ? lv.type.name : ''),
       tanggal_mulai: tanggalMulai,
       tanggal_selesai: tanggalSelesai,
       periode: `${tanggalMulai} s/d ${tanggalSelesai}`,
@@ -697,7 +806,12 @@ function mapApprovalItem(lv) {
       alasan: lv.keterangan || lv.name || '',
       kota_tujuan: lv.kota_tujuan || null,
       instansi_tujuan: lv.instansi_tujuan || null,
-      anggaran_biaya: lv.anggaran_biaya || null,
+      anggaran_biaya: lv.anggaran_biaya ?? null,
+      anggaran_biaya_formatted: lv.anggaran_biaya_formatted
+        || (lv.anggaran_biaya != null ? `Rp ${Number(lv.anggaran_biaya).toLocaleString('id-ID')}` : null),
+      dokumen_ada: dokumenAda,
+      dokumen_id: dokumenId,
+      dokumen_url: lv.dokumen_url || null,
     },
     alur_steps: [],
     catatan_saya: lv.catatan_saya || '',
@@ -709,11 +823,19 @@ function mapApprovalItem(lv) {
 }
 function mapAnnouncement(a) {
   const body = a.body || '';
+  // PNG-3: modal menampilkan teks polos — strip tag HTML (dan isi
+  // <script>) di mapper, jangan pernah render HTML mentah.
+  const bodyText = stripHtmlToText(body);
+  // PNG-7: tipe dari pinned server (penting vs informasi), bukan
+  // hardcode 'Informasi' untuk semua kartu.
+  const tipe = a.tipe || (a.pinned ? 'penting' : 'informasi');
   return {
     id: a.id,
     judul: a.title || '',
-    ringkasan: body.replace(/<[^>]*>/g, '').slice(0, 140),
-    isi: body,
+    ringkasan: bodyText.slice(0, 140),
+    isi: bodyText,
+    tipe,
+    label_tipe: a.label_tipe || (tipe === 'penting' ? 'Penting' : 'Informasi'),
     tanggal_mulai: a.publish_date ? fmtTanggalId(utcToWib(a.publish_date + ' 00:00:00')) : '',
     created_at_human: a.publish_date ? fmtTanggalId(utcToWib(a.publish_date + ' 00:00:00')) : '',
     is_pinned: !!a.pinned,
@@ -723,11 +845,10 @@ function mapAnnouncement(a) {
     is_khusus: false,
     // Server lama tidak mengirim lampiran -> false secara jujur.
     has_lampiran: !!a.has_lampiran,
+    lampiran_id: a.lampiran_id ?? a.attachment_id ?? null,
     gambar_url: null,
-    pembuat: 'HRD',
-    // View (modal detail) membaca `konten`; mapper lama hanya mengisi
-    // `isi`, sehingga isi detail selalu kosong.
-    konten: body,
+    pembuat: a.pembuat || a.author || a.author_name || 'HRD',
+    konten: bodyText,
     _raw: a,
   };
 }
@@ -740,11 +861,17 @@ function mapSlip(s) {
     id: s.id,
     nomor_slip: s.name || `#${s.id}`,
     periode,
-    status_pembayaran: s.state_label || s.state,
+    // S6: status pembayaran HANYA bila server mengirimnya (state Odoo
+    // 'done'/'paid' bukan bukti bayar — badge 'dibayar' lama tak pernah
+    // benar karena membandingkan state_label dengan 'dibayar').
+    status_pembayaran: s.status_pembayaran ?? s.payment_state ?? null,
+    state_label: s.state_label || s.state,
+    tanggal_bayar: s.tanggal_bayar ?? s.date_paid ?? null,
     // Angka dari server (bila dikirim). Server lama tidak mengirim angka
     // sama sekali -> tetap 0 secara jujur, bukan angka karangan.
     gaji_bersih: s.net_pay ?? s.total ?? s.net ?? 0,
-    gaji_pokok: s.gross ?? s.basic ?? 0,
+    // S1: gaji pokok dari BASIC, JANGAN gross (gross = pokok+tunjangan).
+    gaji_pokok: s.gaji_pokok ?? s.basic ?? 0,
     _raw: s,
   };
 }
@@ -773,7 +900,15 @@ function mapSlipDetail(s) {
   // tunjangan adalah komponen yang berbeda dan jumlahnya = gross.
   const gajiPokok = basicLines.length > 0
     ? sum(basicLines)
-    : Math.max(0, gross - alwTotal);
+    : (s.gaji_pokok ?? s.basic ?? Math.max(0, gross - alwTotal));
+  // S2: view membaca {nama, tipe} — mapper lama mengirim {label} saja
+  // sehingga nama rincian kosong dan badge lembur/denda tak pernah tampil.
+  const tipeRincian = (l) => {
+    const hay = `${l.code || ''} ${l.name || ''}`.toLowerCase();
+    if (/lembur|overtime|\bot\b/.test(hay)) return 'lembur_otomatis';
+    if (/denda|terlambat|late|fine|potongan_otomatis/.test(hay)) return 'denda_otomatis';
+    return '';
+  };
   return {
     nomor_slip: s.name || `#${s.id}`,
     periode: s.date_from && s.date_to
@@ -783,13 +918,26 @@ function mapSlipDetail(s) {
     total_tunjangan: alwTotal,
     total_potongan: sum(dedLines),
     gaji_bersih: s.net_pay ?? 0,
-    total_kehadiran: null,
-    total_jam_lembur: null,
-    total_menit_terlambat: null,
-    rincian_tunjangan: alwLines.map((l) => ({ label: l.name, nominal: l.amount })),
-    rincian_potongan: dedLines.map((l) => ({ label: l.name, nominal: Math.abs(l.amount) })),
-    status_pembayaran: s.state_label || s.state,
-    metode_pembayaran: s.currency || '',
+    bruto: s.bruto ?? s.gross ?? null,
+    neto: s.neto ?? s.net_pay ?? null,
+    // S3: statistik hanya bila server mengirimnya (bukan hardcode null
+    // di satu sisi dan angka di sisi lain — view menyembunyikan baris
+    // bila nilainya null).
+    total_kehadiran: s.total_kehadiran ?? (s.statistik && s.statistik.hadir) ?? null,
+    total_jam_lembur: s.total_jam_lembur ?? (s.statistik && s.statistik.lembur) ?? null,
+    total_menit_terlambat: s.total_menit_terlambat ?? (s.statistik && s.statistik.terlambat) ?? null,
+    rincian_tunjangan: alwLines.map((l) => ({ nama: l.name, label: l.name, nominal: l.amount, tipe: tipeRincian(l) })),
+    rincian_potongan: dedLines.map((l) => ({ nama: l.name, label: l.name, nominal: Math.abs(l.amount), tipe: tipeRincian(l) })),
+    status_pembayaran: s.status_pembayaran ?? s.payment_state ?? null,
+    state_label: s.state_label || s.state,
+    tanggal_bayar: s.tanggal_bayar ?? s.date_paid ?? null,
+    // R6: metode pembayaran = NAMA bila server mengirimnya; kode
+    // currency ('IDR'/'USD') bukan nama metode -> kosongkan saja.
+    metode_pembayaran: s.metode_pembayaran || s.nama_metode_pembayaran || '',
+    // Dokumen slip (C15): tombol Unduh hanya tampil bila ada.
+    dokumen_id: s.dokumen_id ?? s.attachment_id ?? null,
+    dokumen_ada: !!s.dokumen_ada || !!(s.dokumen_id ?? s.attachment_id),
+
     _raw: s,
   };
 }
@@ -809,13 +957,17 @@ function mapOvertime(ot) {
   return {
     id: ot.id,
     tanggal_lembur: ot.date ? fmtTanggalId(utcToWib(ot.date + ' 00:00:00')) : '',
-    jam_mulai: null,
-    jam_selesai: null,
+    // D2-11: jam dari server (kontrak C2); null -> view tampilkan '-'.
+    jam_mulai: ot.jam_mulai ?? ot.time_start ?? ot.start_time ?? null,
+    jam_selesai: ot.jam_selesai ?? ot.time_end ?? ot.end_time ?? null,
     durasi_jam: ot.approved_hours || ot.proposed_hours || 0,
     keterangan_tugas: ot.name || '',
     status,
     approval_info: { status_label: ot.state_label || ot.state },
-    total_upah_lembur_formatted: null,
+    // D2-12: upah dari server; null -> view sembunyikan kartu upah
+    // (jangan tarif Rp 75.000 fiktif).
+    total_upah_lembur: ot.upah_lembur ?? ot.total_upah_lembur ?? null,
+    total_upah_lembur_formatted: ot.upah_lembur_formatted ?? ot.total_upah_lembur_formatted ?? null,
     _raw: ot,
   };
 }
@@ -912,12 +1064,11 @@ export const api = {
         pegawai = mapPegawai(tokRes.data && tokRes.data.user, null, null);
       }
     }
-    // Pertahankan referensi wajah lokal: server tidak pernah mengirim
-    // face_descriptor kembali, jadi login fresh tidak boleh menghapusnya.
-    // Tanpa ini, absen tidak akan pernah cocok sampai enroll ulang.
-    // Hanya bila server masih bilang terdaftar — bila server bilang tidak
-    // terdaftar (dicabut admin), descriptor lokal ikut dibuang.
-    if (pegawai.is_face_registered) {
+    // 1.2.23: server kini mengirim face_descriptor milik sendiri
+    // (mapPegawai). Nilai server menang; lokal hanya fallback bila
+    // server tidak mengirim (server lama) dan masih terdaftar.
+    // Bila tidak terdaftar, descriptor lokal ikut dibuang.
+    if (!pegawai.face_descriptor && pegawai.is_face_registered) {
       const prevStored = getStoredUser();
       if (prevStored && prevStored.face_descriptor) {
         pegawai.face_descriptor = prevStored.face_descriptor;
@@ -946,9 +1097,9 @@ export const api = {
     ]);
     const d = me.data || {};
     const pegawai = mapPegawai(d.user, d.employee, prof && prof.data && prof.data.employee);
-    // Sama seperti login: jangan hapus referensi wajah lokal bila server
-    // masih bilang terdaftar (server tidak mengirim face_descriptor).
-    if (pegawai.is_face_registered) {
+    // 1.2.23: sama seperti login — nilai server menang, lokal hanya
+    // fallback bila server tidak mengirim dan masih terdaftar.
+    if (!pegawai.face_descriptor && pegawai.is_face_registered) {
       const prevStored = getStoredUser();
       if (prevStored && prevStored.face_descriptor) {
         pegawai.face_descriptor = prevStored.face_descriptor;
@@ -1018,12 +1169,20 @@ export const api = {
         location_policy: policy,
         ijinkan_wfa: policy === 'anywhere',
         jam_kerja_hari_ini,
+        // C22 (1.2.23): status istirahat + sinyal jadwal (false =
+        // jadwal gagal dimuat; null = server tidak mengirim).
+        jadwal_ok: d.jadwal_ok ?? null,
+        status_istirahat: d.status_istirahat ?? null,
         absensi_hari_ini,
         riwayat_terakhir,
         server_time: d.server_time,
         fitur: cfgData.features || {},
       };
-    } catch {
+    } catch (err) {
+      // C23: error auth (token hilang/kedaluwarsa) HARUS diteruskan ke
+      // layar login — fallback legacy menampilkan dashboard kosong
+      // sukses-palsu dan menelan 401.
+      if (isAuthError(err)) throw err;
       return this.getDashboardLegacy();
     }
   },
@@ -1189,11 +1348,21 @@ export const api = {
     const withBalance = typeItems.find((t) => t.requires_allocation
       && /tahunan|annual/i.test(t.name || ''))
       || typeItems.find((t) => t.requires_allocation);
+    // D2-05/C17: kuota PER TIPE (sisa + maksimal bila dikirim) agar
+    // view memakai sisa TIPE YANG DIPILIH, bukan tipe sembarang.
+    const kuotaPerTipe = typeItems.map((t) => ({
+      id: t.id,
+      nama: t.name,
+      requires_allocation: !!t.requires_allocation,
+      sisa: t.virtual_remaining_leaves ?? null,
+      maksimal: t.max_leaves ?? null,
+    }));
     return {
       success: true,
       kuota_cuti: withBalance
         ? { sisa: withBalance.virtual_remaining_leaves ?? null, nama: withBalance.name, tahun: new Date().getFullYear() }
         : { sisa: null, nama: '', tahun: new Date().getFullYear() },
+      kuota_per_tipe: kuotaPerTipe,
       pengajuan: items.map(mapLeave),
       tipe_cuti: typeItems,
     };
@@ -1202,11 +1371,15 @@ export const api = {
   async ajukanIzin(data) {
     // data: FormData {jenis_izin, tanggal_mulai, tanggal_selesai, alasan, dokumen?}
     const get = (k) => (data instanceof FormData ? data.get(k) : data[k]);
-    const jenis = String(get('jenis_izin') || 'cuti').toLowerCase();
+    // D2-04: cocokkan BY ID terhadap /timeoff/types — pencocokan lama
+    // berdasar kata Indonesia ('cuti'/'sakit') gagal total untuk nama
+    // tipe Inggris ('Sick Time Off') dan bisa salah pilih tipe.
+    // Fallback hanya nama PERSIS (case-insensitive), bukan substring.
+    const jenisRaw = get('jenis_izin');
     const types = await odooCall('/timeoff/types');
     const items = (types.data && types.data.items) || [];
-    const match = items.find((t) => t.name.toLowerCase().includes(jenis))
-      || items.find((t) => jenis.includes(t.name.toLowerCase().split(' ')[0]));
+    const match = items.find((t) => String(t.id) === String(jenisRaw))
+      || items.find((t) => String(t.name || '').toLowerCase() === String(jenisRaw || '').toLowerCase());
     // JANGAN fallback diam-diam ke jenis pertama: jenis yang tidak
     // dikenali harus gagal dengan pesan jelas, bukan terkirim sebagai
     // jenis yang salah.
@@ -1239,27 +1412,66 @@ export const api = {
     return { success: true, count: (res.data && res.data.count) || 0 };
   },
 
-  async getApprovals(tab) {
+  async getApprovals(tab, opts = {}) {
     // Tab 'riwayat' memakai route history (ag 1.2.20); tab lain memakai
     // inbox. Mapper lama mengabaikan argumen tab sehingga Riwayat
     // selalu menampilkan item menunggu.
+    // APR-B10/C30: paginasi limit+offset untuk tombol 'Muat lagi'.
+    const limit = opts.limit || 50;
+    const offset = opts.offset || 0;
     const path = tab === 'riwayat' ? '/approvals/history' : '/approvals/inbox';
-    const res = await odooCall(path, { limit: 50 });
+    const res = await odooCall(path, { limit, offset });
     const items = (res.data && res.data.items) || [];
-    return { success: true, data: items.map(mapApprovalItem) };
+    const count = (res.data && typeof res.data.count === 'number') ? res.data.count : null;
+    return {
+      success: true,
+      data: items.map(mapApprovalItem),
+      count,
+      has_more: count != null ? (offset + items.length < count) : items.length >= limit,
+    };
   },
 
-  async submitApprovalAction(id, data) {
+  // C16: routing aksi per tipe. Bentuk baru: submitApprovalAction(item,
+  // data) dengan item = {tipe, id, pengajuan_id}. Bentuk lama (id, data)
+  // tetap jalan sebagai cuti/dinas.
+  async submitApprovalAction(idOrItem, data) {
     const aksi = data && data.aksi === 'tolak' ? 'refuse' : 'approve';
-    // Catatan penolakan diteruskan (server lama mengabaikannya; server
-    // baru menyimpannya). Tanpa ini, alasan tolak yang diketik user
-    // hilang di semua jalur.
-    const res = await odooCall('/approvals/act', {
-      leave_id: id,
-      action: aksi,
-      ...(data && data.catatan ? { catatan: data.catatan, reason: data.catatan } : {}),
-    });
+    const catatan = data && data.catatan ? { catatan: data.catatan, reason: data.catatan } : {};
+    const item = (idOrItem && typeof idOrItem === 'object') ? idOrItem : null;
+    const tipe = item ? (item.tipe || item.modul) : 'cuti';
+    let res;
+    if (tipe === 'lembur') {
+      res = await odooCall('/overtime/approve', {
+        overtime_id: item.pengajuan_id || item.id,
+        id: item.pengajuan_id || item.id,
+        action: aksi,
+        aksi,
+        ...catatan,
+      });
+    } else if (tipe === 'reimbursement') {
+      res = await odooCall('/reimbursement/approve', {
+        sheet_id: item.pengajuan_id || item.id,
+        action: aksi,
+        aksi,
+        ...catatan,
+      });
+    } else {
+      // Catatan penolakan diteruskan (server lama mengabaikannya;
+      // server baru menyimpannya). Tanpa ini, alasan tolak yang
+      // diketik user hilang di semua jalur.
+      res = await odooCall('/approvals/act', {
+        leave_id: item ? (item.pengajuan_id || item.id) : idOrItem,
+        action: aksi,
+        ...catatan,
+      });
+    }
     return { success: true, message: res.message || 'Berhasil diproses.' };
+  },
+
+  // C9: batalkan cuti/dinas MILIK SENDIRI yang masih pending.
+  async cancelTimeoff(id) {
+    const res = await odooCall('/timeoff/cancel', { leave_id: id, id });
+    return { success: true, message: res.message || 'Pengajuan dibatalkan.' };
   },
 
   // ---- Pengumuman ----
@@ -1292,9 +1504,13 @@ export const api = {
     const found = items.find((a) => String(a.id) === String(id));
     if (!found) throw new Error('Pengumuman tidak ditemukan.');
     // Tandai dibaca di server (ag 1.2.20: POST /announcement/mark_read).
-    // Kegagalan mark-read tidak boleh menggagalkan pembukaan detail.
-    await safe(odooCall('/announcement/mark_read', { announcement_id: id }));
-    return { success: true, data: { ...mapAnnouncement(found), is_dibaca: true } };
+    // Kegagalan mark-read tidak boleh menggagalkan pembukaan detail,
+    // TAPI juga tidak boleh diklaim berhasil (PNG-5): is_dibaca hanya
+    // true bila server mengonfirmasi atau item memang sudah dibaca.
+    const mr = await safe(odooCall('/announcement/mark_read', { announcement_id: id }));
+    const marked = !!(mr && mr.status !== 'error' && mr.success !== false);
+    const mapped = mapAnnouncement(found);
+    return { success: true, data: { ...mapped, is_dibaca: mapped.is_dibaca || marked } };
   },
 
   // ---- Slip gaji ----
@@ -1315,7 +1531,14 @@ export const api = {
   async getLembur() {
     const res = await odooCall('/overtime/history', { limit: 50 });
     const items = (res.data && res.data.items) || [];
-    return { success: true, lembur: items.map(mapOvertime) };
+    return {
+      success: true,
+      lembur: items.map(mapOvertime),
+      // D2-12: ringkasan/tarif hanya bila server mengirimnya; null
+      // berarti view menyembunyikan kartu (bukan angka fiktif).
+      ringkasan: (res.data && (res.data.ringkasan || res.data.ringkasan_bulan_ini)) || null,
+      tarif_upah_per_jam: (res.data && res.data.tarif_upah_per_jam) || null,
+    };
   },
 
   async ajukanLembur(payload) {
@@ -1340,10 +1563,13 @@ export const api = {
   },
 
   // ---- Jadwal / Shift ----
-  async getJadwal() {
-    const [today, upcoming] = await Promise.all([
+  // 1.2.23: menerima {start, days} untuk jendela lain (diteruskan ke
+  // /shift/upcoming) + hari_kerja/has_calendar dari /calendar/schedule.
+  async getJadwal({ start, days } = {}) {
+    const [today, upcoming, sched] = await Promise.all([
       safe(odooCall('/shift/today')),
-      safe(odooCall('/shift/upcoming', { days: 30 })),
+      safe(odooCall('/shift/upcoming', { days: days || 30, ...(start ? { start } : {}) })),
+      safe(odooCall('/calendar/schedule')),
     ]);
     const todayItems = (today && today.data && today.data.items) || [];
     const upItems = (upcoming && upcoming.data && upcoming.data.items) || [];
@@ -1357,15 +1583,26 @@ export const api = {
     // menampilkan kartu netral.
     const todayWib = fmtYMDWib(new Date(getServerDate().getTime() + 7 * 3600 * 1000));
     const todayFromUpcoming = upItems.find((s) => s.tanggal === todayWib);
+    // Gagal total (kedua sumber null karena jaringan/server) -> gagal
+    // jujur, bukan daftar kosong yang disamarkan jadi 'tidak ada jadwal'.
+    if (!today && !upcoming) {
+      return { success: false, message: 'Gagal memuat jadwal dari server.' };
+    }
     return {
       success: true,
       is_roster: isRoster,
       shift_aktif: todayItems.length
         ? mapShift(todayItems[0], true)
         : (todayFromUpcoming ? mapShift(todayFromUpcoming, true) : null),
-      roster_bulan_ini: upItems.map((s) => mapShift(s, false)),
+      // Highlight 'Hari Ini' dari tanggal, bukan false untuk semua baris.
+      roster_bulan_ini: upItems.map((s) => mapShift(s, s.tanggal === todayWib)),
       daftar_shift: [],
-      hari_kerja: [],
+      // Pola mingguan server (weekday Python Sen=0) + flag kalender.
+      hari_kerja: (sched && sched.data && sched.data.hari_kerja) || [],
+      has_calendar: (sched && sched.data && sched.data.has_calendar)
+        ?? (upcoming && upcoming.data && upcoming.data.has_calendar)
+        ?? (today && today.data && today.data.has_calendar)
+        ?? null,
       hari_libur: upItems.filter((s) => s.is_hari_libur).map((s) => mapShift(s, false)),
     };
   },

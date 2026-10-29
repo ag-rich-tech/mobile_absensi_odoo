@@ -1,19 +1,29 @@
 import React, { useState, useEffect } from 'react';
 import { ChevronLeft, CalendarDays, Clock, CheckCircle2, AlertCircle, Building2, Calendar, Coffee, Sparkles, ArrowLeftRight, ChevronRight } from 'lucide-react';
-import api from '../../services/api';
+import api, { getServerDate } from '../../services/api';
 import TukarShiftModal from './TukarShiftModal';
+
+// Nama bulan Indonesia untuk label navigasi bulan.
+const NAMA_BULAN = ['Januari', 'Februari', 'Maret', 'April', 'Mei', 'Juni',
+  'Juli', 'Agustus', 'September', 'Oktober', 'November', 'Desember'];
 
 export default function JadwalView({ onBack }) {
   const [data, setData] = useState(null);
   const [isLoading, setIsLoading] = useState(true);
+  const [loadError, setLoadError] = useState('');
   const [isTukarShiftOpen, setIsTukarShiftOpen] = useState(false);
   const [pendingTukarCount, setPendingTukarCount] = useState(0);
+  // Bulan yang ditampilkan dari jendela 30 hari ('YYYY-MM'); null =
+  // bulan pertama jendela (bulan berjalan).
+  const [activeMonth, setActiveMonth] = useState(null);
 
   const fetchJadwal = async () => {
     setIsLoading(true);
+    setLoadError('');
     try {
       const res = await api.getJadwal();
       if (res.success) {
+        setLoadError('');
         setData(res);
         // Badge jumlah permintaan swap: adapter mengembalikan `count`
         // (bukan `pending_count`); hitung tidak bergantung pada roster.
@@ -24,9 +34,15 @@ export default function JadwalView({ onBack }) {
             }
           })
           .catch(() => { });
+      } else {
+        // getJadwal mengembalikan success:false (bukan throw) bila
+        // endpoint gagal — dulu jatuh ke kartu netral "tidak ada
+        // jadwal" sehingga gagal muat disamarkan jadi data kosong.
+        setLoadError(res.message || 'Gagal memuat jadwal kerja.');
       }
     } catch (err) {
       console.error('Gagal memuat jadwal kerja:', err);
+      setLoadError(err.message || 'Gagal memuat jadwal kerja. Periksa koneksi Anda.');
     } finally {
       setIsLoading(false);
     }
@@ -43,8 +59,154 @@ export default function JadwalView({ onBack }) {
   const hariKerja = data?.hari_kerja || [];
   const hariLibur = data?.hari_libur || [];
 
+  // C4: tanpa kalender → empty state, BUKAN 30 kartu Day Off.
+  // Sinyal utama: flag server has_calendar=false (kontrak agen server).
+  // Cadangan (server lama belum mengirim flag): daftar terisi penuh
+  // TAPI semuanya libur = kalender tanpa jam kerja sama sekali
+  // (server mengembalikan baris libur untuk tiap hari bila tak ada
+  // kalender). Keduanya berarti "tidak ada jadwal yang bisa dipakai",
+  // sehingga pesan "hubungi HRD" benar untuk keduanya.
+  const noCalendar = data?.has_calendar === false
+    || (rosterList.length > 0 && rosterList.every((r) => r.is_hari_libur));
+
+  // Hari ini (WIB) — dihitung di view karena adapter selalu mengirim
+  // is_today=false untuk daftar (mapShift(s, false)). Rumus ini
+  // mencerminkan perhitungan todayWib di getJadwal (server date + 7 jam).
+  const todayStr = (() => {
+    try {
+      const d = new Date(getServerDate().getTime() + 7 * 3600 * 1000);
+      return d.toISOString().slice(0, 10);
+    } catch {
+      const d = new Date();
+      const y = d.getFullYear();
+      const m = String(d.getMonth() + 1).padStart(2, '0');
+      const day = String(d.getDate()).padStart(2, '0');
+      return `${y}-${m}-${day}`;
+    }
+  })();
+
+  // Navigasi bulan di dalam jendela 30 hari yang sudah dimuat.
+  // getJadwal kini menerima {start, days}, tapi view ini belum fetch
+  // bulan lain — navigasi memfilter jendela ini (tombol nonaktif di
+  // ujung jendela).
+  const monthsInWindow = [...new Set(rosterList
+    .map((r) => (r.tanggal || '').slice(0, 7)).filter(Boolean))].sort();
+  const shownMonth = activeMonth && monthsInWindow.includes(activeMonth)
+    ? activeMonth : (monthsInWindow[0] || null);
+  const shownMonthIdx = shownMonth ? monthsInWindow.indexOf(shownMonth) : -1;
+  const visibleRoster = shownMonth
+    ? rosterList.filter((r) => (r.tanggal || '').startsWith(shownMonth))
+    : rosterList;
+  const monthLabel = (ym) => {
+    if (!ym) return '';
+    const [y, m] = ym.split('-');
+    return `${NAMA_BULAN[Number(m) - 1] || ''} ${y}`;
+  };
+
+  // Pola mingguan: utamakan hari_kerja server bila adapter sudah
+  // meneruskannya (kontrak agen app-1); sonst diturunkan dari daftar
+  // 30 hari — hari = Kerja bila ADA SATU baris kerja pada hari itu.
+  // (Hari_kerja server mentah memakai weekday Python Sen=0; konversi
+  // ke getDay() JS Min=0 ada di bawah.)
+  const workWeekdays = (() => {
+    const set = new Set();
+    if (hariKerja.length > 0) {
+      for (const h of hariKerja) {
+        if (typeof h === 'number' && h >= 0 && h <= 6) {
+          set.add((h + 1) % 7);
+        } else if (typeof h === 'string') {
+          const idx = ['minggu', 'senin', 'selasa', 'rabu', 'kamis', 'jumat', 'sabtu']
+            .indexOf(h.toLowerCase());
+          if (idx >= 0) set.add(idx);
+        }
+      }
+      return set;
+    }
+    for (const r of rosterList) {
+      if (!r.is_hari_libur && r.tanggal) {
+        set.add(new Date(`${r.tanggal}T00:00:00`).getDay());
+      }
+    }
+    return set;
+  })();
+
+  // Gagal muat yang disamarkan: adapter selalu success:true, tapi
+  // jendela kosong + shift null praktis hanya terjadi bila endpoint
+  // gagal (server sehat selalu mengembalikan baris — 30 baris libur
+  // untuk tanpa-kalender). Syarat has_calendar=false dicek dulu di
+  // atas (noCalendar), jadi kasus server-baru "[] + flag" tidak
+  // jatuh ke sini. Butuh hariKerja kosong juga: bila pola mingguan
+  // nyata tersedia, tampilkan itu, bukan error.
+  const maskedFailure = !isLoading && !loadError && !noCalendar
+    && rosterList.length === 0 && !shift && hariKerja.length === 0;
+  const errorText = loadError || 'Server tidak mengembalikan jadwal.';
+  const errorPanel = (
+    <div style={{
+      backgroundColor: '#ffffff',
+      borderRadius: 'var(--radius-md)',
+      border: '1px solid #fecaca',
+      padding: '24px 18px',
+      textAlign: 'center'
+    }}>
+      <AlertCircle size={28} style={{ margin: '0 auto 8px auto', color: '#dc2626' }} />
+      <p style={{ margin: 0, fontSize: '13px', fontWeight: '800', color: 'var(--text-main)' }}>
+        Gagal memuat jadwal kerja
+      </p>
+      <p style={{ margin: '6px 0 14px 0', fontSize: '12px', color: 'var(--text-muted)' }}>
+        {errorText}
+      </p>
+      <button
+        type="button"
+        onClick={fetchJadwal}
+        style={{
+          padding: '9px 20px',
+          borderRadius: '10px',
+          backgroundColor: 'var(--primary-600)',
+          color: '#ffffff',
+          border: 'none',
+          fontSize: '12px',
+          fontWeight: '800',
+          cursor: 'pointer'
+        }}
+      >
+        Coba Lagi
+      </button>
+    </div>
+  );
+  const noCalendarPanel = (
+    <div style={{
+      backgroundColor: '#ffffff',
+      borderRadius: 'var(--radius-md)',
+      border: '1px solid var(--border-light)',
+      padding: '24px 18px',
+      textAlign: 'center'
+    }}>
+      <CalendarDays size={28} style={{ margin: '0 auto 8px auto', color: 'var(--text-muted)', opacity: 0.5 }} />
+      <p style={{ margin: 0, fontSize: '13px', fontWeight: '800', color: 'var(--text-main)' }}>
+        Belum ada jadwal — hubungi HRD
+      </p>
+      <p style={{ margin: '6px 0 0 0', fontSize: '12px', color: 'var(--text-muted)', lineHeight: '1.5' }}>
+        Anda belum memiliki kalender kerja, sehingga tidak ada jadwal
+        yang bisa ditampilkan. Hubungi HRD untuk pengaturan kalender
+        kerja Anda.
+      </p>
+    </div>
+  );
+
   return (
     <div style={{ padding: '16px 20px', display: 'flex', flexDirection: 'column', gap: '16px' }} className="animate-fade-in">
+      {loadError && !isLoading && (
+        <div style={{ padding: '12px 14px', borderRadius: '12px', backgroundColor: '#fef2f2', border: '1px solid #fecdd3', display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '8px' }}>
+          <span style={{ fontSize: '12px', fontWeight: '700', color: '#be123c' }}>{loadError}</span>
+          <button
+            type="button"
+            onClick={fetchJadwal}
+            style={{ padding: '6px 12px', borderRadius: '8px', backgroundColor: '#e11d48', border: 'none', color: '#ffffff', fontSize: '11px', fontWeight: '700', cursor: 'pointer', flexShrink: 0 }}
+          >
+            Coba Lagi
+          </button>
+        </div>
+      )}
       {/* Header */}
       <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
         <button
@@ -71,7 +233,7 @@ export default function JadwalView({ onBack }) {
             Jadwal Jam Kerja
           </h2>
           <p style={{ fontSize: '11px', color: 'var(--text-muted)', margin: 0 }}>
-            {isRoster ? 'Jadwal shift dinamis roster bulanan' : 'Jam kerja operasional resmi'}
+            Jadwal 30 hari ke depan
           </p>
         </div>
       </div>
@@ -80,6 +242,10 @@ export default function JadwalView({ onBack }) {
         <div style={{ padding: '40px', textAlign: 'center', color: 'var(--text-muted)', fontSize: '12px' }}>
           Memuat jadwal kerja Anda...
         </div>
+      ) : loadError || maskedFailure ? (
+        errorPanel
+      ) : noCalendar ? (
+        noCalendarPanel
       ) : (
         <>
           {/* Card Shift Aktif Hari Ini */}
@@ -108,7 +274,7 @@ export default function JadwalView({ onBack }) {
                 Hari Libur (Day Off)
               </h3>
               <p style={{ fontSize: '12px', color: '#fecaca', margin: '0 0 12px 0', lineHeight: '1.4' }}>
-                {shift?.keterangan || 'Anda dijadwalkan Day Off (Libur) pada kalender roster kerja hari ini.'}
+                {shift?.keterangan || 'Anda dijadwalkan libur hari ini.'}
               </p>
               <div style={{ paddingTop: '8px', borderTop: '1px solid rgba(255, 255, 255, 0.2)', fontSize: '11px', color: '#fee2e2', display: 'flex', alignItems: 'center', gap: '6px' }}>
                 <Sparkles size={14} />
@@ -127,7 +293,7 @@ export default function JadwalView({ onBack }) {
             }}>
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px' }}>
                 <span style={{ fontSize: '10px', fontWeight: '800', color: '#fed7aa', textTransform: 'uppercase', letterSpacing: '0.5px' }}>
-                  {isRoster ? '★ Shift Roster Khusus Hari Ini' : 'Shift Kerja Anda Hari Ini'}
+                  Shift Kerja Anda Hari Ini
                 </span>
                 <span style={{ fontSize: '11px', fontWeight: '800', color: '#ffffff', backgroundColor: 'rgba(255, 255, 255, 0.25)', padding: '2px 8px', borderRadius: '999px' }}>
                   Aktif
@@ -138,12 +304,17 @@ export default function JadwalView({ onBack }) {
                 {shift?.nama || 'Shift Reguler'}
               </h3>
 
-              {/* Format Waktu Grid */}
+              {/* Format Waktu Grid — nilai dari server; '-' bila tidak
+                  dikirim (dulu undefined tampil kosong, dan toleransi
+                  tampil "0 Menit" palsu karena `|| 0`). Server saat ini
+                  hanya mengirim jam_masuk/jam_pulang (alias Awal/Batas
+                  = jam yang sama); toleransi & pembatasan belum ada di
+                  baris _schedule_days (kontrak agen server + app-1). */}
               <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px' }}>
                 <div style={{ padding: '10px', backgroundColor: 'rgba(255, 255, 255, 0.12)', borderRadius: '8px' }}>
                   <span style={{ fontSize: '10px', color: '#ffedd5', display: 'block' }}>Awal Masuk</span>
                   <span style={{ fontSize: '18px', fontWeight: '800', fontFamily: 'var(--font-mono)' }}>
-                    {shift?.jam_awal_masuk}
+                    {shift?.jam_awal_masuk ?? '-'}
                   </span>
                   <span style={{ fontSize: '9px', color: '#fed7aa', display: 'block' }}>Buka Absen</span>
                 </div>
@@ -151,7 +322,7 @@ export default function JadwalView({ onBack }) {
                 <div style={{ padding: '10px', backgroundColor: 'rgba(255, 255, 255, 0.12)', borderRadius: '8px', borderLeft: '3px solid #fecaca' }}>
                   <span style={{ fontSize: '10px', color: '#ffedd5', display: 'block' }}>Jam Masuk Resmi</span>
                   <span style={{ fontSize: '18px', fontWeight: '800', fontFamily: 'var(--font-mono)', color: '#ffffff' }}>
-                    {shift?.jam_masuk}
+                    {shift?.jam_masuk ?? '-'}
                   </span>
                   <span style={{ fontSize: '9px', color: '#fed7aa', display: 'block' }}>Acuan Denda</span>
                 </div>
@@ -159,7 +330,7 @@ export default function JadwalView({ onBack }) {
                 <div style={{ padding: '10px', backgroundColor: 'rgba(255, 255, 255, 0.12)', borderRadius: '8px', borderLeft: '3px solid #fca5a5' }}>
                   <span style={{ fontSize: '10px', color: '#ffedd5', display: 'block' }}>Batas Akhir Masuk</span>
                   <span style={{ fontSize: '18px', fontWeight: '800', fontFamily: 'var(--font-mono)', color: '#ffffff' }}>
-                    {shift?.jam_akhir_masuk}
+                    {shift?.jam_akhir_masuk ?? '-'}
                   </span>
                   <span style={{ fontSize: '9px', color: '#fed7aa', display: 'block' }}>Batas Tutup Masuk</span>
                 </div>
@@ -167,14 +338,17 @@ export default function JadwalView({ onBack }) {
                 <div style={{ padding: '10px', backgroundColor: 'rgba(255, 255, 255, 0.12)', borderRadius: '8px' }}>
                   <span style={{ fontSize: '10px', color: '#ffedd5', display: 'block' }}>Jam Pulang Resmi</span>
                   <span style={{ fontSize: '18px', fontWeight: '800', fontFamily: 'var(--font-mono)' }}>
-                    {shift?.jam_pulang}
+                    {shift?.jam_pulang ?? '-'}
                   </span>
                   <span style={{ fontSize: '9px', color: '#fed7aa', display: 'block' }}>Acuan Cepat</span>
                 </div>
               </div>
 
               <div style={{ marginTop: '12px', paddingTop: '10px', borderTop: '1px solid rgba(255, 255, 255, 0.2)', fontSize: '11px', color: '#fed7aa', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                <span>Toleransi Keterlambatan: <strong>{shift?.toleransi_menit || 0} Menit</strong></span>
+                <span>Toleransi Keterlambatan: <strong>{(() => {
+                  const t = shift?.toleransi_menit ?? shift?._raw?.toleransi_menit;
+                  return t == null ? '-' : `${t} Menit`;
+                })()}</strong></span>
                 {shift?.batasi_absen && (
                   <span style={{ backgroundColor: '#ef4444', color: '#ffffff', fontSize: '9px', fontWeight: '800', padding: '1px 6px', borderRadius: '4px', textTransform: 'uppercase' }}>
                     Pembatasan Aktif
@@ -201,7 +375,9 @@ export default function JadwalView({ onBack }) {
             </div>
           )}
 
-          {/* Bagian Khusus Karyawan Roster: Daftar Jadwal Roster Bulan Ini */}
+          {/* Daftar Jadwal 30 Hari ke Depan (dulu dilabeli "roster" —
+              tidak ada model roster di server; ini kalender mingguan
+              berulang yang dirender 30 hari ke depan). */}
           {isRoster && (
             <div style={{
               backgroundColor: '#ffffff',
@@ -213,18 +389,18 @@ export default function JadwalView({ onBack }) {
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px' }}>
                 <div>
                   <h4 style={{ fontSize: '13px', fontWeight: '800', color: 'var(--text-main)', margin: 0 }}>
-                    Kalender Roster Pribadi Anda
+                    Kalender Jadwal Anda
                   </h4>
                   <p style={{ fontSize: '11px', color: 'var(--text-muted)', margin: '2px 0 0 0' }}>
-                    Jadwal shift dinamis yang ditetapkan untuk Anda
+                    Jadwal 30 hari ke depan
                   </p>
                 </div>
                 <span style={{ fontSize: '10px', fontWeight: '800', color: 'var(--primary-700)', backgroundColor: 'var(--primary-50)', padding: '3px 8px', borderRadius: '6px' }}>
-                  {rosterList.length} Hari Terjadwal
+                  {rosterList.filter((i) => !i.is_hari_libur).length} Hari Kerja Terjadwal
                 </span>
               </div>
 
-              {/* Tombol Ajukan Tukar Shift Roster */}
+              {/* Tombol Ajukan Tukar Shift */}
               <div style={{ marginBottom: '14px' }}>
                 <button
                   type="button"
@@ -258,10 +434,10 @@ export default function JadwalView({ onBack }) {
                     </div>
                     <div style={{ textAlign: 'left' }}>
                       <span style={{ fontSize: '12px', fontWeight: '800', display: 'block', lineHeight: 1.2 }}>
-                        Ajukan Tukar Shift Roster
+                        Ajukan Tukar Shift
                       </span>
                       <span style={{ fontSize: '10px', color: '#e0f2fe', display: 'block' }}>
-                        Tukar jadwal shift dengan rekan sesama roster
+                        Tukar jadwal dengan rekan kerja
                       </span>
                     </div>
                   </div>
@@ -285,22 +461,64 @@ export default function JadwalView({ onBack }) {
                 </button>
               </div>
 
+              {/* Navigasi bulan di dalam jendela yang dimuat */}
+              {monthsInWindow.length > 1 && (
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '10px' }}>
+                  <button
+                    type="button"
+                    onClick={() => shownMonthIdx > 0 && setActiveMonth(monthsInWindow[shownMonthIdx - 1])}
+                    disabled={shownMonthIdx <= 0}
+                    style={{
+                      width: '30px', height: '30px', borderRadius: '8px',
+                      backgroundColor: 'var(--bg-slate)', border: '1px solid var(--border-light)',
+                      display: 'flex', alignItems: 'center', justifyContent: 'center',
+                      color: 'var(--text-main)', cursor: shownMonthIdx <= 0 ? 'not-allowed' : 'pointer',
+                      opacity: shownMonthIdx <= 0 ? 0.4 : 1
+                    }}
+                  >
+                    <ChevronLeft size={16} />
+                  </button>
+                  <span style={{ fontSize: '12px', fontWeight: '800', color: 'var(--text-main)' }}>
+                    {monthLabel(shownMonth)} ({visibleRoster.length} hari)
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => shownMonthIdx >= 0 && shownMonthIdx < monthsInWindow.length - 1 && setActiveMonth(monthsInWindow[shownMonthIdx + 1])}
+                    disabled={shownMonthIdx < 0 || shownMonthIdx >= monthsInWindow.length - 1}
+                    style={{
+                      width: '30px', height: '30px', borderRadius: '8px',
+                      backgroundColor: 'var(--bg-slate)', border: '1px solid var(--border-light)',
+                      display: 'flex', alignItems: 'center', justifyContent: 'center',
+                      color: 'var(--text-main)',
+                      cursor: (shownMonthIdx < 0 || shownMonthIdx >= monthsInWindow.length - 1) ? 'not-allowed' : 'pointer',
+                      opacity: (shownMonthIdx < 0 || shownMonthIdx >= monthsInWindow.length - 1) ? 0.4 : 1
+                    }}
+                  >
+                    <ChevronRight size={16} />
+                  </button>
+                </div>
+              )}
+
               {rosterList.length === 0 ? (
                 <div style={{ padding: '24px 16px', textAlign: 'center', color: 'var(--text-muted)', fontSize: '12px', backgroundColor: 'var(--bg-slate)', borderRadius: '8px' }}>
                   <CalendarDays size={24} style={{ margin: '0 auto 8px auto', opacity: 0.4 }} />
-                  <p style={{ margin: 0, fontWeight: '600' }}>Belum ada jadwal roster khusus untuk bulan ini.</p>
-                  <p style={{ margin: '4px 0 0 0', fontSize: '11px' }}>Admin operasional belum menginput jadwal roster Anda.</p>
+                  <p style={{ margin: 0, fontWeight: '600' }}>Belum ada jadwal untuk periode ini.</p>
+                  <p style={{ margin: '4px 0 0 0', fontSize: '11px' }}>Coba lagi nanti atau hubungi HRD.</p>
                 </div>
               ) : (
                 <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', maxHeight: '340px', overflowY: 'auto' }}>
-                  {rosterList.map((item) => (
+                  {visibleRoster.map((item) => {
+                    // Highlight "Hari Ini" dihitung di view dari tanggal
+                    // (adapter selalu mengirim is_today=false).
+                    const isToday = item.tanggal === todayStr;
+                    return (
                     <div
                       key={item.tanggal}
                       style={{
                         padding: '10px 12px',
                         borderRadius: '10px',
-                        border: item.is_today ? '2px solid var(--primary-500)' : '1px solid var(--border-light)',
-                        backgroundColor: item.is_today ? 'var(--primary-50)' : (item.is_hari_libur ? '#fff1f2' : '#ffffff'),
+                        border: isToday ? '2px solid var(--primary-500)' : '1px solid var(--border-light)',
+                        backgroundColor: isToday ? 'var(--primary-50)' : (item.is_hari_libur ? '#fff1f2' : '#ffffff'),
                         display: 'flex',
                         alignItems: 'center',
                         justifyContent: 'space-between',
@@ -313,8 +531,8 @@ export default function JadwalView({ onBack }) {
                           width: '36px',
                           height: '36px',
                           borderRadius: '8px',
-                          backgroundColor: item.is_today ? 'var(--primary-600)' : (item.is_hari_libur ? '#fecdd3' : '#f1f5f9'),
-                          color: item.is_today ? '#ffffff' : (item.is_hari_libur ? '#be123c' : '#334155'),
+                          backgroundColor: isToday ? 'var(--primary-600)' : (item.is_hari_libur ? '#fecdd3' : '#f1f5f9'),
+                          color: isToday ? '#ffffff' : (item.is_hari_libur ? '#be123c' : '#334155'),
                           fontWeight: '800',
                           fontSize: '13px',
                           display: 'flex',
@@ -329,7 +547,7 @@ export default function JadwalView({ onBack }) {
                             <span style={{ fontSize: '12px', fontWeight: '700', color: 'var(--text-main)' }}>
                               {item.hari}, {item.tanggal_formatted}
                             </span>
-                            {item.is_today && (
+                            {isToday && (
                               <span style={{ fontSize: '9px', fontWeight: '800', color: '#ffffff', backgroundColor: 'var(--primary-600)', padding: '1px 6px', borderRadius: '4px' }}>
                                 Hari Ini
                               </span>
@@ -353,14 +571,22 @@ export default function JadwalView({ onBack }) {
                         )}
                       </div>
                     </div>
-                  ))}
+                    );
+                  })}
                 </div>
               )}
             </div>
           )}
 
-          {/* Pola Hari Kerja Mingguan (Untuk Pegawai Non-Roster) */}
-          {!isRoster && (
+          {/* Pola Hari Kerja Mingguan — HANYA bila ada data nyata
+              (hari_kerja server yang diteruskan adapter). Dulu grid ini
+              selalu tampil dengan hardcode Senin–Jumat walau karyawan
+              berpola lain, dan tampil pula saat jadwal gagal dimuat
+              (seksi ini dulu dirender untuk !isRoster, yang praktis
+              hanya terjadi saat endpoint gagal). Bila tidak ada data,
+              seksi disembunyikan (kasus gagal muat ditangani panel
+              error di atas, kasus tanpa-kalender oleh panel HRD). */}
+          {!isRoster && hariKerja.length > 0 && (
             <div style={{
               backgroundColor: '#ffffff',
               borderRadius: 'var(--radius-md)',
@@ -372,8 +598,10 @@ export default function JadwalView({ onBack }) {
                 Pola Hari Kerja Mingguan
               </h4>
               <div style={{ display: 'grid', gridTemplateColumns: 'repeat(7, 1fr)', gap: '4px', textAlign: 'center' }}>
+                {/* Urutan tampil Senin-dulu (konvensi Indonesia); indeks
+                    getDay() JS = (idx tampil + 1) % 7. */}
                 {['Sen', 'Sel', 'Rab', 'Kam', 'Jum', 'Sab', 'Min'].map((day, idx) => {
-                  const isWorkDay = idx < 5; // Default Senin - Jumat
+                  const isWorkDay = workWeekdays.has((idx + 1) % 7);
                   return (
                     <div
                       key={day}
@@ -397,7 +625,10 @@ export default function JadwalView({ onBack }) {
             </div>
           )}
 
-          {/* Hari Libur Nasional Mendatang */}
+          {/* Libur Mingguan Terdekat — dulu salah label "Hari Libur
+              Nasional": baris ini adalah akhir pekan biasa dari daftar
+              30 hari (server tidak punya konsep hari libur nasional).
+              Tanggal memakai tanggal_formatted, bukan ISO mentah. */}
           {hariLibur.length > 0 && (
             <div style={{
               backgroundColor: '#ffffff',
@@ -407,13 +638,13 @@ export default function JadwalView({ onBack }) {
               boxShadow: '0 1px 4px rgba(0, 0, 0, 0.02)'
             }}>
               <h4 style={{ fontSize: '13px', fontWeight: '800', color: 'var(--text-main)', marginBottom: '10px' }}>
-                Hari Libur Nasional Terdekat
+                Libur Mingguan Terdekat
               </h4>
               <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
                 {hariLibur.map((hl) => (
                   <div key={hl.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '8px 10px', backgroundColor: 'var(--bg-slate)', borderRadius: '6px' }}>
                     <span style={{ fontSize: '12px', fontWeight: '700', color: 'var(--text-main)' }}>{hl.nama}</span>
-                    <span style={{ fontSize: '11px', color: '#dc2626', fontWeight: '700' }}>{hl.tanggal}</span>
+                    <span style={{ fontSize: '11px', color: '#dc2626', fontWeight: '700' }}>{hl.tanggal_formatted || hl.tanggal}</span>
                   </div>
                 ))}
               </div>
@@ -422,7 +653,7 @@ export default function JadwalView({ onBack }) {
         </>
       )}
 
-      {/* Modal Tukar Shift Roster */}
+      {/* Modal Tukar Shift */}
       <TukarShiftModal
         isOpen={isTukarShiftOpen}
         onClose={() => setIsTukarShiftOpen(false)}

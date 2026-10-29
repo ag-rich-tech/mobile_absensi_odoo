@@ -6,6 +6,7 @@ import {
   CheckCircle, MessageSquareWarning, Eye, Calendar, Info
 } from 'lucide-react';
 import api from '../../services/api';
+import DocumentPreviewModal from '../DocumentPreviewModal';
 
 const KATEGORI_OPTIONS = [
   { id: 'gagal_absen_masuk', label: 'Gagal Absen Masuk', desc: 'Kendala saat check-in kehadiran pagi' },
@@ -36,6 +37,7 @@ export default function MasalahView({ onBack }) {
   const [masalahList, setMasalahList] = useState([]);
   const [isLoading, setIsLoading] = useState(true);
   const [selectedItem, setSelectedItem] = useState(null);
+  const [previewFoto, setPreviewFoto] = useState({ isOpen: false, id: null });
 
   // Form State
   const [kategori, setKategori] = useState('gagal_absen_masuk');
@@ -959,7 +961,7 @@ export default function MasalahView({ onBack }) {
               </p>
             </div>
 
-            {/* Foto Bukti jika ada */}
+            {/* Foto Bukti jika ada — URL langsung (bila dikirim server) */}
             {selectedItem.foto_bukti && (
               <div style={{ marginBottom: '16px' }}>
                 <div style={{ fontSize: '11px', fontWeight: '700', color: '#64748b', marginBottom: '6px' }}>
@@ -992,6 +994,35 @@ export default function MasalahView({ onBack }) {
                     <ExternalLink size={10} /> Buka Gambar Penuh
                   </div>
                 </a>
+              </div>
+            )}
+
+            {/* C1/C20: foto tersimpan tapi tanpa URL langsung -> tombol
+                'Lihat Foto' membuka preview via modul='masalah', id tiket. */}
+            {!selectedItem.foto_bukti && (selectedItem.foto_ada || !!selectedItem.foto_bukti_id) && (
+              <div style={{ marginBottom: '16px' }}>
+                <div style={{ fontSize: '11px', fontWeight: '700', color: '#64748b', marginBottom: '6px' }}>
+                  Lampiran Foto Bukti Kendala:
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setPreviewFoto({ isOpen: true, id: selectedItem.id })}
+                  style={{
+                    display: 'inline-flex',
+                    alignItems: 'center',
+                    gap: '6px',
+                    fontSize: '11px',
+                    fontWeight: '700',
+                    color: '#0284c7',
+                    backgroundColor: '#e0f2fe',
+                    padding: '8px 14px',
+                    borderRadius: '8px',
+                    border: '1px solid #bae6fd',
+                    cursor: 'pointer'
+                  }}
+                >
+                  <Eye size={13} /> Lihat Foto Bukti
+                </button>
               </div>
             )}
 
@@ -1054,6 +1085,13 @@ export default function MasalahView({ onBack }) {
           </div>
         </div>
       )}
+      <DocumentPreviewModal
+        isOpen={previewFoto.isOpen}
+        onClose={() => setPreviewFoto({ isOpen: false, id: null })}
+        modul="masalah"
+        id={previewFoto.id}
+        title="Foto Bukti Kendala"
+      />
     </div>
   );
 }

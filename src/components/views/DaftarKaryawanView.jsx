@@ -211,7 +211,7 @@ export default function DaftarKaryawanView({ onBack }) {
                     </td>
                     <td style={{ padding: '12px 14px', verticalAlign: 'middle' }}>
                       <span style={{ display: 'inline-block', padding: '3px 8px', backgroundColor: '#f1f5f9', borderRadius: '6px', fontFamily: 'var(--font-mono)', fontSize: '11px', fontWeight: '700', color: '#334155', border: '1px solid #e2e8f0' }}>
-                        {emp.employee_id || `#${emp.id}`}
+                        {emp.employee_id || '-'}
                       </span>
                     </td>
                     <td style={{ padding: '12px 14px', verticalAlign: 'middle' }}>

@@ -234,6 +234,18 @@ export default function TukarShiftModal({ isOpen, onClose, onSuccess }) {
   const currentRekanShift = jadwalRekan.find(j => String(j.id) === String(selectedJadwalRekanId));
   const currentRekanObj = rekanList.find(r => String(r.id) === String(selectedRekanId));
 
+  // C20: kartu 'Permintaan Masuk' harus menampilkan PENGAJU, bukan rekan
+  // (server mengirim rekan = colleague = viewer sendiri untuk permintaan
+  // masuk, sehingga admin lama melihat namanya sendiri). Nama pengaju
+  // dari pengaju_nama server, atau lookup rekanList by pengaju_id.
+  const infoPengaju = (item) => {
+    const dariList = rekanList.find((r) => String(r.id) === String(item.pengaju_id));
+    return {
+      nama: item.pengaju_nama || dariList?.nama_lengkap || item.rekan?.nama_lengkap || 'Rekan Kerja',
+      sub: [dariList?.jabatan, dariList?.departemen].filter(Boolean).join(' • '),
+    };
+  };
+
   return (
     <div style={{
       position: 'fixed',
@@ -747,10 +759,10 @@ export default function TukarShiftModal({ isOpen, onClose, onSuccess }) {
                           {item.kode_pengajuan}
                         </span>
                         <h4 style={{ margin: '2px 0 0 0', fontSize: '13px', fontWeight: '800', color: 'var(--text-main)' }}>
-                          {item.rekan.nama_lengkap}
+                          {infoPengaju(item).nama}
                         </h4>
                         <span style={{ fontSize: '10px', color: 'var(--text-muted)' }}>
-                          {item.rekan.jabatan} • {item.rekan.departemen}
+                          {infoPengaju(item).sub}
                         </span>
                       </div>
 
@@ -776,6 +788,7 @@ export default function TukarShiftModal({ isOpen, onClose, onSuccess }) {
                       gap: '8px',
                       alignItems: 'center'
                     }}>
+                      {item.shift_pengaju && (
                       <div>
                         <span style={{ fontSize: '9px', fontWeight: '800', color: 'var(--text-muted)', textTransform: 'uppercase' }}>Rekan Berikan:</span>
                         <p style={{ margin: '2px 0 0 0', fontSize: '11px', fontWeight: '800', color: 'var(--text-main)' }}>
@@ -785,9 +798,11 @@ export default function TukarShiftModal({ isOpen, onClose, onSuccess }) {
                           {item.shift_pengaju.label}
                         </span>
                       </div>
+                      )}
 
                       <ArrowLeftRight size={16} style={{ color: 'var(--text-muted)' }} />
 
+                      {item.shift_tujuan && (
                       <div>
                         <span style={{ fontSize: '9px', fontWeight: '800', color: 'var(--text-muted)', textTransform: 'uppercase' }}>Shift Anda Diminta:</span>
                         <p style={{ margin: '2px 0 0 0', fontSize: '11px', fontWeight: '800', color: 'var(--text-main)' }}>
@@ -797,6 +812,7 @@ export default function TukarShiftModal({ isOpen, onClose, onSuccess }) {
                           {item.shift_tujuan.label}
                         </span>
                       </div>
+                      )}
                     </div>
 
                     {/* Alasan */}
@@ -925,7 +941,7 @@ export default function TukarShiftModal({ isOpen, onClose, onSuccess }) {
                           Tujuan: {item.rekan.nama_lengkap}
                         </h4>
                         <span style={{ fontSize: '10px', color: 'var(--text-muted)' }}>
-                          {item.rekan.jabatan} • Diajukan: {item.created_at}
+                          {[item.rekan.jabatan, (item.shift_pengaju && item.shift_tujuan) ? `${item.shift_pengaju.tanggal_formatted} ↔ ${item.shift_tujuan.tanggal_formatted}` : null].filter(Boolean).join(' • ')}
                         </span>
                       </div>
 
@@ -951,6 +967,7 @@ export default function TukarShiftModal({ isOpen, onClose, onSuccess }) {
                       gap: '8px',
                       alignItems: 'center'
                     }}>
+                      {item.shift_pengaju && (
                       <div>
                         <span style={{ fontSize: '9px', fontWeight: '800', color: 'var(--text-muted)', textTransform: 'uppercase' }}>Shift Anda Lepas:</span>
                         <p style={{ margin: '2px 0 0 0', fontSize: '11px', fontWeight: '800', color: 'var(--text-main)' }}>
@@ -960,9 +977,11 @@ export default function TukarShiftModal({ isOpen, onClose, onSuccess }) {
                           {item.shift_pengaju.label}
                         </span>
                       </div>
+                      )}
 
                       <ArrowLeftRight size={16} style={{ color: 'var(--text-muted)' }} />
 
+                      {item.shift_tujuan && (
                       <div>
                         <span style={{ fontSize: '9px', fontWeight: '800', color: 'var(--text-muted)', textTransform: 'uppercase' }}>Shift Rekan Diminta:</span>
                         <p style={{ margin: '2px 0 0 0', fontSize: '11px', fontWeight: '800', color: 'var(--text-main)' }}>
@@ -972,6 +991,7 @@ export default function TukarShiftModal({ isOpen, onClose, onSuccess }) {
                           {item.shift_tujuan.label}
                         </span>
                       </div>
+                      )}
                     </div>
 
                     {/* Alasan */}
@@ -1039,7 +1059,7 @@ export default function TukarShiftModal({ isOpen, onClose, onSuccess }) {
             </h4>
             <p style={{ margin: '0 0 14px 0', fontSize: '12px', color: 'var(--text-muted)', lineHeight: '1.4' }}>
               {responModal.aksi === 'setuju'
-                ? `Jadwal shift Anda dan ${responModal.item?.rekan?.nama_lengkap} akan saling bertukar secara otomatis di sistem.`
+                ? `Permintaan dicatat dan menunggu persetujuan. Jadwal baru berlaku setelah disetujui HRD/manager.`
                 : `Berikan catatan (opsional) mengapa Anda menolak permintaan tukar shift ini.`}
             </p>
 

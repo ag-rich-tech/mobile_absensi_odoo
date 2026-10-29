@@ -332,7 +332,7 @@ export default function ProfileView({ user, onBack, onLogout, onOpenDenda, onOpe
           {user?.nama_lengkap || user?.nama || 'Pegawai'}
         </h3>
         <p style={{ fontSize: '12px', color: '#94a3b8', margin: '4px 0 0 0' }}>
-          {user?.nip} • {user?.jabatan || 'Staff Operasional'}
+          {user?.nip || '-'} • {user?.jabatan || '-'}
         </p>
 
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px', flexWrap: 'wrap', marginTop: '10px' }}>
@@ -538,15 +538,15 @@ export default function ProfileView({ user, onBack, onLogout, onOpenDenda, onOpe
       }}>
         <div style={{ padding: '12px 14px', borderBottom: '1px solid var(--border-subtle)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
           <span style={{ fontSize: '12px', color: 'var(--text-muted)' }}>Departemen</span>
-          <span style={{ fontSize: '12px', fontWeight: '700', color: 'var(--text-main)' }}>{user?.departemen || 'Operasional'}</span>
+          <span style={{ fontSize: '12px', fontWeight: '700', color: 'var(--text-main)' }}>{user?.departemen || '-'}</span>
         </div>
         <div style={{ padding: '12px 14px', borderBottom: '1px solid var(--border-subtle)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
           <span style={{ fontSize: '12px', color: 'var(--text-muted)' }}>Divisi</span>
-          <span style={{ fontSize: '12px', fontWeight: '700', color: 'var(--text-main)' }}>{user?.divisi || 'Umum'}</span>
+          <span style={{ fontSize: '12px', fontWeight: '700', color: 'var(--text-main)' }}>{user?.divisi || '-'}</span>
         </div>
         <div style={{ padding: '12px 14px', borderBottom: '1px solid var(--border-subtle)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
           <span style={{ fontSize: '12px', color: 'var(--text-muted)' }}>Pola Jadwal</span>
-          <span style={{ fontSize: '12px', fontWeight: '700', color: 'var(--text-main)' }}>{user?.jadwal_ringkasan || user?.tipe_jadwal || 'Fleksibel'}</span>
+          <span style={{ fontSize: '12px', fontWeight: '700', color: 'var(--text-main)' }}>{user?.has_calendar === false ? 'Belum ada jadwal' : (user?.jadwal_ringkasan || '-')}</span>
         </div>
         <div style={{ padding: '12px 14px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
           <span style={{ fontSize: '12px', color: 'var(--text-muted)' }}>Akses WFA</span>

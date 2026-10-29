@@ -186,6 +186,14 @@ export default function DashboardPage({ user: initialUser, onLogout, onStartAtte
   const [isLoading, setIsLoading] = useState(true);
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [dashboardData, setDashboardData] = useState(null);
+  // Error muat awal (dulu gagal muat = diam: halaman tampil dengan
+  // fallback initialUser + jadwal null yang terbaca sebagai Day Off).
+  // Diisi hanya bila BELUM ada data sama sekali (refresh berkala yang
+  // gagal tidak menghapus data yang sedang tampil). Ref dipakai agar
+  // instance loadDashboardData dari interval 15 detik tidak membaca
+  // closure basi.
+  const [dashboardLoadError, setDashboardLoadError] = useState(null);
+  const hasDashboardDataRef = useRef(false);
   const [userLocation, setUserLocation] = useState(null);
   const [distanceToOffice, setDistanceToOffice] = useState(null);
   // Lokasi terdekat dari daftar yang diizinkan (multi-lokasi 18.0.1.2.0).
@@ -271,12 +279,23 @@ export default function DashboardPage({ user: initialUser, onLogout, onStartAtte
 
       if (res.success) {
         setDashboardData(res);
+        hasDashboardDataRef.current = true;
+        setDashboardLoadError(null);
         if (res.fitur) setFeatureFlags(res.fitur);
       }
       loadPendingApprovalCount();
       loadPengumumanCount();
     } catch (err) {
       console.error('Gagal memuat dashboard:', err);
+      // C23: token kedaluwarsa tengah sesi -> kembali ke login (bukan
+      // dashboard kosong diam-diam).
+      if (err?.status === 401) {
+        onLogout();
+        return;
+      }
+      if (!hasDashboardDataRef.current) {
+        setDashboardLoadError(err.message || 'Gagal memuat data dashboard.');
+      }
       if (err.data?.account_inactive || err.message?.toLowerCase().includes('nonaktif') || err.message?.toLowerCase().includes('non-aktif')) {
         window.dispatchEvent(new CustomEvent('account-deactivated', {
           detail: { message: err.message || 'Status akun pegawai Anda telah dinonaktifkan oleh Administrator.' }
@@ -572,6 +591,18 @@ export default function DashboardPage({ user: initialUser, onLogout, onStartAtte
     };
   }, [sudahMasuk, sudahPulang]);
 
+  // B15 (penjaga watcher basi): cleanup efek di atas hanya jalan bila
+  // efek sempat jalan (ada sesi aktif). Bila app mati sebelum
+  // check-out lalu dibuka lagi TANPA sesi aktif, efek tracking
+  // langsung return tanpa pernah memanggil stop — watcher dari sesi
+  // lama bisa tetap hidup. Penjaga kecil ini memastikan watcher
+  // berhenti setiap kali dashboard mount/berubah ke tanpa-sesi.
+  // Idempotent: stopBackgroundTracking aman dipanggil berulang.
+  useEffect(() => {
+    if (sudahMasuk && !sudahPulang) return;
+    stopBackgroundTracking().catch(() => {});
+  }, [sudahMasuk, sudahPulang]);
+
   // Tombol Istirahat & Lewati aktif menggantikan tombol Masuk & Pulang.
   // Panel tampil selama sesi clock-in aktif dan istirahat belum diambil
   // / dilewati — TIDAK digerbang pada jam istirahat server, karena
@@ -591,6 +622,15 @@ export default function DashboardPage({ user: initialUser, onLogout, onStartAtte
   const isLiburNasional = Boolean(jamKerja?.is_libur_nasional);
   const namaHariLibur = jamKerja?.nama_libur || jamKerja?.keterangan_jadwal || (isLiburNasional ? 'Libur Nasional' : 'Hari Libur (Day Off)');
   const adaJadwalKerja = !isHariLibur && Boolean(jamKerja?.id);
+
+  // C22: jadwal gagal dimuat (flag server, diteruskan api.js sebagai
+  // dashboardData.jadwal_ok — KONTRAK, lihat app2-notes). Strict
+  // === false: undefined = perilaku lama (tidak ada alarm palsu).
+  // Saat gagal, SEMUA tampilan turunan jadwal (banner Day Off, chip
+  // "Hari Libur"/"Tidak Ada Jadwal", subtitle "Jadwal: ..." panel
+  // istirahat) disembunyikan dan diganti banner peringatan — jangan
+  // sampai kegagalan muat disajikan sebagai fakta jadwal.
+  const jadwalGagalMuat = dashboardData?.jadwal_ok === false;
 
   return (
     <div style={{
@@ -738,6 +778,65 @@ export default function DashboardPage({ user: initialUser, onLogout, onStartAtte
         {/* Main Content View Switcher */}
         {activeNav === 'home' && !exitingNav && (
           <div style={{ padding: '16px 20px', display: 'flex', flexDirection: 'column', gap: '16px' }} className="animate-fade-in">
+            {/* Panel gagal muat awal + tombol Coba lagi (dulu gagal muat
+                = diam, halaman tampil dari fallback). Hanya bila belum
+                ada data sama sekali; refresh berkala yang gagal tidak
+                memunculkan panel ini. */}
+            {!dashboardData && dashboardLoadError && !isLoading && (
+              <div style={{
+                backgroundColor: '#fef2f2',
+                border: '1px solid #fecaca',
+                borderRadius: 'var(--radius-md)',
+                padding: '12px 14px',
+                display: 'flex',
+                alignItems: 'center',
+                gap: '10px',
+              }}>
+                <AlertTriangle size={18} style={{ color: '#b91c1c', flexShrink: 0 }} />
+                <span style={{ fontSize: '12px', color: '#991b1b', flex: 1 }}>
+                  Gagal memuat data dashboard: {dashboardLoadError}
+                </span>
+                <button
+                  type="button"
+                  onClick={() => loadDashboardData(true)}
+                  style={{
+                    padding: '4px 10px',
+                    borderRadius: '6px',
+                    border: '1px solid #fca5a5',
+                    backgroundColor: '#fff',
+                    color: '#b91c1c',
+                    fontSize: '11px',
+                    fontWeight: '700',
+                    cursor: 'pointer',
+                    flexShrink: 0,
+                  }}
+                >
+                  Coba lagi
+                </button>
+              </div>
+            )}
+            {/* C22: peringatan jadwal gagal dimuat (bukan Day Off). */}
+            {jadwalGagalMuat && (
+              <div style={{
+                backgroundColor: '#fffbeb',
+                border: '1px solid #fde68a',
+                borderRadius: 'var(--radius-md)',
+                padding: '12px 14px',
+                display: 'flex',
+                alignItems: 'center',
+                gap: '10px',
+              }}>
+                <AlertTriangle size={18} style={{ color: '#b45309', flexShrink: 0 }} />
+                <div>
+                  <div style={{ fontSize: '12px', fontWeight: '800', color: '#92400e' }}>
+                    Jadwal tidak dapat dimuat
+                  </div>
+                  <div style={{ fontSize: '11px', color: '#b45309', fontWeight: '500' }}>
+                    Informasi jadwal hari ini tidak tersedia untuk sementara. Presensi tetap dapat dilakukan.
+                  </div>
+                </div>
+              </div>
+            )}
             {/* Card Notifikasi Registrasi Biometrik Wajah jika Belum Terdaftar & Diwajibkan */}
             {(pegawai?.wajib_face_recognition !== false && !pegawai?.is_face_registered && !pegawai?.face_descriptor) && (
               <div style={{
@@ -1100,8 +1199,9 @@ export default function DashboardPage({ user: initialUser, onLogout, onStartAtte
               </div>
             )}
 
-            {/* Banner Hari Libur / Hari Libur Nasional */}
-            {isHariLibur && (
+            {/* Banner Hari Libur / Hari Libur Nasional — disembunyikan
+                bila jadwal gagal dimuat (bukan fakta Day Off). */}
+            {isHariLibur && !jadwalGagalMuat && (
               <div style={{
                 background: isLiburNasional
                   ? 'linear-gradient(135deg, #fff1f2 0%, #ffe4e6 100%)'
@@ -1193,6 +1293,20 @@ export default function DashboardPage({ user: initialUser, onLogout, onStartAtte
                     }}>
                       {absensiHariIni?.status_masuk === 'terlambat' ? `Terlambat ${absensiHariIni.menit_terlambat}m` : 'Tepat Waktu'}
                     </span>
+                  ) : jadwalGagalMuat ? (
+                    <div>
+                      <span style={{
+                        display: 'inline-block',
+                        fontSize: '10px',
+                        fontWeight: '700',
+                        color: '#b45309',
+                        backgroundColor: '#fef3c7',
+                        padding: '4px 8px',
+                        borderRadius: 'var(--radius-full)'
+                      }}>
+                        Jadwal tidak dimuat
+                      </span>
+                    </div>
                   ) : isHariLibur ? (
                     <div>
                       <span style={{
@@ -1371,6 +1485,18 @@ export default function DashboardPage({ user: initialUser, onLogout, onStartAtte
                         )}
                       </div>
                     )
+                  ) : jadwalGagalMuat ? (
+                    <span style={{
+                      display: 'inline-block',
+                      fontSize: '10px',
+                      fontWeight: '700',
+                      color: '#b45309',
+                      backgroundColor: '#fef3c7',
+                      padding: '3px 8px',
+                      borderRadius: 'var(--radius-full)'
+                    }}>
+                      Jadwal tidak dimuat
+                    </span>
                   ) : isHariLibur ? (
                     <span style={{
                       display: 'inline-block',
@@ -1424,9 +1550,11 @@ export default function DashboardPage({ user: initialUser, onLogout, onStartAtte
                         Sesi Waktu Istirahat
                       </h4>
                       <p style={{ fontSize: '11px', color: '#b45309', margin: 0, fontWeight: '500' }}>
-                        {adaSettingIstirahat
-                          ? `Jadwal: ${jamMulaiIstirahat} - ${jamSelesaiIstirahat || 'Selesai'}`
-                          : 'Istirahat dapat diambil kapan saja selama jam kerja'}
+                        {jadwalGagalMuat
+                          ? 'Jadwal istirahat tidak dapat dimuat'
+                          : adaSettingIstirahat
+                            ? `Jadwal: ${jamMulaiIstirahat} - ${jamSelesaiIstirahat || 'Selesai'}`
+                            : 'Istirahat dapat diambil kapan saja selama jam kerja'}
                       </p>
                     </div>
                   </div>

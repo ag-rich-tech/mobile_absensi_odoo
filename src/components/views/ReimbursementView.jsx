@@ -4,10 +4,14 @@ import {
   Receipt, Send, UploadCloud, FileCheck, ExternalLink, X,
   Eye, RefreshCw, ChevronRight, Wallet, Info, Sparkles, Building
 } from 'lucide-react';
-import api from '../../services/api';
+import api, { getStoredUser } from '../../services/api';
+import { loadDraft, saveDraft, clearDraft, DRAFT_KEYS } from '../../services/draftService';
 import DocumentPreviewModal from '../DocumentPreviewModal';
 
 export default function ReimbursementView({ onBack }) {
+  // Draf form (1.2.23): bertahan saat tab switch/unmount; dihapus saat submit sukses.
+  const draftKey = getStoredUser()?.id ? DRAFT_KEYS.reimbursement(getStoredUser().id) : null;
+  const draft0 = draftKey ? loadDraft(draftKey, {}) : {};
   const [activeTab, setActiveTab] = useState('riwayat'); // 'riwayat' | 'ajukan'
   const [summary, setSummary] = useState({ total_diajukan: 0, total_disetujui: 0, menunggu_count: 0 });
   const [list, setList] = useState([]);
@@ -35,10 +39,10 @@ export default function ReimbursementView({ onBack }) {
   };
 
   // Form State
-  const [selectedJenisId, setSelectedJenisId] = useState('');
-  const [tanggalKuitansi, setTanggalKuitansi] = useState(new Date().toISOString().split('T')[0]);
-  const [nominal, setNominal] = useState('');
-  const [keterangan, setKeterangan] = useState('');
+  const [selectedJenisId, setSelectedJenisId] = useState(draft0.selectedJenisId || '');
+  const [tanggalKuitansi, setTanggalKuitansi] = useState(draft0.tanggalKuitansi || new Date().toISOString().split('T')[0]);
+  const [nominal, setNominal] = useState(draft0.nominal || '');
+  const [keterangan, setKeterangan] = useState(draft0.keterangan || '');
   const [dokumenFile, setDokumenFile] = useState(null);
   const [filePreview, setFilePreview] = useState(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -102,6 +106,12 @@ export default function ReimbursementView({ onBack }) {
     }
   };
 
+  // Simpan draf tiap perubahan field (file tidak ikut — tidak bisa JSON).
+  useEffect(() => {
+    if (!draftKey) return;
+    saveDraft(draftKey, { selectedJenisId, tanggalKuitansi, nominal, keterangan });
+  }, [draftKey, selectedJenisId, tanggalKuitansi, nominal, keterangan]);
+
   const handleSubmit = async (e) => {
     e.preventDefault();
     setFormError('');
@@ -144,6 +154,7 @@ export default function ReimbursementView({ onBack }) {
 
       if (res.success) {
         setToastMessage({ type: 'success', text: res.message || 'Pengajuan klaim berhasil dikirim.' });
+        if (draftKey) clearDraft(draftKey);
         setTimeout(() => setToastMessage({ type: '', text: '' }), 4000);
 
         // Reset form
@@ -497,15 +508,6 @@ export default function ReimbursementView({ onBack }) {
                       </span>
                     </div>
 
-                    {item.nominal_disetujui !== null && item.nominal_disetujui !== item.nominal && (
-                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline' }}>
-                        <span style={{ fontSize: '11px', color: '#059669', fontWeight: '600' }}>Disetujui Akhir:</span>
-                        <span style={{ fontSize: '13px', fontWeight: '800', color: '#059669' }}>
-                          {item.nominal_disetujui_format}
-                        </span>
-                      </div>
-                    )}
-
                     <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '11px' }}>
                       <span style={{ color: '#64748b' }}>Tanggal Nota:</span>
                       <span style={{ fontWeight: '600', color: '#334155' }}>{item.tanggal_kuitansi}</span>
@@ -518,7 +520,34 @@ export default function ReimbursementView({ onBack }) {
                       </p>
                     </div>
 
-                    {item.dokumen_terlampir && (
+                    {item.dokumen_terlampir && item.pengajuan_id && (
+                      <button
+                        type="button"
+                        onClick={() => setPreviewModal({
+                          isOpen: true,
+                          id: item.pengajuan_id,
+                          title: `Nota - ${item.nama_jenis}`,
+                          modul: 'reimbursement'
+                        })}
+                        style={{
+                          alignSelf: 'flex-start',
+                          display: 'inline-flex',
+                          alignItems: 'center',
+                          gap: '6px',
+                          fontSize: '11px',
+                          fontWeight: '700',
+                          color: '#0284c7',
+                          backgroundColor: '#e0f2fe',
+                          padding: '6px 12px',
+                          borderRadius: '8px',
+                          border: '1px solid #bae6fd',
+                          cursor: 'pointer'
+                        }}
+                      >
+                        📎 Lihat Dokumen Nota
+                      </button>
+                    )}
+                    {item.dokumen_terlampir && !item.pengajuan_id && (
                       <div style={{ fontSize: '11px', color: '#64748b' }}>
                         📎 Dokumen nota terlampir
                       </div>
@@ -900,11 +929,35 @@ export default function ReimbursementView({ onBack }) {
                 <span style={{ color: '#64748b', display: 'block', marginBottom: '4px' }}>Keterangan</span>
                 <span>{detailItem.keterangan || '-'}</span>
               </div>
-              <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                 <span style={{ color: '#64748b' }}>Dokumen Nota</span>
-                <strong style={{ color: detailItem.dokumen_terlampir ? '#15803d' : '#64748b' }}>
-                  {detailItem.dokumen_terlampir ? 'Terlampir' : 'Tidak ada dokumen'}
-                </strong>
+                {detailItem.dokumen_terlampir && detailItem.pengajuan_id ? (
+                  <button
+                    type="button"
+                    onClick={() => setPreviewModal({
+                      isOpen: true,
+                      id: detailItem.pengajuan_id,
+                      title: `Nota - ${detailItem.nama_jenis || ''}`,
+                      modul: 'reimbursement'
+                    })}
+                    style={{
+                      fontSize: '11px',
+                      fontWeight: '700',
+                      color: '#0284c7',
+                      backgroundColor: '#e0f2fe',
+                      padding: '6px 12px',
+                      borderRadius: '8px',
+                      border: '1px solid #bae6fd',
+                      cursor: 'pointer'
+                    }}
+                  >
+                    📎 Lihat Nota
+                  </button>
+                ) : (
+                  <strong style={{ color: detailItem.dokumen_terlampir ? '#15803d' : '#64748b' }}>
+                    {detailItem.dokumen_terlampir ? 'Terlampir' : 'Tidak ada dokumen'}
+                  </strong>
+                )}
               </div>
               {detailItem.catatan_admin && (
                 <div>
@@ -921,7 +974,7 @@ export default function ReimbursementView({ onBack }) {
         isOpen={previewModal.isOpen}
         onClose={() => setPreviewModal({ isOpen: false, id: null, title: '', modul: 'reimbursement' })}
         modul={previewModal.modul}
-        pengajuanId={previewModal.id}
+        id={previewModal.id}
         title={previewModal.title}
       />
     </div>

@@ -1,21 +1,26 @@
 import React, { useState, useEffect } from 'react';
 import { ChevronLeft, Plus, PlaneTakeoff, Building2, MapPin, Calendar, CircleDollarSign, CheckCircle2, XCircle, Clock, Send, UploadCloud, FileCheck, Paperclip, ExternalLink, X, Eye } from 'lucide-react';
-import api from '../../services/api';
+import api, { getStoredUser } from '../../services/api';
+import { loadDraft, saveDraft, clearDraft, DRAFT_KEYS } from '../../services/draftService';
 import DocumentPreviewModal from '../DocumentPreviewModal';
 
 export default function DinasView({ onBack }) {
+  // Draf form (1.2.23): bertahan saat tab switch/unmount; dihapus saat submit sukses.
+  const draftKey = getStoredUser()?.id ? DRAFT_KEYS.dinas(getStoredUser().id) : null;
+  const draft0 = draftKey ? loadDraft(draftKey, {}) : {};
   const [list, setList] = useState([]);
   const [isLoading, setIsLoading] = useState(true);
   const [showForm, setShowForm] = useState(false);
   const [previewModal, setPreviewModal] = useState({ isOpen: false, id: null, title: '' });
+  const [cancellingId, setCancellingId] = useState(null);
 
   // Form State
-  const [kotaTujuan, setKotaTujuan] = useState('');
-  const [instansiTujuan, setInstansiTujuan] = useState('');
-  const [keperluan, setKeperluan] = useState('');
-  const [tanggalMulai, setTanggalMulai] = useState(new Date().toISOString().split('T')[0]);
-  const [tanggalSelesai, setTanggalSelesai] = useState(new Date().toISOString().split('T')[0]);
-  const [anggaranBiaya, setAnggaranBiaya] = useState('');
+  const [kotaTujuan, setKotaTujuan] = useState(draft0.kotaTujuan || '');
+  const [instansiTujuan, setInstansiTujuan] = useState(draft0.instansiTujuan || '');
+  const [keperluan, setKeperluan] = useState(draft0.keperluan || '');
+  const [tanggalMulai, setTanggalMulai] = useState(draft0.tanggalMulai || new Date().toISOString().split('T')[0]);
+  const [tanggalSelesai, setTanggalSelesai] = useState(draft0.tanggalSelesai || new Date().toISOString().split('T')[0]);
+  const [anggaranBiaya, setAnggaranBiaya] = useState(draft0.anggaranBiaya || '');
   const [dokumenFile, setDokumenFile] = useState(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [formMessage, setFormMessage] = useState({ type: '', text: '' });
@@ -38,6 +43,20 @@ export default function DinasView({ onBack }) {
     loadData();
   }, []);
 
+  // C9: batalkan dinas MILIK SENDIRI yang masih pending.
+  const handleBatal = async (item) => {
+    if (!window.confirm('Batalkan pengajuan dinas ini?')) return;
+    setCancellingId(item.id);
+    try {
+      await api.cancelTimeoff(item.id);
+      await loadData();
+    } catch (err) {
+      alert(err.message || 'Gagal membatalkan pengajuan.');
+    } finally {
+      setCancellingId(null);
+    }
+  };
+
   const handleFileChange = (e) => {
     if (e.target.files && e.target.files[0]) {
       const file = e.target.files[0];
@@ -49,6 +68,12 @@ export default function DinasView({ onBack }) {
       setFormMessage({ type: '', text: '' });
     }
   };
+
+  // Simpan draf tiap perubahan field (file tidak ikut — tidak bisa JSON).
+  useEffect(() => {
+    if (!draftKey) return;
+    saveDraft(draftKey, { kotaTujuan, instansiTujuan, keperluan, tanggalMulai, tanggalSelesai, anggaranBiaya });
+  }, [draftKey, kotaTujuan, instansiTujuan, keperluan, tanggalMulai, tanggalSelesai, anggaranBiaya]);
 
   const handleSubmit = async (e) => {
     e.preventDefault();
@@ -76,6 +101,7 @@ export default function DinasView({ onBack }) {
 
       if (res.success) {
         setFormMessage({ type: 'success', text: res.message || 'Pengajuan dinas berhasil dikirim.' });
+        if (draftKey) clearDraft(draftKey);
         setKotaTujuan('');
         setInstansiTujuan('');
         setKeperluan('');
@@ -103,6 +129,12 @@ export default function DinasView({ onBack }) {
         return (
           <span style={{ fontSize: '10px', fontWeight: '700', color: '#dc2626', backgroundColor: '#fee2e2', padding: '3px 8px', borderRadius: '999px', display: 'flex', alignItems: 'center', gap: '4px' }}>
             <XCircle size={12} /> Ditolak
+          </span>
+        );
+      case 'dibatalkan':
+        return (
+          <span style={{ fontSize: '10px', fontWeight: '700', color: '#64748b', backgroundColor: '#f1f5f9', padding: '3px 8px', borderRadius: '999px', display: 'flex', alignItems: 'center', gap: '4px' }}>
+            <XCircle size={12} /> Dibatalkan
           </span>
         );
       default:
@@ -506,7 +538,7 @@ export default function DinasView({ onBack }) {
                   "{item.keperluan}"
                 </p>
 
-                {item.dokumen_url && (
+                {(item.dokumen_ada || !!item.dokumen_url) && (
                   <div style={{ marginTop: '2px' }}>
                     <button
                       type="button"
@@ -555,6 +587,33 @@ export default function DinasView({ onBack }) {
                     <span style={{ color: '#9a3412', fontWeight: '600' }}>
                       {item.approval_info.status_label}
                     </span>
+                  </div>
+                )}
+
+                {/* C9: batalkan dinas sendiri yang masih menunggu */}
+                {(item.status === 'menunggu' || item.status === 'confirm') && (
+                  <div style={{ margin: '0 14px 12px' }}>
+                    <button
+                      type="button"
+                      disabled={cancellingId === item.id}
+                      onClick={() => handleBatal(item)}
+                      style={{
+                        display: 'inline-flex',
+                        alignItems: 'center',
+                        gap: '6px',
+                        fontSize: '11px',
+                        fontWeight: '700',
+                        color: '#dc2626',
+                        backgroundColor: '#fef2f2',
+                        padding: '6px 12px',
+                        borderRadius: '8px',
+                        border: '1px solid #fecdd3',
+                        cursor: 'pointer'
+                      }}
+                    >
+                      <X size={13} />
+                      <span>{cancellingId === item.id ? 'Membatalkan...' : 'Batalkan Pengajuan'}</span>
+                    </button>
                   </div>
                 )}
               </div>

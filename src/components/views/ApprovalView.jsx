@@ -11,6 +11,9 @@ export default function ApprovalView({ onBack }) {
   const [activeTab, setActiveTab] = useState('menunggu'); // 'menunggu' | 'riwayat'
   const [filterModul, setFilterModul] = useState('semua');
   const [items, setItems] = useState([]);
+  const [totalCount, setTotalCount] = useState(null);
+  const [hasMore, setHasMore] = useState(false);
+  const [isLoadingMore, setIsLoadingMore] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [errorMsg, setErrorMsg] = useState('');
@@ -27,13 +30,18 @@ export default function ApprovalView({ onBack }) {
     errorMessage: '',
   });
 
-  const loadApprovals = async (tab = activeTab) => {
-    setIsLoading(true);
+  // APR-B10/C30: paginasi limit+offset. append=true = tombol 'Muat lagi'.
+  const loadApprovals = async (tab = activeTab, append = false) => {
+    if (append) setIsLoadingMore(true);
+    else setIsLoading(true);
     setErrorMsg('');
     try {
-      const res = await api.getApprovals(tab);
+      const offset = append ? items.length : 0;
+      const res = await api.getApprovals(tab, { limit: 50, offset });
       if (res.success) {
-        setItems(res.data || []);
+        setItems((prev) => (append ? [...prev, ...(res.data || [])] : (res.data || [])));
+        setTotalCount(typeof res.count === 'number' ? res.count : null);
+        setHasMore(!!res.has_more);
       } else {
         setErrorMsg(res.message || 'Gagal memuat daftar pengajuan approval.');
       }
@@ -42,7 +50,13 @@ export default function ApprovalView({ onBack }) {
     } finally {
       setIsLoading(false);
       setIsRefreshing(false);
+      setIsLoadingMore(false);
     }
+  };
+
+  const handleLoadMore = () => {
+    if (!hasMore || isLoadingMore) return;
+    loadApprovals(activeTab, true);
   };
 
   useEffect(() => {
@@ -94,7 +108,11 @@ export default function ApprovalView({ onBack }) {
         // mengirim item.id sehingga aksi menarget sheet yang salah).
         res = await api.approveReimbursement(actionModal.item.pengajuan_id || actionModal.item.id, actionModal.type, actionModal.catatan.trim() || null);
       } else {
-        res = await api.submitApprovalAction(actionModal.item.id, {
+        // C16: kirim OBJEK item (bukan id saja) agar routing per tipe
+        // benar — lembur ke /overtime/approve, cuti/dinas ke
+        // /approvals/act. Bentuk lama (id saja) membuat lembur salah
+        // rute dan gagal NOT_ALLOWED.
+        res = await api.submitApprovalAction(actionModal.item, {
           aksi: actionModal.type,
           catatan: actionModal.catatan.trim() || (actionModal.type === 'setuju' ? 'Disetujui' : 'Ditolak'),
         });
@@ -114,10 +132,12 @@ export default function ApprovalView({ onBack }) {
   };
 
   // Filter items berdasarkan modul
+  // C16: filter dari `tipe` server (fallback modul lama).
   const filteredItems = items.filter(item => {
+    const tipe = item.tipe || item.modul;
     if (filterModul === 'semua') return true;
-    if (filterModul === 'izin_cuti') return item.modul === 'izin' || item.modul === 'cuti';
-    return item.modul === filterModul;
+    if (filterModul === 'izin_cuti') return tipe === 'izin' || tipe === 'cuti';
+    return tipe === filterModul;
   });
 
   const getModulBadge = (modul) => {
@@ -432,20 +452,20 @@ export default function ApprovalView({ onBack }) {
               </h4>
               <p style={{ fontSize: '11px', color: '#64748b', margin: '4px 0 0', maxWidth: '280px', lineHeight: 1.4 }}>
                 {activeTab === 'menunggu' 
-                  ? 'Saat ini tidak ada pengajuan izin, cuti, lembur, atau dinas yang menugaskan Anda sebagai approver aktif.' 
+                  ? 'Saat ini tidak ada pengajuan izin, cuti, lembur, dinas, atau reimbursement yang menugaskan Anda sebagai approver aktif.'
                   : 'Pengajuan yang telah Anda setujui atau tolak akan tercatat rapi di halaman ini.'}
               </p>
             </div>
           </div>
         ) : (
           filteredItems.map(item => {
-            const badge = getModulBadge(item.modul);
+            const badge = getModulBadge(item.tipe || item.modul);
             const pemohon = item.pemohon || {};
             const detail = item.detail || {};
 
             return (
               <div 
-                key={item.id}
+                key={`${item.tipe || item.modul}-${item.id}`}
                 style={{
                   backgroundColor: '#ffffff',
                   borderRadius: '16px',
@@ -531,7 +551,7 @@ export default function ApprovalView({ onBack }) {
                       {pemohon.nama || 'Nama Pegawai'}
                     </h4>
                     <p style={{ fontSize: '11px', color: '#64748b', margin: '2px 0 0', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
-                      {pemohon.jabatan} • {pemohon.departemen}
+                      {[pemohon.jabatan, pemohon.departemen].filter(Boolean).join(' • ') || '-'}
                     </p>
                     <span style={{ fontSize: '10px', color: '#94a3b8', fontFamily: 'monospace' }}>
                       NIP: {pemohon.nip || '-'}
@@ -557,7 +577,7 @@ export default function ApprovalView({ onBack }) {
                       <span style={{ color: '#64748b' }}>Waktu Pelaksanaan:</span>
                       <span style={{ fontWeight: '700', color: '#0f172a' }}>
                         {detail.tanggal_lembur ? (
-                          `${detail.tanggal_lembur} (${detail.jam_mulai} - ${detail.jam_selesai})`
+                          `${detail.tanggal_lembur} (${detail.jam_mulai || '-'} - ${detail.jam_selesai || '-'} WIB)`
                         ) : (
                           `${detail.tanggal_mulai || '-'} s/d ${detail.tanggal_selesai || '-'}`
                         )}
@@ -577,6 +597,14 @@ export default function ApprovalView({ onBack }) {
                         <span style={{ fontWeight: '700', color: '#0f172a' }}>{detail.tanggal_kuitansi || '-'}</span>
                       </div>
                     </>
+                  )}
+
+                  {/* Durasi lembur (server mengirim durasi_jam) */}
+                  {item.tipe === 'lembur' && detail.durasi_jam != null && (
+                    <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                      <span style={{ color: '#64748b' }}>Durasi:</span>
+                      <span style={{ fontWeight: '700', color: '#0f172a' }}>{detail.durasi_jam} Jam</span>
+                    </div>
                   )}
 
                   {/* Durasi */}
@@ -599,17 +627,17 @@ export default function ApprovalView({ onBack }) {
                       {detail.anggaran_biaya != null && (
                         <div style={{ display: 'flex', justifyContent: 'space-between' }}>
                           <span style={{ color: '#64748b' }}>Anggaran:</span>
-                          <span style={{ fontWeight: '700', color: '#059669' }}>{detail.anggaran_biaya}</span>
+                          <span style={{ fontWeight: '700', color: '#059669' }}>{detail.anggaran_biaya_formatted || detail.anggaran_biaya}</span>
                         </div>
                       )}
                     </>
                   )}
 
                   {/* Estimasi Upah Lembur */}
-                  {item.modul === 'lembur' && detail.estimasi_upah && (
+                  {item.tipe === 'lembur' && (detail.upah_formatted || detail.estimasi_upah) && (
                     <div style={{ display: 'flex', justifyContent: 'space-between' }}>
                       <span style={{ color: '#64748b' }}>Estimasi Upah:</span>
-                      <span style={{ fontWeight: '700', color: '#d97706' }}>{detail.estimasi_upah}</span>
+                      <span style={{ fontWeight: '700', color: '#d97706' }}>{detail.upah_formatted || detail.estimasi_upah}</span>
                     </div>
                   )}
 
@@ -622,7 +650,7 @@ export default function ApprovalView({ onBack }) {
                   </div>
 
                   {/* Lampiran Dokumen */}
-                  {detail.dokumen_url && (
+                  {(detail.dokumen_ada || !!detail.dokumen_url) && (
                     <div style={{ marginTop: '4px', paddingTop: '6px', borderTop: '1px dashed #e2e8f0' }}>
                       <button
                         type="button"
@@ -782,6 +810,33 @@ export default function ApprovalView({ onBack }) {
               </div>
             );
           })
+        )}
+        {/* APR-B9: 'X dari Y' bila count server != jumlah termuat */}
+        {!isLoading && !errorMsg && filteredItems.length > 0 && totalCount != null && totalCount !== items.length && (
+          <p style={{ fontSize: '11px', color: '#64748b', textAlign: 'center', margin: '4px 0 0' }}>
+            Menampilkan {items.length} dari {totalCount} pengajuan
+          </p>
+        )}
+        {/* APR-B10: Muat lagi */}
+        {!isLoading && !errorMsg && hasMore && (
+          <button
+            type="button"
+            onClick={handleLoadMore}
+            disabled={isLoadingMore}
+            style={{
+              marginTop: '4px',
+              padding: '10px',
+              borderRadius: '12px',
+              border: '1px solid #e2e8f0',
+              backgroundColor: '#ffffff',
+              color: '#334155',
+              fontSize: '12px',
+              fontWeight: '800',
+              cursor: 'pointer',
+            }}
+          >
+            {isLoadingMore ? 'Memuat...' : 'Muat lagi'}
+          </button>
         )}
       </div>
 

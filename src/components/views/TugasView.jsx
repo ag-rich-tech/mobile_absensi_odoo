@@ -22,7 +22,10 @@ import {
 import api from '../../services/api';
 
 export default function TugasView({ onBack }) {
-  const [activeTab, setActiveTab] = useState('berjalan'); // 'berjalan' | 'selesai'
+  const [activeTab, setActiveTab] = useState('berjalan'); // 'berjalan' | 'selesai' | 'tim'
+  // C7: tab 'Tugas Tim' hanya bila scope=team tidak 403.
+  const [showTeamTab, setShowTeamTab] = useState(true);
+  const [tugasTim, setTugasTim] = useState([]);
   const [isLoading, setIsLoading] = useState(true);
   const [statistik, setStatistik] = useState({ total_semua: 0, total_berjalan: 0, total_selesai: 0 });
   const [tugasBerjalan, setTugasBerjalan] = useState([]);
@@ -52,6 +55,16 @@ export default function TugasView({ onBack }) {
 
   useEffect(() => {
     loadData();
+    // C7: coba muat tugas tim; 403 -> sembunyikan tab (bukan error).
+    api.getPenugasan({ scope: 'team' }).then((res) => {
+      if (res.success) setTugasTim(res.tugas_tim || []);
+    }).catch((err) => {
+      const msg = err?.message || '';
+      if (err?.status === 403 || err?.code === 'FORBIDDEN' || msg.includes('403')) {
+        setShowTeamTab(false);
+        if (activeTab === 'tim') setActiveTab('berjalan');
+      }
+    });
   }, []);
 
   const handleAjukanReview = async (tugasId) => {
@@ -105,7 +118,7 @@ export default function TugasView({ onBack }) {
     };
   };
 
-  const currentList = activeTab === 'berjalan' ? tugasBerjalan : tugasSelesai;
+  const currentList = activeTab === 'berjalan' ? tugasBerjalan : (activeTab === 'selesai' ? tugasSelesai : tugasTim);
 
   return (
     <div style={{
@@ -259,7 +272,7 @@ export default function TugasView({ onBack }) {
           padding: '4px',
           borderRadius: '12px',
           display: 'grid',
-          gridTemplateColumns: '1fr 1fr',
+          gridTemplateColumns: showTeamTab ? '1fr 1fr 1fr' : '1fr 1fr',
           gap: '4px'
         }}>
           <button
@@ -309,6 +322,32 @@ export default function TugasView({ onBack }) {
             <CheckCircle2 size={15} color={activeTab === 'selesai' ? '#10b981' : '#64748b'} />
             <span>Tugas Selesai ({statistik.total_selesai})</span>
           </button>
+
+          {showTeamTab && (
+            <button
+              type="button"
+              onClick={() => setActiveTab('tim')}
+              style={{
+                padding: '9px 12px',
+                borderRadius: '9px',
+                border: 'none',
+                backgroundColor: activeTab === 'tim' ? '#ffffff' : 'transparent',
+                color: activeTab === 'tim' ? '#0f172a' : '#64748b',
+                fontSize: '12px',
+                fontWeight: '800',
+                cursor: 'pointer',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                gap: '6px',
+                boxShadow: activeTab === 'tim' ? '0 1px 3px rgba(0,0,0,0.1)' : 'none',
+                transition: 'all 0.2s ease'
+              }}
+            >
+              <Users size={15} color={activeTab === 'tim' ? '#7c3aed' : '#64748b'} />
+              <span>Tugas Tim ({tugasTim.length})</span>
+            </button>
+          )}
         </div>
 
         {/* Notifikasi Alert Error/Info */}
@@ -493,7 +532,7 @@ export default function TugasView({ onBack }) {
                       {/* Atasan Info */}
                       <div style={{ color: '#475569', fontSize: '11px', display: 'flex', alignItems: 'center', gap: '4px' }}>
                         <User size={12} color="#94a3b8" />
-                        <span>Oleh: <strong>{tugas.atasan?.nama_lengkap || 'Atasan'}</strong></span>
+                        <span>Oleh: <strong>{tugas.atasan?.nama_lengkap || '-'}</strong></span>
                       </div>
                     </div>
 
@@ -512,7 +551,7 @@ export default function TugasView({ onBack }) {
                         fontWeight: tugas.is_terlambat ? '800' : '500'
                       }}>
                         <Calendar size={13} color={tugas.is_terlambat ? '#dc2626' : '#94a3b8'} />
-                        <span>Batas: {tugas.tenggat_waktu_formatted}</span>
+                        <span>Batas: {tugas.tenggat_waktu_formatted || '-'}</span>
                         {tugas.is_terlambat && (
                           <span style={{ fontSize: '9px', color: '#dc2626', backgroundColor: '#fee2e2', padding: '1px 5px', borderRadius: '4px' }}>
                             Lewat Batas
@@ -520,11 +559,13 @@ export default function TugasView({ onBack }) {
                         )}
                       </div>
 
-                      {/* Tim Anggota Count */}
-                      <div style={{ display: 'flex', alignItems: 'center', gap: '4px', color: '#64748b' }}>
-                        <Users size={12} color="#94a3b8" />
-                        <span>{tugas.anggota?.length || 1} Pelaksana</span>
-                      </div>
+                      {/* Tim Anggota Count — hanya bila server mengirim anggota */}
+                      {tugas.anggota && tugas.anggota.length > 0 && (
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '4px', color: '#64748b' }}>
+                          <Users size={12} color="#94a3b8" />
+                          <span>{tugas.anggota.length} Pelaksana</span>
+                        </div>
+                      )}
                     </div>
                   </div>
 
@@ -760,15 +801,15 @@ export default function TugasView({ onBack }) {
                 <div style={{ backgroundColor: '#ffffff', border: '1px solid #e2e8f0', padding: '10px 12px', borderRadius: '12px' }}>
                   <span style={{ fontSize: '10px', fontWeight: '700', color: '#64748b', display: 'block' }}>Atasan Pembuat:</span>
                   <span style={{ fontWeight: '800', color: '#0f172a', display: 'block', marginTop: '2px' }}>
-                    {selectedTugas.atasan?.nama_lengkap}
+                    {selectedTugas.atasan?.nama_lengkap || '-'}
                   </span>
-                  <span style={{ fontSize: '10px', color: '#94a3b8' }}>{selectedTugas.atasan?.jabatan}</span>
+                  <span style={{ fontSize: '10px', color: '#94a3b8' }}>{selectedTugas.atasan?.jabatan || ''}</span>
                 </div>
 
                 <div style={{ backgroundColor: '#ffffff', border: '1px solid #e2e8f0', padding: '10px 12px', borderRadius: '12px' }}>
                   <span style={{ fontSize: '10px', fontWeight: '700', color: '#64748b', display: 'block' }}>Tenggat Waktu:</span>
                   <span style={{ fontWeight: '800', color: selectedTugas.is_terlambat ? '#dc2626' : '#0f172a', display: 'block', marginTop: '2px' }}>
-                    {selectedTugas.tenggat_waktu_formatted}
+                    {selectedTugas.tenggat_waktu_formatted || '-'}
                   </span>
                   <span style={{ fontSize: '10px', color: '#94a3b8' }}>
                     {selectedTugas.is_terlambat ? 'Terlambat' : 'Tenggat Normal'}

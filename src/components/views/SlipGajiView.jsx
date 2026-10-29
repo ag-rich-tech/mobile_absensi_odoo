@@ -20,11 +20,14 @@ import {
   User
 } from 'lucide-react';
 import api from '../../services/api';
+import DocumentPreviewModal from '../DocumentPreviewModal';
 
 export default function SlipGajiView({ onBack }) {
   const [slipList, setSlipList] = useState([]);
   const [selectedSlipId, setSelectedSlipId] = useState(null);
   const [slipDetail, setSlipDetail] = useState(null);
+  const [detailError, setDetailError] = useState('');
+  const [previewSlip, setPreviewSlip] = useState({ isOpen: false, id: null });
   const [isLoadingList, setIsLoadingList] = useState(true);
   const [isLoadingDetail, setIsLoadingDetail] = useState(false);
 
@@ -57,6 +60,7 @@ export default function SlipGajiView({ onBack }) {
   const handleSelectSlip = async (slipId) => {
     setSelectedSlipId(slipId);
     setIsLoadingDetail(true);
+    setDetailError('');
     try {
       const res = await api.getSlipGajiDetail(slipId);
       if (res.success && res.slip) {
@@ -64,6 +68,8 @@ export default function SlipGajiView({ onBack }) {
       }
     } catch (err) {
       console.error('Gagal mengambil rincian detail slip gaji:', err);
+      // S7: gagal muat = pesan error + tombol coba lagi, BUKAN spinner abadi.
+      setDetailError(err.message || 'Gagal memuat rincian slip gaji.');
     } finally {
       setIsLoadingDetail(false);
     }
@@ -73,10 +79,17 @@ export default function SlipGajiView({ onBack }) {
   const handleBackToList = () => {
     setSelectedSlipId(null);
     setSlipDetail(null);
+    setDetailError('');
   };
 
-  const handlePrint = () => {
-    window.print();
+  // C15: tombol Cetak (window.print, no-op di Capacitor) DIHAPUS.
+  // Diganti tombol Unduh yang hanya tampil bila server menyediakan
+  // dokumen slip (dokumen_id). Modul 'payslip' = asumsi penamaan
+  // (kontrak C1 belum merinci modul slip) — bila server belum
+  // mendukungnya, modal menampilkan error server secara jujur.
+  const handleDownloadSlip = () => {
+    if (!slipDetail || !slipDetail.dokumen_id) return;
+    setPreviewSlip({ isOpen: true, id: slipDetail.id || selectedSlipId });
   };
 
   // =========================================================================
@@ -117,10 +130,10 @@ export default function SlipGajiView({ onBack }) {
             </div>
           </div>
 
-          {slipDetail && (
+          {slipDetail && slipDetail.dokumen_id && (
             <button
               type="button"
-              onClick={handlePrint}
+              onClick={handleDownloadSlip}
               style={{
                 display: 'flex',
                 alignItems: 'center',
@@ -136,12 +149,28 @@ export default function SlipGajiView({ onBack }) {
               }}
             >
               <Printer size={14} />
-              <span>Cetak</span>
+              <span>Unduh Slip</span>
             </button>
           )}
         </div>
 
-        {isLoadingDetail || !slipDetail ? (
+        {isLoadingDetail ? (
+          <div style={{ padding: '80px 0', textAlign: 'center', color: '#94a3b8' }}>
+            <div style={{ display: 'inline-block', width: '32px', height: '32px', border: '3px solid #e2e8f0', borderTopColor: '#0284c7', borderRadius: '50%', animation: 'spin 1s linear infinite' }} />
+            <p style={{ fontSize: '12px', marginTop: '12px', fontWeight: '600' }}>Mengambil data detail slip gaji...</p>
+          </div>
+        ) : detailError ? (
+          <div style={{ padding: '40px 20px', textAlign: 'center', backgroundColor: '#fef2f2', borderRadius: '16px', border: '1px solid #fecdd3' }}>
+            <p style={{ fontSize: '12px', fontWeight: '700', color: '#be123c', margin: '0 0 12px 0' }}>{detailError}</p>
+            <button
+              type="button"
+              onClick={() => handleSelectSlip(selectedSlipId)}
+              style={{ padding: '8px 16px', borderRadius: '10px', backgroundColor: '#e11d48', border: 'none', color: '#ffffff', fontSize: '12px', fontWeight: '700', cursor: 'pointer' }}
+            >
+              Coba Lagi
+            </button>
+          </div>
+        ) : !slipDetail ? (
           <div style={{ padding: '80px 0', textAlign: 'center', color: '#94a3b8' }}>
             <div style={{ display: 'inline-block', width: '32px', height: '32px', border: '3px solid #e2e8f0', borderTopColor: '#0284c7', borderRadius: '50%', animation: 'spin 1s linear infinite' }} />
             <p style={{ fontSize: '12px', marginTop: '12px', fontWeight: '600' }}>Mengambil data detail slip gaji...</p>
@@ -183,7 +212,7 @@ export default function SlipGajiView({ onBack }) {
                     border: `1px solid ${slipDetail.status_pembayaran === 'dibayar' ? 'rgba(16, 185, 129, 0.3)' : 'rgba(59, 130, 246, 0.3)'}`
                   }}
                 >
-                  {slipDetail.status_pembayaran}
+                  {slipDetail.status_pembayaran === 'dibayar' ? 'Dibayar' : (slipDetail.state_label || '-')}
                 </span>
               </div>
 
@@ -193,11 +222,12 @@ export default function SlipGajiView({ onBack }) {
 
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', paddingTop: '12px', borderTop: '1px solid rgba(255,255,255,0.1)', fontSize: '11px', color: '#94a3b8' }}>
                 <span style={{ fontFamily: 'monospace', fontWeight: '700', color: '#cbd5e1' }}>{slipDetail.nomor_slip}</span>
-                <span>{slipDetail.metode_pembayaran || 'Transfer Bank'}</span>
+                {slipDetail.metode_pembayaran ? (<span>{slipDetail.metode_pembayaran}</span>) : null}
               </div>
             </div>
 
-            {/* Statistik Kehadiran, Lembur & Denda */}
+            {/* Statistik Kehadiran, Lembur & Denda — hanya bila server mengirim (S3) */}
+            {(slipDetail.total_kehadiran != null || slipDetail.total_jam_lembur != null || slipDetail.total_menit_terlambat != null) && (
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '10px' }}>
               <div style={{ background: '#ffffff', borderRadius: '16px', padding: '12px', textAlign: 'center', border: '1px solid #e2e8f0', boxShadow: '0 2px 6px rgba(0,0,0,0.02)' }}>
                 <span style={{ fontSize: '10px', fontWeight: '700', color: '#64748b', textTransform: 'uppercase' }}>Hadir</span>
@@ -220,6 +250,7 @@ export default function SlipGajiView({ onBack }) {
                 </div>
               </div>
             </div>
+            )}
 
             {/* Rincian Komponen Penerimaan & Tunjangan */}
             <div style={{ background: '#ffffff', borderRadius: '18px', border: '1px solid #e2e8f0', overflow: 'hidden', boxShadow: '0 2px 8px rgba(0,0,0,0.02)' }}>
@@ -350,9 +381,10 @@ export default function SlipGajiView({ onBack }) {
               >
                 Kembali ke Daftar
               </button>
+              {slipDetail && slipDetail.dokumen_id && (
               <button
                 type="button"
-                onClick={handlePrint}
+                onClick={handleDownloadSlip}
                 style={{
                   flex: 1,
                   padding: '12px',
@@ -371,11 +403,19 @@ export default function SlipGajiView({ onBack }) {
                 }}
               >
                 <Printer size={16} />
-                <span>Cetak Slip Gaji</span>
+                <span>Unduh Slip Gaji</span>
               </button>
+              )}
             </div>
           </>
         )}
+        <DocumentPreviewModal
+          isOpen={previewSlip.isOpen}
+          onClose={() => setPreviewSlip({ isOpen: false, id: null })}
+          modul="payslip"
+          id={previewSlip.id}
+          title="Dokumen Slip Gaji"
+        />
       </div>
     );
   }
@@ -499,7 +539,7 @@ export default function SlipGajiView({ onBack }) {
                     border: `1px solid ${item.status_pembayaran === 'dibayar' ? '#a7f3d0' : '#bfdbfe'}`
                   }}
                 >
-                  {item.status_pembayaran}
+                  {item.status_pembayaran === 'dibayar' ? 'Dibayar' : (item.state_label || '-')}
                 </span>
               </div>
 
@@ -526,9 +566,11 @@ export default function SlipGajiView({ onBack }) {
 
               {/* Footer Card: Tombol Klik Rincian Detail */}
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: '11px', fontWeight: '700', color: '#0284c7' }}>
-                <span style={{ color: '#94a3b8', fontWeight: '600' }}>
-                  {item.tanggal_bayar ? `Dibayar pada ${item.tanggal_bayar}` : 'Siap ditransfer'}
-                </span>
+                {item.tanggal_bayar ? (
+                  <span style={{ color: '#94a3b8', fontWeight: '600' }}>
+                    Dibayar pada {item.tanggal_bayar}
+                  </span>
+                ) : null}
                 <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
                   <span>Lihat Detail Slip</span>
                   <ChevronRight size={16} />

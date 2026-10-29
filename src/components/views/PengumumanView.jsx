@@ -63,11 +63,15 @@ export default function PengumumanView({ onBack }) {
       const res = await api.getPengumumanDetail(item.id);
       if (res && res.success) {
         setSelectedItem(res.data);
-        // Perbarui item di list lokal menjadi sudah dibaca
-        setItems((prev) =>
-          prev.map((it) => (it.id === item.id ? { ...it, is_dibaca: true } : it))
-        );
-        setUnreadCount((prev) => Math.max(0, prev - 1));
+        // PNG-4/5: badge berkurang HANYA bila item sebelumnya belum
+        // dibaca DAN server mengonfirmasi mark_read (bukan tiap buka
+        // detail, bukan saat mark_read gagal).
+        if (!item.is_dibaca && res.data.is_dibaca) {
+          setItems((prev) =>
+            prev.map((it) => (it.id === item.id ? { ...it, is_dibaca: true } : it))
+          );
+          setUnreadCount((prev) => Math.max(0, prev - 1));
+        }
       }
     } catch (err) {
       console.error('Error load detail pengumuman:', err);
@@ -805,7 +809,7 @@ export default function PengumumanView({ onBack }) {
                 paddingTop: '10px',
                 borderTop: '1px solid #f1f5f9'
               }}>
-                {selectedItem.konten}
+                {selectedItem.konten || 'Tidak ada isi pengumuman.'}
               </div>
 
               {/* Kartu Dokumen Lampiran jika ada */}

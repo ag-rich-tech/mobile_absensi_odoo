@@ -29,6 +29,17 @@ import {
 } from './api.js';
 import { photoUrl } from '../config.js';
 
+// C23: error auth TIDAK BOLEH ditelan jadi {success:false} (dashboard
+// kosong sukses-palsu). Lempar ulang + beri tahu App agar kembali ke
+// login. Dipanggil di awal tiap catch yang mengembalikan success:false.
+function throwIfAuth(err) {
+  if (err && (err.status === 401
+    || ['NO_TOKEN', 'INVALID_TOKEN', 'TOKEN_EXPIRED', 'NO_SESSION'].includes(err.code))) {
+    if (typeof window !== 'undefined') window.dispatchEvent(new CustomEvent('auth-expired'));
+    throw err;
+  }
+}
+
 export function fileToBase64(file) {
   return new Promise((resolve, reject) => {
     if (!file) return resolve(null);
@@ -144,6 +155,7 @@ export async function getKehadiranBawahanStatus() {
       total_bawahan: subs.length,
     };
   } catch (err) {
+    throwIfAuth(err);
     console.error('getKehadiranBawahanStatus error:', err);
     return { success: false, message: 'Gagal memuat status fitur: ' + (err?.message || String(err)) };
   }
@@ -167,7 +179,7 @@ export async function getKehadiranBawahanList(bulanParam) {
       fotoById[e.id] = e.photo;
       // NIP dari server (barcode/PIN), bukan id Odoo. /employee/list
       // mengirim barcode + pin; /subordinates/list tidak mengirim NIP.
-      nipById[e.id] = e.barcode || e.pin || `#${e.id}`;
+      nipById[e.id] = e.nip || e.barcode || e.pin || '-';
     }
     // Paralel per batch (Okt 2026: loop await sekuensial membuat daftar
     // bawahan lambat — N round-trip berurutan, tiap call memindai DB
@@ -199,7 +211,7 @@ export async function getKehadiranBawahanList(bulanParam) {
           id: s.id,
           nama: s.name,
           inisial: inisialDariNama(s.name),
-          nip: s.nip || nipById[s.id] || `#${s.id}`,
+          nip: s.nip || nipById[s.id] || '-',
           jabatan: (typeof s.job === 'string' ? s.job : (s.job && s.job.name)) || 'Staff',
           departemen: (typeof s.department === 'string' ? s.department : (s.department && s.department.name)) || '',
           foto: photoUrl(fotoById[s.id], getToken()),
@@ -211,6 +223,7 @@ export async function getKehadiranBawahanList(bulanParam) {
     data.sort((a, b) => (a.nama || '').localeCompare(b.nama || ''));
     return { success: true, data };
   } catch (err) {
+    throwIfAuth(err);
     console.error('getKehadiranBawahanList error:', err);
     return { success: false, message: 'Gagal memuat data bawahan: ' + (err?.message || String(err)) };
   }
@@ -241,6 +254,7 @@ export async function getTeamOrgChart() {
     const tree = ((res.data && res.data.tree) || []).map(normalizeOrgNode).filter(Boolean);
     return { success: true, tree, me_id: (res.data && res.data.me_id) || null };
   } catch (err) {
+    throwIfAuth(err);
     console.error('getTeamOrgChart error:', err);
     return { success: false, message: 'Gagal memuat org chart: ' + (err?.message || String(err)) };
   }
@@ -260,7 +274,7 @@ export async function getKalenderBawahan(bawahanId, bulanParam) {
     id: emp.id || Number(bawahanId),
     nama: emp.name || 'Bawahan',
     // Server 1.2.20 mengirim nip = identification_id di _emp_brief.
-    nip: emp.nip || emp.barcode || emp.pin || `#${emp.id || bawahanId}`,
+    nip: emp.nip || emp.barcode || emp.pin || '-',
     jabatan: (emp.job && emp.job.name) || 'Staff',
     departemen: (emp.department && emp.department.name) || '',
   };
@@ -299,7 +313,10 @@ export async function getKalenderBawahan(bawahanId, bulanParam) {
       const outD = utcToWib(att.check_out);
       if (outD) {
         kode = 'H';
-        label = 'Hadir Tepat Waktu';
+        // Jujur: keterlambatan per tanggal TIDAK bisa dihitung app-side
+        // (jadwal bawahan tak tersedia lewat API) — label netral 'Hadir',
+        // bukan klaim 'Tepat Waktu' palsu.
+        label = 'Hadir';
         summary.H++;
       } else {
         kode = 'H-TP';
@@ -309,14 +326,14 @@ export async function getKalenderBawahan(bawahanId, bulanParam) {
       detail_absensi = {
         jam_masuk: fmtHMWib(inD),
         jam_pulang: fmtHMWib(outD),
-        shift: 'Shift Regular',
-        // Status kalender bawahan masih nilai lama: jadwal bawahan tidak
-        // tersedia lewat API (hanya /shift/* untuk diri sendiri), jadi
-        // belum bisa dihitung per tanggal — follow-up, bukan di sini.
-        status_masuk: 'tepat_waktu',
-        menit_terlambat: 0,
+        shift: '',
+        // Status masuk/pulang per tanggal TIDAK DIKETAHUI app-side
+        // (jadwal bawahan tak tersedia lewat API) — null, bukan hardcode
+        // 'tepat_waktu'/0 yang membuat semua hari tampak tepat waktu.
+        status_masuk: null,
+        menit_terlambat: null,
         status_pulang: outD ? 'normal' : null,
-        menit_pulang_cepat: 0,
+        menit_pulang_cepat: null,
       };
     } else if (lv) {
       const typeName = (lv.type && lv.type.name) || '';
@@ -382,7 +399,9 @@ export async function getReimbursementJenis() {
     kode_jenis: p.id,
     nama: p.name,
     nama_jenis: p.name,
-    wajib_bukti_nota: false,
+    // R5: ikuti data server bila ada; null = tak diketahui (gerbang
+    // tidak ditegakkan), BUKAN hardcode false.
+    wajib_bukti_nota: p.wajib_bukti_nota ?? p.requires_attachment ?? null,
     maksimal_klaim: null,
   }));
   return { success: true, data };
@@ -404,19 +423,20 @@ function mapReimbursementItem(r) {
   const labelState = st === 'disetujui' ? 'Disetujui' : (st === 'dicairkan' ? 'Dicairkan' : (st === 'ditolak' ? 'Ditolak' : 'Menunggu Approval'));
   return {
     id: r.id,
+    // C1: preview nota memakai id SHEET (pengajuan_id), bukan id expense.
+    pengajuan_id: r.sheet_id ?? r.pengajuan_id ?? null,
     nomor_pengajuan: r.name || `RMB-${r.id}`,
     nama_jenis: r.product || 'Klaim Operasional',
     tanggal_kuitansi: r.date || '',
     nominal: r.total_amount || 0,
     nominal_format: `Rp ${(r.total_amount || 0).toLocaleString('id-ID')}`,
-    nominal_disetujui: null,
-    nominal_disetujui_format: null,
     // Server menulis keterangan ke description DAN name (ag 1.2.19);
     // description kosong di data lama -> fallback ke name.
     keterangan: r.description || r.name || '',
-    dokumen_terlampir: (r.attachment_count || 0) > 0,
+    dokumen_terlampir: (r.attachment_count || 0) > 0 || !!r.dokumen_ada,
+    dokumen_ada: !!r.dokumen_ada || (r.attachment_count || 0) > 0,
+    dokumen_id: r.dokumen_id ?? r.attachment_id ?? null,
     status: st,
-    dokumen_nota_url: null,
     approval: { step_current: 1, step_total: 1, status_label: labelState },
   };
 }
@@ -552,29 +572,44 @@ export async function ajukanTukarShift(payload) {
 }
 
 function mapSwapItem(s) {
-  // Server /swap/history tidak mengirim field shift/tanggal. Dua blok
-  // render modal mendereferensi shift_pengaju/shift_tujuan langsung,
-  // sehingga null = crash. Placeholder netral mencegah crash tanpa
-  // mengubah 2 blok JSX identik (12 ekspresi).
-  const placeholderShift = {
-    hari: '-',
-    tanggal_formatted: '-',
-    label: 'Info shift tidak tersedia',
-    is_hari_libur: false,
+  // C20 (server 1.2.20 MENGIRIM tanggal): bangun kartu shift dari
+  // tanggal_pengaju/tanggal_tujuan server. Placeholder lama ('Info shift
+  // tidak tersedia' + 'Diajukan: null') dihapus — bila tanggal tak ada,
+  // kartu shift = null dan view menyembunyikan barisnya.
+  const fmtShift = (ymd) => {
+    if (!ymd) return null;
+    const d = new Date(`${ymd}T00:00:00`);
+    const ok = !Number.isNaN(d.getTime());
+    return {
+      hari: ok ? NAMA_HARI[d.getDay()] : '',
+      tanggal: ymd,
+      tanggal_formatted: ok ? fmtTanggalId(d) : ymd,
+      label: ok ? fmtTanggalId(d) : ymd,
+      is_hari_libur: false,
+    };
   };
   return {
     id: s.id,
     kode_pengajuan: `TS-${s.id}`,
     pengaju_id: s.pengaju_id,
     pegawai_tujuan_id: s.pegawai_tujuan_id,
+    // PERHATIAN: `rekan` = colleague (lawan tukar), BUKAN pengaju.
+    // Untuk kartu 'Permintaan Masuk', view menampilkan pengaju lewat
+    // pengaju_id (lookup rekanList) — jangan tampilkan rekan sebagai
+    // pengaju (bug lama: admin melihat namanya sendiri).
     rekan: s.rekan || { nama_lengkap: 'Rekan Kerja' },
+    pengaju_nama: s.pengaju_nama || s.pengaju?.nama_lengkap || s.pengaju?.nama || null,
     status: s.status,
     status_label: s.status_label || s.status,
     alasan: s.alasan || '',
     catatan_rekan: s.catatan_rekan || null,
-    shift_pengaju: s.shift_pengaju || placeholderShift,
-    shift_tujuan: s.shift_tujuan || placeholderShift,
-    created_at: null,
+    tanggal_pengaju: s.tanggal_pengaju || null,
+    tanggal_tujuan: s.tanggal_tujuan || null,
+    shift_pengaju: fmtShift(s.tanggal_pengaju),
+    shift_tujuan: fmtShift(s.tanggal_tujuan),
+    // Server tidak mengirim tanggal dibuat -> null, view menyembunyikan
+    // baris 'Diajukan' (bukan 'Diajukan: null').
+    created_at: s.created_at || s.tanggal_diajukan || null,
   };
 }
 
@@ -635,9 +670,11 @@ export async function getDinas() {
       anggaran_biaya: anggaran,
       anggaran_biaya_formatted: anggaran != null
         ? `Rp ${Number(anggaran).toLocaleString('id-ID')}`
-        : 'Ditanggung Perusahaan',
+        : '-',
       keperluan,
       status: l.status || 'menunggu',
+      dokumen_ada: !!l.dokumen_ada,
+      dokumen_id: l.dokumen_id ?? l.attachment_id ?? null,
       dokumen_url: l.dokumen_url || null,
     };
   });
@@ -715,6 +752,10 @@ function mapIssue(m) {
     // View detail membaca `foto_bukti`; server mengirim
     // `foto_bukti_url` (saat ini selalu null, tapi jangan dibuang).
     foto_bukti: m.foto_bukti_url || m.foto_bukti || null,
+    // C20: foto tersimpan di server tapi url selalu null — id lampiran
+    // dipakai view untuk membuka preview dokumen (kontrak C1).
+    foto_bukti_id: m.foto_bukti_id ?? m.attachment_id ?? null,
+    foto_ada: !!m.foto_ada || !!(m.foto_bukti_id ?? m.attachment_id),
   };
 }
 
@@ -770,10 +811,26 @@ export async function getMasalahDetail(id) {
 // ---------------------------------------------------------------------------
 // 7. Penugasan (server-side: /task/*)
 // ---------------------------------------------------------------------------
-export async function getPenugasan() {
-  const res = await odooCall('/task/list');
+function mapPenugasanItem(i) {
+  // C19: view membaca atasan.nama_lengkap, tenggat_waktu_formatted,
+  // dan anggota — petakan dari kunci server (pemberi_tugas,
+  // tenggat_waktu, anggota/pelaksana). Tanpa ini kartu menampilkan
+  // 'Oleh: Atasan', 'Batas: ' kosong, dan '1 Pelaksana' permanen.
+  return {
+    ...i,
+    atasan: i.atasan || { nama_lengkap: i.pemberi_tugas || '', jabatan: '' },
+    pemberi_tugas: i.pemberi_tugas || '',
+    tenggat_waktu_formatted: i.tenggat_waktu_formatted
+      || (i.tenggat_waktu ? fmtTanggalId(new Date(`${i.tenggat_waktu}T00:00:00`)) : ''),
+    anggota: i.anggota ?? i.pelaksana ?? [],
+  };
+}
+
+export async function getPenugasan(opts = {}) {
+  // C7: scope 'team' untuk tab 'Tugas Tim' (403 -> view sembunyikan tab).
+  const res = await odooCall('/task/list', opts && opts.scope ? { scope: opts.scope } : {});
   const d = res.data || {};
-  const items = d.items || [];
+  const items = (d.items || []).map(mapPenugasanItem);
   // View membaca tugas_berjalan/tugas_selesai; adapter lama hanya
   // mengembalikan `penugasan`, sehingga daftar tugas selalu kosong.
   return {
@@ -781,6 +838,7 @@ export async function getPenugasan() {
     penugasan: items,
     tugas_berjalan: items.filter((i) => i.status === 'berjalan' || i.status === 'menunggu_review'),
     tugas_selesai: items.filter((i) => i.status === 'selesai'),
+    tugas_tim: items,
     statistik: d.statistik || { total_semua: 0, total_berjalan: 0, total_selesai: 0 },
   };
 }
@@ -789,7 +847,7 @@ export async function getPenugasanDetail(id) {
   const res = await odooCall('/task/detail', { id });
   const item = res.data && res.data.task;
   if (!item) throw new Error('Penugasan tidak ditemukan.');
-  return { success: true, penugasan: item };
+  return { success: true, penugasan: mapPenugasanItem(item) };
 }
 
 export async function updateStatusPenugasan(id, payload) {
@@ -814,22 +872,54 @@ export async function getKpiTerbaru() {
   // mis. 'Sangat Baik'), periode, pencapaian[]. View membaca
   // total_nilai/grade/predikat + baris status approval — petakan tanpa
   // memalsukan state approval (nilai server tidak punya state itu).
-  return {
-    success: true,
-    kpi: {
-      ...d,
-      total_nilai: d.nilai_akhir ?? d.total_nilai ?? null,
-      predikat: d.status ?? d.predikat ?? '',
-      status_label: d.status ?? '',
-    },
+  // C14: ProfileView membaca res.data, adapter lama hanya mengirim
+  // res.kpi -> kartu KPI selalu 'Belum ada penilaian'. Kirim keduanya.
+  const kpi = {
+    ...d,
+    total_nilai: d.nilai_akhir ?? d.total_nilai ?? null,
+    predikat: d.status ?? d.predikat ?? '',
+    status_label: d.status ?? '',
   };
+  return { success: true, kpi, data: kpi };
 }
 
-export async function getDokumenPreview() {
+export async function getDokumenPreview(a, b) {
+  // C1 (KOREKSI — menang atas brief awal): PERTAHANKAN signature
+  // getDokumenPreview(modul, id) seperti yang dipakai DocumentPreviewModal
+  // (modal TIDAK diubah). Adapter POST /dokumen/preview dengan body
+  // {modul, id}, lalu KONVERSI respons server {filename, mimetype,
+  // data_base64} menjadi bentuk yang diharapkan modal:
+  // {success, data_url, nama_dokumen, is_pdf}.
+  // Jalur view: cuti/dinas -> id leave; reimbursement -> id sheet
+  // (pengajuan_id); masalah -> id tiket (tombol 'Lihat Foto').
+  // Alternatif: getDokumenPreview(attachmentId) atau {attachmentId} ->
+  // body {attachment_id} (untuk kasus langsung).
+  let body;
+  if (a && typeof a === 'object') {
+    body = { attachment_id: a.attachmentId ?? a.dokumen_id ?? a.attachment_id ?? null };
+  } else if ((typeof a === 'number' || (typeof a === 'string' && /^\d+$/.test(a))) && b == null) {
+    body = { attachment_id: a };
+  } else {
+    body = { modul: a, id: b };
+  }
+  if ((!body.attachment_id && (body.modul == null || body.id == null))
+    || (body.attachment_id == null && body.modul == null)) {
+    return { success: false, message: 'Dokumen tidak tersedia.' };
+  }
+  const res = await odooCall('/dokumen/preview', body);
+  const d = res.data || {};
+  // Server mengembalikan data_base64; toleransi data_url bila ada.
+  const dataUrl = d.data_base64
+    ? `data:${d.mimetype || 'application/octet-stream'};base64,${d.data_base64}`
+    : (d.data_url || null);
+  if (!dataUrl) {
+    return { success: false, message: 'Dokumen tidak tersedia di server.' };
+  }
   return {
     success: true,
-    dokumen_url: null,
-    message: 'Dokumen belum dilampirkan atau format pratinjau belum didukung.',
+    data_url: dataUrl,
+    nama_dokumen: d.filename || d.nama_dokumen || '',
+    is_pdf: d.mimetype === 'application/pdf',
   };
 }
 
@@ -880,7 +970,8 @@ export async function getDaftarKaryawan() {
       id: e.id,
       nama: e.name,
       inisial: inisialDariNama(e.name),
-      employee_id: e.barcode || e.pin || `#${e.id}`,
+      // C13: tanpa barcode/PIN -> '-', BUKAN `#id`.
+      employee_id: e.barcode || e.pin || '-',
       // Server baru kirim job/department sebagai STRING (bukan tuple).
       jabatan: (typeof e.job === 'string' ? e.job : (e.job && e.job.name)) || 'Staff',
       departemen: (typeof e.department === 'string' ? e.department : (e.department && e.department.name)) || '',
@@ -893,6 +984,7 @@ export async function getDaftarKaryawan() {
     list.sort((a, b) => (a.nama || '').localeCompare(b.nama || ''));
     return { success: true, data: list };
   } catch (err) {
+    throwIfAuth(err);
     console.error('getDaftarKaryawan error:', err);
     return { success: false, data: [], message: err.message || 'Gagal memuat daftar karyawan' };
   }
@@ -934,6 +1026,7 @@ export async function getJadwalKerjaOdoo() {
       };
     }
   } catch (err) {
+    throwIfAuth(err);
     console.warn('getJadwalKerjaOdoo error:', err);
   }
 
@@ -995,6 +1088,7 @@ export async function getCalendarScheduleDetails() {
 
     return { hari_kerja, hari_libur, daftar_shift };
   } catch (e) {
+    throwIfAuth(e);
     console.warn('getCalendarScheduleDetails error:', e);
     return null;
   }

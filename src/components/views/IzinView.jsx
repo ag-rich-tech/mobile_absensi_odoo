@@ -1,20 +1,28 @@
 import React, { useState, useEffect } from 'react';
 import { ChevronLeft, Plus, Calendar, Clock, CheckCircle2, XCircle, AlertCircle, FileText, Send, Sparkles, UploadCloud, FileCheck, Paperclip, ExternalLink, X, Eye } from 'lucide-react';
-import api from '../../services/api';
+import api, { getStoredUser } from '../../services/api';
+import { loadDraft, saveDraft, clearDraft, DRAFT_KEYS } from '../../services/draftService';
 import DocumentPreviewModal from '../DocumentPreviewModal';
 
 export default function IzinView({ onBack }) {
+  // Draf form (1.2.23): bertahan saat tab switch/unmount; dihapus saat submit sukses.
+  const draftKey = getStoredUser()?.id ? DRAFT_KEYS.izin(getStoredUser().id) : null;
+  const draft0 = draftKey ? loadDraft(draftKey, {}) : {};
   const [kuota, setKuota] = useState({ total: null, terpakai: null, sisa: null, tahun: new Date().getFullYear() });
+  // D2-05/C17: kuota PER TIPE dari server (bukan satu tipe sembarang).
+  const [kuotaPerTipe, setKuotaPerTipe] = useState([]);
+  const [tipeList, setTipeList] = useState([]);
+  const [cancellingId, setCancellingId] = useState(null);
   const [list, setList] = useState([]);
   const [isLoading, setIsLoading] = useState(true);
   const [showForm, setShowForm] = useState(false);
   const [previewModal, setPreviewModal] = useState({ isOpen: false, id: null, title: '', modul: 'izin' });
 
   // Form State
-  const [jenisIzin, setJenisIzin] = useState('cuti');
-  const [tanggalMulai, setTanggalMulai] = useState(new Date().toISOString().split('T')[0]);
-  const [tanggalSelesai, setTanggalSelesai] = useState(new Date().toISOString().split('T')[0]);
-  const [alasan, setAlasan] = useState('');
+  const [jenisIzin, setJenisIzin] = useState(draft0.jenisIzin || 'cuti');
+  const [tanggalMulai, setTanggalMulai] = useState(draft0.tanggalMulai || new Date().toISOString().split('T')[0]);
+  const [tanggalSelesai, setTanggalSelesai] = useState(draft0.tanggalSelesai || new Date().toISOString().split('T')[0]);
+  const [alasan, setAlasan] = useState(draft0.alasan || '');
   const [dokumenFile, setDokumenFile] = useState(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [formMessage, setFormMessage] = useState({ type: '', text: '' });
@@ -25,6 +33,15 @@ export default function IzinView({ onBack }) {
       const res = await api.getIzin();
       if (res.success) {
         if (res.kuota_cuti) setKuota(res.kuota_cuti);
+        if (res.kuota_per_tipe) setKuotaPerTipe(res.kuota_per_tipe);
+        if (res.tipe_cuti) {
+          setTipeList(res.tipe_cuti);
+          // D2-04: jenis form = ID tipe server (bukan kata 'cuti').
+          // Bila pilihan lama bukan id yang valid, pakai tipe pertama.
+          setJenisIzin((prev) => (res.tipe_cuti.some((t) => String(t.id) === String(prev))
+            ? prev
+            : (res.tipe_cuti.length ? String(res.tipe_cuti[0].id) : prev)));
+        }
         if (res.pengajuan) setList(res.pengajuan);
       }
     } catch (err) {
@@ -38,6 +55,11 @@ export default function IzinView({ onBack }) {
     loadData();
   }, []);
 
+  // Kuota TIPE YANG DIPILIH (D2-05): gate memakai sisa tipe ini,
+  // bukan sisa tipe sembarang.
+  const kuotaTerpilih = kuotaPerTipe.find((t) => String(t.id) === String(jenisIzin));
+  const sisaTerpilih = kuotaTerpilih ? kuotaTerpilih.sisa : null;
+
   const calculateDays = () => {
     try {
       const d1 = new Date(tanggalMulai);
@@ -46,6 +68,20 @@ export default function IzinView({ onBack }) {
       return diff > 0 ? diff : 1;
     } catch {
       return 1;
+    }
+  };
+
+  // C9: batalkan cuti/dinas MILIK SENDIRI yang masih pending.
+  const handleBatal = async (item) => {
+    if (!window.confirm('Batalkan pengajuan ini?')) return;
+    setCancellingId(item.id);
+    try {
+      await api.cancelTimeoff(item.id);
+      await loadData();
+    } catch (err) {
+      alert(err.message || 'Gagal membatalkan pengajuan.');
+    } finally {
+      setCancellingId(null);
     }
   };
 
@@ -61,6 +97,12 @@ export default function IzinView({ onBack }) {
     }
   };
 
+  // Simpan draf tiap perubahan field (file tidak ikut — tidak bisa JSON).
+  useEffect(() => {
+    if (!draftKey) return;
+    saveDraft(draftKey, { jenisIzin, tanggalMulai, tanggalSelesai, alasan });
+  }, [draftKey, jenisIzin, tanggalMulai, tanggalSelesai, alasan]);
+
   const handleSubmit = async (e) => {
     e.preventDefault();
     if (!alasan.trim()) {
@@ -69,12 +111,12 @@ export default function IzinView({ onBack }) {
     }
 
     const durasiHari = calculateDays();
-    // Gate kuota hanya berlaku bila server mengirim sisa angka; bila
-    // null (server tidak mengirim saldo), jangan memblokir pengajuan.
-    if (jenisIzin === 'cuti' && kuota.sisa != null && durasiHari > kuota.sisa) {
+    // Gate kuota hanya berlaku untuk tipe requires_allocation BILA
+    // server mengirim sisa angka; bila null, jangan memblokir.
+    if (kuotaTerpilih && kuotaTerpilih.requires_allocation && sisaTerpilih != null && durasiHari > sisaTerpilih) {
       setFormMessage({
         type: 'error',
-        text: `Sisa kuota cuti tahunan Anda (${kuota.sisa} hari) tidak mencukupi untuk pengajuan selama ${durasiHari} hari.`
+        text: `Sisa kuota ${kuotaTerpilih.nama} Anda (${sisaTerpilih} hari) tidak mencukupi untuk pengajuan selama ${durasiHari} hari.`
       });
       return;
     }
@@ -96,6 +138,7 @@ export default function IzinView({ onBack }) {
 
       if (res.success) {
         setFormMessage({ type: 'success', text: res.message || 'Pengajuan berhasil dikirim.' });
+        if (draftKey) clearDraft(draftKey);
         setAlasan('');
         setDokumenFile(null);
         setShowForm(false);
@@ -121,6 +164,12 @@ export default function IzinView({ onBack }) {
         return (
           <span style={{ fontSize: '10px', fontWeight: '700', color: '#dc2626', backgroundColor: '#fee2e2', padding: '3px 8px', borderRadius: '999px', display: 'flex', alignItems: 'center', gap: '4px' }}>
             <XCircle size={12} /> Ditolak
+          </span>
+        );
+      case 'dibatalkan':
+        return (
+          <span style={{ fontSize: '10px', fontWeight: '700', color: '#64748b', backgroundColor: '#f1f5f9', padding: '3px 8px', borderRadius: '999px', display: 'flex', alignItems: 'center', gap: '4px' }}>
+            <XCircle size={12} /> Dibatalkan
           </span>
         );
       default:
@@ -212,24 +261,21 @@ export default function IzinView({ onBack }) {
           </span>
         </div>
 
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '8px', textAlign: 'center' }}>
-          <div style={{ padding: '8px', backgroundColor: 'rgba(255, 255, 255, 0.05)', borderRadius: '8px' }}>
-            <span style={{ fontSize: '10px', color: '#94a3b8', display: 'block' }}>Hak Kuota</span>
-            <span style={{ fontSize: '18px', fontWeight: '800', color: '#ffffff' }}>{kuota.total ?? '–'}</span>
-            {kuota.tambahan > 0 && (
-              <span style={{ fontSize: '9px', color: '#c084fc', display: 'block', fontWeight: '700' }}>
-                +{kuota.tambahan} Bonus
+        {/* D2-05: kuota PER TIPE dari server (sisa + maksimal bila ada) */}
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+          {kuotaPerTipe.length === 0 && (
+            <div style={{ padding: '8px', backgroundColor: 'rgba(255, 255, 255, 0.05)', borderRadius: '8px', textAlign: 'center' }}>
+              <span style={{ fontSize: '11px', color: '#94a3b8' }}>Kuota belum tersedia dari server</span>
+            </div>
+          )}
+          {kuotaPerTipe.map((t) => (
+            <div key={t.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '8px 10px', backgroundColor: 'rgba(255, 255, 255, 0.05)', borderRadius: '8px' }}>
+              <span style={{ fontSize: '11px', fontWeight: '700', color: '#ffffff' }}>{t.nama}</span>
+              <span style={{ fontSize: '11px', fontWeight: '800', color: '#38bdf8' }}>
+                Sisa {t.sisa ?? '–'} Hari{t.maksimal != null ? ` (dari ${t.maksimal})` : ''}
               </span>
-            )}
-          </div>
-          <div style={{ padding: '8px', backgroundColor: 'rgba(255, 255, 255, 0.05)', borderRadius: '8px' }}>
-            <span style={{ fontSize: '10px', color: '#94a3b8', display: 'block' }}>Terpakai</span>
-            <span style={{ fontSize: '18px', fontWeight: '800', color: '#f59e0b' }}>{kuota.terpakai ?? '–'}</span>
-          </div>
-          <div style={{ padding: '8px', backgroundColor: 'rgba(56, 189, 248, 0.1)', borderRadius: '8px' }}>
-            <span style={{ fontSize: '10px', color: '#38bdf8', display: 'block' }}>Sisa Cuti</span>
-            <span style={{ fontSize: '18px', fontWeight: '800', color: '#38bdf8' }}>{kuota.sisa ?? '–'}</span>
-          </div>
+            </div>
+          ))}
         </div>
       </div>
 
@@ -269,28 +315,27 @@ export default function IzinView({ onBack }) {
             <label style={{ display: 'block', fontSize: '11px', fontWeight: '700', color: 'var(--text-main)', marginBottom: '6px' }}>
               Jenis Pengajuan
             </label>
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '6px' }}>
-              {[
-                { id: 'cuti', label: 'Cuti Tahunan' },
-                { id: 'sakit', label: 'Izin Sakit' },
-                { id: 'izin', label: 'Keperluan Lain' },
-              ].map((item) => (
+            <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px' }}>
+              {tipeList.length === 0 && (
+                <p style={{ fontSize: '11px', color: '#64748b', margin: 0 }}>Jenis cuti belum termuat dari server.</p>
+              )}
+              {tipeList.map((item) => (
                 <button
                   key={item.id}
                   type="button"
-                  onClick={() => setJenisIzin(item.id)}
+                  onClick={() => setJenisIzin(String(item.id))}
                   style={{
                     padding: '8px 4px',
                     fontSize: '11px',
                     fontWeight: '700',
                     borderRadius: '8px',
-                    border: jenisIzin === item.id ? '1.5px solid var(--primary-600)' : '1px solid var(--border-light)',
-                    backgroundColor: jenisIzin === item.id ? 'var(--primary-50)' : '#ffffff',
-                    color: jenisIzin === item.id ? 'var(--primary-700)' : 'var(--text-muted)',
+                    border: String(jenisIzin) === String(item.id) ? '1.5px solid var(--primary-600)' : '1px solid var(--border-light)',
+                    backgroundColor: String(jenisIzin) === String(item.id) ? 'var(--primary-50)' : '#ffffff',
+                    color: String(jenisIzin) === String(item.id) ? 'var(--primary-700)' : 'var(--text-muted)',
                     cursor: 'pointer'
                   }}
                 >
-                  {item.label}
+                  {item.name}
                 </button>
               ))}
             </div>
@@ -344,10 +389,10 @@ export default function IzinView({ onBack }) {
           <div style={{
             padding: '10px 12px',
             borderRadius: '10px',
-            backgroundColor: jenisIzin === 'cuti' && kuota.sisa != null && calculateDays() > kuota.sisa
+            backgroundColor: kuotaTerpilih && kuotaTerpilih.requires_allocation && sisaTerpilih != null && calculateDays() > sisaTerpilih
               ? '#fef2f2'
               : '#f8fafc',
-            border: jenisIzin === 'cuti' && kuota.sisa != null && calculateDays() > kuota.sisa
+            border: kuotaTerpilih && kuotaTerpilih.requires_allocation && sisaTerpilih != null && calculateDays() > sisaTerpilih
               ? '1px solid #fecaca'
               : '1px solid #e2e8f0',
             fontSize: '11px',
@@ -358,11 +403,11 @@ export default function IzinView({ onBack }) {
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
               <span style={{ color: 'var(--text-muted)' }}>Durasi Pengajuan:</span>
               <strong style={{ color: 'var(--primary-600)', fontSize: '12px' }}>
-                {calculateDays()} Hari Kerja
+                {calculateDays()} Hari Kalender
               </strong>
             </div>
 
-            {jenisIzin === 'cuti' && (
+            {kuotaTerpilih && kuotaTerpilih.requires_allocation && (
               <div style={{
                 display: 'flex',
                 justifyContent: 'space-between',
@@ -371,21 +416,21 @@ export default function IzinView({ onBack }) {
                 borderTop: '1px dashed #cbd5e1',
                 marginTop: '3px'
               }}>
-                <span style={{ color: 'var(--text-muted)' }}>Sisa Kuota Cuti Anda:</span>
+                <span style={{ color: 'var(--text-muted)' }}>Sisa Kuota {kuotaTerpilih.nama}:</span>
                 <span style={{
                   fontWeight: '800',
-                  color: kuota.sisa == null ? '#64748b' : (calculateDays() > kuota.sisa ? '#dc2626' : '#16a34a')
+                  color: sisaTerpilih == null ? '#64748b' : (calculateDays() > sisaTerpilih ? '#dc2626' : '#16a34a')
                 }}>
-                  {kuota.sisa == null
-                    ? 'Sisa kuota belum tersedia dari server'
-                    : (calculateDays() > kuota.sisa
-                      ? `Kurang ${calculateDays() - kuota.sisa} Hari (Sisa ${kuota.sisa})`
-                      : `Sisa ${kuota.sisa - calculateDays()} Hari`)}
+                  {sisaTerpilih == null
+                    ? '–'
+                    : (calculateDays() > sisaTerpilih
+                      ? `Kurang ${calculateDays() - sisaTerpilih} Hari (Sisa ${sisaTerpilih})`
+                      : `Sisa ${sisaTerpilih - calculateDays()} Hari`)}
                 </span>
               </div>
             )}
 
-            {jenisIzin === 'cuti' && calculateDays() > (kuota.sisa || 0) && (
+            {kuotaTerpilih && kuotaTerpilih.requires_allocation && sisaTerpilih != null && calculateDays() > sisaTerpilih && (
               <p style={{
                 margin: '4px 0 0 0',
                 color: '#dc2626',
@@ -393,7 +438,7 @@ export default function IzinView({ onBack }) {
                 fontWeight: '700',
                 lineHeight: 1.3
               }}>
-                ⚠️ Durasi pengajuan melebihi sisa kuota cuti tahunan Anda ({kuota.sisa || 0} hari).
+                ⚠️ Durasi pengajuan melebihi sisa kuota {kuotaTerpilih.nama} Anda ({sisaTerpilih} hari).
               </p>
             )}
           </div>
@@ -580,8 +625,11 @@ export default function IzinView({ onBack }) {
                     <span style={{
                       fontSize: '11px',
                       fontWeight: '800',
-                      color: item.jenis_izin === 'sakit' ? '#dc2626' : (item.jenis_izin === 'cuti' ? 'var(--primary-700)' : '#2563eb'),
-                      backgroundColor: item.jenis_izin === 'sakit' ? '#fee2e2' : (item.jenis_izin === 'cuti' ? 'var(--primary-50)' : '#eff6ff'),
+                      // Warna dari id tipe (palet tetap), bukan nama
+                      // Indonesia — nama Inggris ('Sick Time Off')
+                      // membuat semua chip jatuh ke warna default.
+                      color: ['#dc2626', 'var(--primary-700)', '#2563eb', '#059669', '#b45309'][(item.jenis_id || 0) % 5],
+                      backgroundColor: ['#fee2e2', 'var(--primary-50)', '#eff6ff', '#ecfdf5', '#fef3c7'][(item.jenis_id || 0) % 5],
                       padding: '2px 8px',
                       borderRadius: '6px'
                     }}>
@@ -602,7 +650,7 @@ export default function IzinView({ onBack }) {
                   "{item.alasan}"
                 </p>
 
-                {item.dokumen_url && (
+                {(item.dokumen_ada || !!item.dokumen_url) && (
                   <div style={{ marginTop: '2px' }}>
                     <button
                       type="button"
@@ -610,7 +658,8 @@ export default function IzinView({ onBack }) {
                         isOpen: true, 
                         id: item.id, 
                         title: `Dokumen ${item.label_jenis}`,
-                        modul: ['cuti_tahunan', 'cuti', 'melahirkan'].includes(item.jenis_izin) ? 'cuti' : 'izin'
+                        // Koreksi C1: cuti -> id leave, modul 'cuti'.
+                        modul: 'cuti'
                       })}
                       style={{
                         display: 'inline-flex',
@@ -633,6 +682,32 @@ export default function IzinView({ onBack }) {
                     >
                       <Eye size={13} />
                       <span>Buka Dokumen: {item.nama_dokumen || 'Lihat Berkas'}</span>
+                    </button>
+                  </div>
+                )}
+                {/* C9: batalkan pengajuan sendiri yang masih menunggu */}
+                {item.status === 'menunggu' && (
+                  <div style={{ marginTop: '2px' }}>
+                    <button
+                      type="button"
+                      disabled={cancellingId === item.id}
+                      onClick={() => handleBatal(item)}
+                      style={{
+                        display: 'inline-flex',
+                        alignItems: 'center',
+                        gap: '6px',
+                        fontSize: '11px',
+                        fontWeight: '700',
+                        color: '#dc2626',
+                        backgroundColor: '#fef2f2',
+                        padding: '6px 12px',
+                        borderRadius: '8px',
+                        border: '1px solid #fecdd3',
+                        cursor: 'pointer'
+                      }}
+                    >
+                      <X size={13} />
+                      <span>{cancellingId === item.id ? 'Membatalkan...' : 'Batalkan Pengajuan'}</span>
                     </button>
                   </div>
                 )}

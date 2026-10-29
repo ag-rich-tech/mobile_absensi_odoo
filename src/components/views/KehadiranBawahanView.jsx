@@ -125,20 +125,27 @@ function OrgChartNode({ node, depth, meId, expanded, onToggle, meNodeRef }) {
           berhenti tepat di tengah kartu anak terakhir (tidak menggantung).
           Geometri: container paddingLeft 8 + kartu marginLeft 12 → tick
           selebar 20px dari garis (kiri -8) ke tepi kartu; tengah kartu ≈ 26px
-          (padding 10 + avatar/konten 32 / 2). */}
+          (padding 10 + avatar/konten 32 / 2).
+          Gap parent→spine: kartu punya marginBottom 6px sehingga segmen
+          anak pertama dulu mulai 6px di bawah tepi bawah kartu induk —
+          diperbaiki dengan menarik segmen anak pertama ke atas 6px
+          (top -6px; bila sekaligus anak terakhir, tinggi 32px agar
+          tetap berhenti di tengah kartu). */}
       {isOpen && kids.length > 0 && (
         <div style={{ marginLeft: '16px', paddingLeft: '8px' }}>
           {kids.map((child, idx) => {
             const isLast = idx === kids.length - 1;
+            const isFirst = idx === 0;
             return (
               <div key={child.id} style={{ position: 'relative' }}>
                 {/* Segmen vertikal: baris biasa sampai bawah baris; baris
-                    terakhir hanya sampai tengah kartu (26px). */}
+                    terakhir hanya sampai tengah kartu (26px). Anak
+                    pertama ditarik ke atas menutup marginBottom kartu. */}
                 <span style={{
                   position: 'absolute',
                   left: '-8px',
-                  top: 0,
-                  ...(isLast ? { height: '26px' } : { bottom: 0 }),
+                  top: isFirst ? '-6px' : 0,
+                  ...(isLast ? { height: isFirst ? '32px' : '26px' } : { bottom: 0 }),
                   width: '1.5px',
                   backgroundColor: 'var(--border-light)',
                 }} />
@@ -197,6 +204,8 @@ export default function KehadiranBawahanView({ onBack }) {
   const [orgExpanded, setOrgExpanded] = useState({});
   const meNodeRef = useRef(null);
   const orgScrolledRef = useRef(false);
+  // Pencarian tab Org Chart (dulu tidak ada — 69 root tak ter-search).
+  const [orgSearchQuery, setOrgSearchQuery] = useState('');
 
   // Muat pohon org chart (lazy: hanya saat tab pertama dibuka).
   // Default: root + anak level 1 terbuka, level lebih dalam tertutup,
@@ -289,6 +298,72 @@ export default function KehadiranBawahanView({ onBack }) {
   const countOrgNodes = (nodes) =>
     nodes.reduce((acc, n) => acc + 1 + countOrgNodes(n.children || []), 0);
   const orgCount = countOrgNodes(orgTree);
+
+  // Filter pohon berdasarkan pencarian: node yang cocok tampil dengan
+  // subtree penuhnya; node yang tidak cocok tampil hanya bila punya
+  // turunan yang cocok (dengan subtree terfilter) agar hasil tetap
+  // terjangkau dari root. Saat mencari, semua node hasil dipaksa
+  // terbuka supaya hasil terlihat tanpa expand manual.
+  const orgSearchActive = orgSearchQuery.trim().length > 0;
+  const orgSearchQ = orgSearchQuery.trim().toLowerCase();
+  const filterOrgTree = (nodes, q) => {
+    const out = [];
+    for (const n of nodes) {
+      const hit = (n.nama || '').toLowerCase().includes(q)
+        || (n.jabatan || '').toLowerCase().includes(q)
+        || (n.departemen || '').toLowerCase().includes(q);
+      if (hit) {
+        out.push(n);
+      } else {
+        const kids = filterOrgTree(n.children || [], q);
+        if (kids.length) out.push({ ...n, children: kids });
+      }
+    }
+    return out;
+  };
+  const filteredOrgTree = orgSearchActive ? filterOrgTree(orgTree, orgSearchQ) : orgTree;
+  const displayExpanded = (() => {
+    if (!orgSearchActive) return orgExpanded;
+    const next = { ...orgExpanded };
+    const walk = (nodes) => {
+      for (const n of nodes) {
+        next[n.id] = true;
+        walk(n.children || []);
+      }
+    };
+    walk(filteredOrgTree);
+    return next;
+  })();
+
+  // "Cari Saya": buka jalur root→node login-user (bila tertutup),
+  // bersihkan filter pencarian (supaya node tidak tersembunyi),
+  // lalu scroll ke node tersebut. Auto-scroll sekali-saat-load tetap
+  // jalan lewat orgScrolledRef; tombol ini untuk sesudah Ciutkan.
+  const scrollToMe = () => {
+    if (!orgMeId) return;
+    const findPath = (nodes, target, trail) => {
+      for (const n of nodes) {
+        if (n.id === target) return [...trail, n.id];
+        const hit = findPath(n.children || [], target, [...trail, n.id]);
+        if (hit) return hit;
+      }
+      return null;
+    };
+    const path = findPath(orgTree, orgMeId, []);
+    if (path) {
+      setOrgExpanded((prev) => {
+        const next = { ...prev };
+        for (const id of path) next[id] = true;
+        return next;
+      });
+    }
+    setOrgSearchQuery('');
+    setTimeout(() => {
+      if (meNodeRef.current && meNodeRef.current.scrollIntoView) {
+        meNodeRef.current.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      }
+    }, 200);
+  };
 
   const formatBulanTahunParam = (m, y) => {
     const mm = String(m).padStart(2, '0');
@@ -907,7 +982,7 @@ export default function KehadiranBawahanView({ onBack }) {
             <Info size={14} color="#0284c7" /> Keterangan Kode Status Presensi:
           </span>
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '6px', fontSize: '10px', color: '#475569' }}>
-            <div><b style={{ color: '#16a34a' }}>H</b> : Hadir Tepat Waktu</div>
+            <div><b style={{ color: '#16a34a' }}>H</b> : Hadir</div>
             <div><b style={{ color: '#ea580c' }}>H-TP</b> : Hadir (Tdk Absen Pulang)</div>
             <div><b style={{ color: '#d97706' }}>T</b> : Telat Masuk</div>
             <div><b style={{ color: '#6366f1' }}>PA</b> : Pulang Awal</div>
@@ -1045,11 +1120,13 @@ export default function KehadiranBawahanView({ onBack }) {
                       <span style={{
                         fontSize: '9px',
                         fontWeight: '700',
-                        color: selectedDayDetail.detail_absensi.status_masuk === 'terlambat' ? '#ea580c' : '#16a34a'
+                        color: selectedDayDetail.detail_absensi.status_masuk === 'terlambat' ? '#ea580c' : (selectedDayDetail.detail_absensi.status_masuk === 'tepat_waktu' ? '#16a34a' : '#64748b')
                       }}>
                         {selectedDayDetail.detail_absensi.status_masuk === 'terlambat'
                           ? `Telat ${selectedDayDetail.detail_absensi.menit_terlambat} mnt`
-                          : 'Tepat Waktu'}
+                          : (selectedDayDetail.detail_absensi.status_masuk === 'tepat_waktu'
+                            ? 'Tepat Waktu'
+                            : 'Status tidak diketahui')}
                       </span>
                     </div>
 
@@ -1077,12 +1154,16 @@ export default function KehadiranBawahanView({ onBack }) {
 
                   {/* Lokasi & Shift Info */}
                   <div style={{ padding: '8px 12px', borderRadius: '10px', backgroundColor: '#f1f5f9', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                    <span style={{ fontSize: '11px', color: '#475569' }}>
-                      Shift: <b>{selectedDayDetail.detail_absensi.shift}</b>
-                    </span>
-                    <span style={{ fontSize: '11px', color: '#475569' }}>
-                      Lokasi: <b>{selectedDayDetail.detail_absensi.lokasi}</b>
-                    </span>
+                    {selectedDayDetail.detail_absensi.shift ? (
+                      <span style={{ fontSize: '11px', color: '#475569' }}>
+                        Shift: <b>{selectedDayDetail.detail_absensi.shift}</b>
+                      </span>
+                    ) : null}
+                    {selectedDayDetail.detail_absensi.lokasi ? (
+                      <span style={{ fontSize: '11px', color: '#475569' }}>
+                        Lokasi: <b>{selectedDayDetail.detail_absensi.lokasi}</b>
+                      </span>
+                    ) : null}
                   </div>
 
                   {selectedDayDetail.detail_absensi.total_denda > 0 && (
@@ -1568,12 +1649,33 @@ export default function KehadiranBawahanView({ onBack }) {
             }
           `}</style>
 
-          {/* Baris judul + Expand/Ciutkan */}
+          {/* Baris judul + Expand/Ciutkan/Cari Saya */}
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
             <span style={{ fontSize: '12px', fontWeight: '800', color: 'var(--text-main)' }}>
-              Struktur Tim ({orgCount} karyawan)
+              {orgSearchActive
+                ? `Hasil: ${countOrgNodes(filteredOrgTree)} karyawan`
+                : `Struktur Tim (${orgCount} karyawan)`}
             </span>
             <span style={{ display: 'flex', gap: '6px' }}>
+              <button
+                type="button"
+                onClick={scrollToMe}
+                disabled={!orgMeId}
+                title="Buka jalur dan geser ke node Anda"
+                style={{
+                  padding: '4px 10px',
+                  borderRadius: '6px',
+                  border: '1px solid #bae6fd',
+                  backgroundColor: '#f0f9ff',
+                  color: '#0369a1',
+                  fontSize: '11px',
+                  fontWeight: '700',
+                  cursor: !orgMeId ? 'not-allowed' : 'pointer',
+                  opacity: !orgMeId ? 0.5 : 1
+                }}
+              >
+                Cari Saya
+              </button>
               <button
                 type="button"
                 onClick={expandAllOrg}
@@ -1607,6 +1709,49 @@ export default function KehadiranBawahanView({ onBack }) {
                 Ciutkan
               </button>
             </span>
+          </div>
+
+          {/* Input Cari di Org Chart (dulu tidak ada) */}
+          <div style={{
+            position: 'relative',
+            display: 'flex',
+            alignItems: 'center'
+          }}>
+            <Search size={16} color="#94a3b8" style={{ position: 'absolute', left: '12px' }} />
+            <input
+              type="text"
+              placeholder="Cari nama, jabatan, atau departemen..."
+              value={orgSearchQuery}
+              onChange={(e) => setOrgSearchQuery(e.target.value)}
+              style={{
+                width: '100%',
+                padding: '10px 12px 10px 36px',
+                borderRadius: '12px',
+                border: '1.5px solid var(--border-light)',
+                backgroundColor: '#ffffff',
+                fontSize: '12px',
+                color: 'var(--text-main)',
+                outline: 'none',
+                boxSizing: 'border-box'
+              }}
+            />
+            {orgSearchQuery && (
+              <button
+                type="button"
+                onClick={() => setOrgSearchQuery('')}
+                style={{
+                  position: 'absolute',
+                  right: '10px',
+                  background: 'none',
+                  border: 'none',
+                  color: '#94a3b8',
+                  cursor: 'pointer',
+                  padding: '4px'
+                }}
+              >
+                <X size={14} />
+              </button>
+            )}
           </div>
 
           {/* Isi tab Org Chart */}
@@ -1662,15 +1807,32 @@ export default function KehadiranBawahanView({ onBack }) {
                 Tidak ada data org chart yang bisa ditampilkan.
               </span>
             </div>
+          ) : orgSearchActive && filteredOrgTree.length === 0 ? (
+            <div style={{
+              padding: '30px 20px',
+              textAlign: 'center',
+              backgroundColor: '#f8fafc',
+              borderRadius: '16px',
+              border: '1.5px dashed #cbd5e1',
+              color: '#64748b'
+            }}>
+              <Search size={32} style={{ margin: '0 auto 8px', opacity: 0.5 }} />
+              <p style={{ fontSize: '13px', fontWeight: '700', margin: '0 0 4px', color: '#334155' }}>
+                Karyawan Tidak Ditemukan
+              </p>
+              <span style={{ fontSize: '11px' }}>
+                Coba gunakan kata kunci pencarian yang lain.
+              </span>
+            </div>
           ) : (
             <div style={{ display: 'flex', flexDirection: 'column' }}>
-              {orgTree.map((node) => (
+              {filteredOrgTree.map((node) => (
                 <OrgChartNode
                   key={node.id}
                   node={node}
                   depth={0}
                   meId={orgMeId}
-                  expanded={orgExpanded}
+                  expanded={displayExpanded}
                   onToggle={toggleOrgNode}
                   meNodeRef={meNodeRef}
                 />

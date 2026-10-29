@@ -200,9 +200,11 @@ export default function DendaView({ onBack }) {
                       <span style={{ fontWeight: '800', color: '#be123c', fontSize: '12px', fontFamily: 'monospace' }}>
                         {a.nominal_formatted}
                       </span>
-                      <span style={{ display: 'block', fontSize: '9px', color: 'var(--text-muted)', textTransform: 'capitalize' }}>
-                        {a.jenis?.replace('_', ' ') || 'Nominal Tetap'}
-                      </span>
+                      {(a.jenis || a.label_jenis) && (
+                        <span style={{ display: 'block', fontSize: '9px', color: 'var(--text-muted)', textTransform: 'capitalize' }}>
+                          {(a.jenis || a.label_jenis).replace('_', ' ')}
+                        </span>
+                      )}
                     </div>
                   </div>
                 ))}
@@ -296,9 +298,11 @@ export default function DendaView({ onBack }) {
                       <span style={{ fontWeight: '800', color: '#2563eb', fontSize: '12px', fontFamily: 'monospace' }}>
                         {a.nominal_formatted}
                       </span>
-                      <span style={{ display: 'block', fontSize: '9px', color: 'var(--text-muted)', textTransform: 'capitalize' }}>
-                        {a.jenis?.replace('_', ' ') || 'Nominal Tetap'}
-                      </span>
+                      {(a.jenis || a.label_jenis) && (
+                        <span style={{ display: 'block', fontSize: '9px', color: 'var(--text-muted)', textTransform: 'capitalize' }}>
+                          {(a.jenis || a.label_jenis).replace('_', ' ')}
+                        </span>
+                      )}
                     </div>
                   </div>
                 ))}

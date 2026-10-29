@@ -189,6 +189,29 @@ export default function FaceEnrollmentPage({ user, onBack, onSuccess }) {
       return;
     }
 
+    // Validasi descriptor SEBELUM kirim: face-api = 128 angka.
+    // [] / string kosong / tipe lain JANGAN dikirim — server lama
+    // menerima [] dan menandai terdaftar palsu (flag true tanpa data).
+    const isValidDescriptor = (d) => {
+      if (Array.isArray(d) || ArrayBuffer.isView(d)) {
+        const arr = Array.from(d);
+        return arr.length > 0
+          && arr.every((v) => typeof v === 'number' && Number.isFinite(v));
+      }
+      if (typeof d === 'string') {
+        return d.trim().length > 0;
+      }
+      return false;
+    };
+    if (!isValidDescriptor(descriptorToSave)) {
+      setErrorMessage('Data wajah tidak valid (descriptor kosong). Posisikan wajah Anda dan coba lagi.');
+      hasBlinkedRef.current = false;
+      eyeWasOpenRef.current = false;
+      setEnrollStep('posisikan_wajah');
+      startFaceScanLoop();
+      return;
+    }
+
     if (scanIntervalRef.current) {
       clearInterval(scanIntervalRef.current);
       scanIntervalRef.current = null;
@@ -256,11 +279,17 @@ export default function FaceEnrollmentPage({ user, onBack, onSuccess }) {
         if (submitPhase === 'fallback') {
           setErrorMessage('Koneksi tidak stabil. Enroll gagal setelah percobaan kedua.');
         } else {
+          // F-2: gagal jaringan PERTAMA dulu me-rethrow di sini —
+          // reset + restart loop di bawah jadi tak tercapai, dan
+          // pemanggil jalur blink (tanpa await/catch) menghasilkan
+          // unhandled rejection + scan loop mati (hasBlinkedRef
+          // macet true). Sekarang: TANPA throw — tampilkan error
+          // yang benar, tandai fase fallback (percobaan kedua yang
+          // gagal masuk cabang di atas), reset, dan hidupkan lagi
+          // loop scan supaya user bisa berkedip ulang / tekan Simpan.
           setSubmitPhase('fallback');
+          setErrorMessage('Koneksi tidak stabil. Silakan berkedip lagi atau tekan Simpan untuk mencoba lagi.');
           setGuideText('Koneksi lambat, coba lagi...');
-          // Retry tanpa foto sudah ditangani di dalam registerFace;
-          // fase ini hanya menandai gagal jaringan berturut-turut.
-          throw err;
         }
       } else {
         setErrorMessage(err.message || 'Terjadi kesalahan saat menyimpan pendaftaran wajah.');

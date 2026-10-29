@@ -25,6 +25,10 @@ export default function AttendanceCapturePage({
   const isMasuk = type === 'masuk';
   const isWajibFace = user?.wajib_face_recognition !== false;
   const hasFaceEnrolled = isWajibFace && Boolean(user?.face_descriptor || user?.is_face_registered);
+  // C6 (K4): belum PERNAH enroll (bukan flag server, bukan descriptor
+  // lokal) — berbeda dari "terdaftar tapi perangkat ini tanpa referensi"
+  // (banner Daftar Ulang di bawah). Yang ini DIBLOKIR, bukan lolos foto.
+  const neverEnrolled = isWajibFace && !hasFaceEnrolled;
 
   const [currentTime, setCurrentTime] = useState(getServerDate());
   const [capturedPhoto, setCapturedPhoto] = useState(null);
@@ -360,6 +364,16 @@ export default function AttendanceCapturePage({
       }
     }
 
+    // C6 (K4): belum PERNAH enroll + wajah wajib → BLOKIR. Jangan
+    // kirim clock-in sama sekali (server backstop juga menolak, tapi
+    // UI tidak boleh lolos diam-diam dengan foto saja seperti dulu).
+    // Pengguna diarahkan ke enroll lewat panel pemblokir di bawah.
+    if (neverEnrolled) {
+      setErrorMessage('Wajah biometrik belum terdaftar. Daftarkan wajah Anda dulu sebelum absen.');
+      setIsSubmitting(false);
+      return;
+    }
+
     try {
       const coords = locationData?.coords || {
         latitude: -6.143662253255497,
@@ -536,27 +550,30 @@ export default function AttendanceCapturePage({
           </div>
         )}
 
-        {/* Banner Ajakan Registrasi Wajah jika Belum Terdaftar */}
-        {isWajibFace && !hasFaceEnrolled && (
+        {/* Panel pemblokir: belum PERNAH enroll + wajah wajib (C6/K4).
+            Dulu hanya banner ajakan non-blocking sehingga absen lolos
+            dengan foto saja; sekarang absen DIBLOKIR sampai enroll. */}
+        {neverEnrolled && (
           <div style={{
             marginBottom: '14px',
             padding: '12px 14px',
             borderRadius: 'var(--radius-md)',
-            backgroundColor: '#fffbeb',
-            border: '1.5px solid #fde68a',
+            backgroundColor: '#fef2f2',
+            border: '1.5px solid #fecaca',
             display: 'flex',
             alignItems: 'center',
             justifyContent: 'space-between',
             gap: '10px'
           }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-              <ShieldAlert size={22} style={{ color: '#d97706', flexShrink: 0 }} />
+              <ShieldAlert size={22} style={{ color: '#dc2626', flexShrink: 0 }} />
               <div>
-                <p style={{ fontSize: '12px', fontWeight: '800', color: '#92400e', margin: 0 }}>
-                  Wajah Biometrik Belum Terdaftar
+                <p style={{ fontSize: '12px', fontWeight: '800', color: '#991b1b', margin: 0 }}>
+                  Absen Diblokir — Wajah Belum Terdaftar
                 </p>
-                <p style={{ fontSize: '11px', color: '#b45309', margin: '2px 0 0 0' }}>
-                  Daftarkan wajah 1 kali di HP untuk presensi biometrik.
+                <p style={{ fontSize: '11px', color: '#b91c1c', margin: '2px 0 0 0' }}>
+                  Presensi biometrik wajib. Daftarkan wajah 1 kali, lalu
+                  kembali ke halaman ini untuk absen.
                 </p>
               </div>
             </div>
@@ -567,7 +584,7 @@ export default function AttendanceCapturePage({
                 style={{
                   padding: '7px 12px',
                   borderRadius: 'var(--radius-sm)',
-                  backgroundColor: '#d97706',
+                  backgroundColor: '#dc2626',
                   color: '#ffffff',
                   border: 'none',
                   fontSize: '11px',

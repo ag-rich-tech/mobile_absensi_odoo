@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import WelcomePage from './pages/WelcomePage';
 import LoginPage from './pages/LoginPage';
 import DashboardPage from './pages/DashboardPage';
@@ -7,7 +7,7 @@ import AttendanceCapturePage from './pages/AttendanceCapturePage';
 import FaceEnrollmentPage from './pages/FaceEnrollmentPage';
 import NotchBar from './components/NotchBar';
 import AccountDeactivatedScreen from './components/AccountDeactivatedScreen';
-import { getToken, getStoredUser, clearAuth } from './services/api';
+import { getToken, getStoredUser, setStoredUser, clearAuth } from './services/api';
 import api from './services/api';
 import { preloadAttendanceSounds } from './services/soundService';
 
@@ -39,6 +39,33 @@ function App() {
     jamKerja: null,
   });
 
+  // C5 (restore descriptor, jalur dashboard): bila server MENGIRIM
+  // face_descriptor milik user login dan user tersimpan belum
+  // memilikinya, simpan ke localStorage. Dijaga ketat: hanya
+  // descriptor non-kosong (array berisi / string non-kosong), hanya
+  // bila tersimpan belum punya, dan hanya dari res.pegawai dashboard
+  // sesi login sendiri — tidak pernah descriptor orang lain.
+  // CATATAN: saat ini server SENGAJA tidak pernah mengirim
+  // face_descriptor dan api.js tidak memetakannya, sehingga hook ini
+  // no-op sampai (a) server mengirimkannya (keputusan agen server)
+  // dan (b) api.js memetakannya ke pegawai (agen app-1). Restore
+  // penuh di login/getMe tetap milik api.js — ini hanya jembatan
+  // jalur dashboard (getMe-equivalent app sesudah login).
+  const restoreFaceDescriptor = (pegawai) => {
+    const desc = pegawai?.face_descriptor;
+    const incomingValid = Array.isArray(desc) ? desc.length > 0 : Boolean(desc);
+    if (!incomingValid) return;
+    try {
+      const stored = getStoredUser();
+      if (!stored) return;
+      const storedDesc = stored.face_descriptor;
+      const storedValid = Array.isArray(storedDesc) ? storedDesc.length > 0 : Boolean(storedDesc);
+      if (!storedValid) setStoredUser({ ...stored, face_descriptor: desc });
+    } catch {
+      // Storage gagal — abaikan, state tetap jalan.
+    }
+  };
+
   // Global Listener: Deteksi jika akun dinonaktifkan oleh Admin secara realtime
   useEffect(() => {
     const handleDeactivated = (e) => {
@@ -51,8 +78,14 @@ function App() {
     };
 
     window.addEventListener('account-deactivated', handleDeactivated);
+    // C23: error auth dari adapter/view mana pun -> kembali ke login.
+    const handleAuthExpired = () => handleLogout();
+    window.addEventListener('auth-expired', handleAuthExpired);
     preloadAttendanceSounds();
-    return () => window.removeEventListener('account-deactivated', handleDeactivated);
+    return () => {
+      window.removeEventListener('account-deactivated', handleDeactivated);
+      window.removeEventListener('auth-expired', handleAuthExpired);
+    };
   }, []);
 
   useEffect(() => {
@@ -80,6 +113,7 @@ function App() {
           });
           if (res.pegawai) {
             setUser((prev) => ({ ...prev, ...res.pegawai }));
+            restoreFaceDescriptor(res.pegawai);
           }
         }
       }).catch((err) => {
@@ -109,6 +143,7 @@ function App() {
         });
         if (res.pegawai) {
           setUser((prev) => ({ ...prev, ...res.pegawai }));
+          restoreFaceDescriptor(res.pegawai);
         }
       }
     }).catch(() => {});
@@ -131,6 +166,73 @@ function App() {
     setDashboardKey((prev) => prev + 1);
     setCurrentScreen('dashboard');
   };
+
+  // Ref layar aktif untuk handler back (menghindari closure basi:
+  // listener didaftarkan sekali, tapi layar berubah-ubah).
+  const screenRef = useRef(currentScreen);
+  screenRef.current = currentScreen;
+
+  // Tombol Back Android (Capacitor App backButton, bila tersedia).
+  // Diakses lewat window.Capacitor — TANPA import statis @capacitor/app
+  // (paket itu tidak terpasang; import statis akan menggagalkan build).
+  // Subview (location_check / attendance_capture / face_enrollment)
+  // → kembali ke dashboard; login → welcome; dashboard/welcome →
+  // perilaku default Android (keluar aplikasi via exitApp, padanan
+  // back pada activity root). Di web (tanpa Capacitor) tidak aktif.
+  useEffect(() => {
+    const AppPlugin = window.Capacitor?.Plugins?.App;
+    if (!AppPlugin || typeof AppPlugin.addListener !== 'function') return undefined;
+    const onBackButton = () => {
+      const screen = screenRef.current;
+      if (
+        screen === 'location_check'
+        || screen === 'attendance_capture'
+        || screen === 'face_enrollment'
+      ) {
+        navigateToDashboard();
+      } else if (screen === 'login') {
+        setCurrentScreen('welcome');
+      } else if (typeof AppPlugin.exitApp === 'function') {
+        AppPlugin.exitApp();
+      }
+    };
+    // Capacitor 5+: addListener mengembalikan Promise<handle>;
+    // versi lama mengembalikan handle langsung. Tangani keduanya.
+    let handleOrPromise = null;
+    try {
+      handleOrPromise = AppPlugin.addListener('backButton', onBackButton);
+    } catch {
+      return undefined;
+    }
+    return () => {
+      if (handleOrPromise && typeof handleOrPromise.then === 'function') {
+        handleOrPromise
+          .then((h) => { if (h && typeof h.remove === 'function') h.remove(); })
+          .catch(() => {});
+      } else if (handleOrPromise && typeof handleOrPromise.remove === 'function') {
+        handleOrPromise.remove();
+      }
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // Status koneksi untuk banner offline (navigator.onLine + event
+  // online/offline). Banner dirender di bawah; tombol "Coba lagi"
+  // memuat ulang halaman (boot ulang dari token tersimpan) sehingga
+  // layar apa pun yang gagal muat bisa dicoba lagi.
+  const [isOnline, setIsOnline] = useState(
+    () => (typeof navigator !== 'undefined' ? navigator.onLine : true)
+  );
+  useEffect(() => {
+    const goOnline = () => setIsOnline(true);
+    const goOffline = () => setIsOnline(false);
+    window.addEventListener('online', goOnline);
+    window.addEventListener('offline', goOffline);
+    return () => {
+      window.removeEventListener('online', goOnline);
+      window.removeEventListener('offline', goOffline);
+    };
+  }, []);
 
   // Navigasi Alur Presensi:
   // 1. Dari Dashboard: klik Absen Masuk/Pulang -> Masuk ke Menu Lokasi (Maps & Titik Karyawan)
@@ -168,6 +270,45 @@ function App() {
     <div className="app-viewport-wrapper">
       {/* Smartphone & Tablet Device Container */}
       <main className="mobile-device-container">
+        {/* Banner offline: tampil saat navigator.onLine false. */}
+        {!isOnline && (
+          <div
+            role="alert"
+            style={{
+              flexShrink: 0,
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'space-between',
+              gap: '10px',
+              padding: '10px 16px',
+              backgroundColor: '#fef2f2',
+              borderBottom: '1px solid #fecaca',
+              color: '#991b1b',
+              fontSize: '12px',
+              fontWeight: '700',
+              zIndex: 60
+            }}
+          >
+            <span>Tidak ada koneksi internet.</span>
+            <button
+              type="button"
+              onClick={() => window.location.reload()}
+              style={{
+                padding: '4px 12px',
+                borderRadius: '6px',
+                border: '1px solid #fca5a5',
+                backgroundColor: '#ffffff',
+                color: '#b91c1c',
+                fontSize: '11px',
+                fontWeight: '800',
+                cursor: 'pointer',
+                flexShrink: 0
+              }}
+            >
+              Coba lagi
+            </button>
+          </div>
+        )}
         {/* Page Switcher */}
         {currentScreen === 'welcome' && (
           <WelcomePage onStartLogin={() => setCurrentScreen('login')} />

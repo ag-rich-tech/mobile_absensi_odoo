@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { ChevronLeft, Plus, Timer, Clock, CircleDollarSign, CheckCircle2, XCircle, Send, Sparkles } from 'lucide-react';
-import api from '../../services/api';
+import api, { getStoredUser } from '../../services/api';
+import { loadDraft, saveDraft, clearDraft, DRAFT_KEYS } from '../../services/draftService';
 
 // Komponen Pemilih Jam Format 24 Jam (00:00 - 23:59)
 function TimeInput24({ label, value, onChange, iconColor = '#d97706' }) {
@@ -116,17 +117,21 @@ function TimeInput24({ label, value, onChange, iconColor = '#d97706' }) {
 }
 
 export default function LemburView({ onBack }) {
+  // Draf form (1.2.23): bertahan saat tab switch/unmount; dihapus saat submit sukses.
+  const draftKey = getStoredUser()?.id ? DRAFT_KEYS.lembur(getStoredUser().id) : null;
+  const draft0 = draftKey ? loadDraft(draftKey, {}) : {};
   const [list, setList] = useState([]);
-  const [ringkasan, setRingkasan] = useState({ total_jam: 0, total_upah: 0, total_upah_formatted: 'Rp 0' });
+  // D2-12: ringkasan/tarif HANYA bila server mengirimnya (null = sembunyikan).
   const [isLoading, setIsLoading] = useState(true);
   const [showForm, setShowForm] = useState(false);
-  const [tarifPerJam, setTarifPerJam] = useState(75000);
+  const [ringkasan, setRingkasan] = useState(null);
+  const [tarifPerJam, setTarifPerJam] = useState(null);
 
   // Form State (Format 24 Jam)
-  const [tanggalLembur, setTanggalLembur] = useState(new Date().toISOString().split('T')[0]);
-  const [jamMulai, setJamMulai] = useState('17:30');
-  const [jamSelesai, setJamSelesai] = useState('20:30');
-  const [keteranganTugas, setKeteranganTugas] = useState('');
+  const [tanggalLembur, setTanggalLembur] = useState(draft0.tanggalLembur || new Date().toISOString().split('T')[0]);
+  const [jamMulai, setJamMulai] = useState(draft0.jamMulai || '17:30');
+  const [jamSelesai, setJamSelesai] = useState(draft0.jamSelesai || '20:30');
+  const [keteranganTugas, setKeteranganTugas] = useState(draft0.keteranganTugas || '');
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [formMessage, setFormMessage] = useState({ type: '', text: '' });
 
@@ -136,7 +141,7 @@ export default function LemburView({ onBack }) {
       const res = await api.getLembur();
       if (res.success) {
         if (res.tarif_upah_per_jam) setTarifPerJam(Number(res.tarif_upah_per_jam));
-        if (res.ringkasan_bulan_ini) setRingkasan(res.ringkasan_bulan_ini);
+        if (res.ringkasan || res.ringkasan_bulan_ini) setRingkasan(res.ringkasan || res.ringkasan_bulan_ini);
         if (res.lembur) setList(res.lembur);
       }
     } catch (err) {
@@ -170,6 +175,12 @@ export default function LemburView({ onBack }) {
     setJamSelesai(pulang);
   };
 
+  // Simpan draf tiap perubahan field (file tidak ikut — tidak bisa JSON).
+  useEffect(() => {
+    if (!draftKey) return;
+    saveDraft(draftKey, { tanggalLembur, jamMulai, jamSelesai, keteranganTugas });
+  }, [draftKey, tanggalLembur, jamMulai, jamSelesai, keteranganTugas]);
+
   const handleSubmit = async (e) => {
     e.preventDefault();
     if (!keteranganTugas.trim()) {
@@ -190,6 +201,7 @@ export default function LemburView({ onBack }) {
 
       if (res.success) {
         setFormMessage({ type: 'success', text: res.message || 'Pengajuan lembur berhasil dikirim.' });
+        if (draftKey) clearDraft(draftKey);
         setKeteranganTugas('');
         setShowForm(false);
         loadData();
@@ -285,7 +297,8 @@ export default function LemburView({ onBack }) {
         </button>
       </div>
 
-      {/* Card Ringkasan Bulan Ini */}
+      {/* Card Ringkasan Bulan Ini — hanya bila server mengirim ringkasan (D2-12) */}
+      {ringkasan && (
       <div style={{
         background: 'linear-gradient(135deg, #78350f 0%, #451a03 100%)',
         borderRadius: 'var(--radius-md)',
@@ -309,10 +322,11 @@ export default function LemburView({ onBack }) {
             <CircleDollarSign size={12} /> Estimasi Upah
           </span>
           <span style={{ fontSize: '18px', fontWeight: '800', color: '#fef08a', marginTop: '4px', display: 'block' }}>
-            {ringkasan.total_upah_formatted}
+            {ringkasan.total_upah_formatted || '–'}
           </span>
         </div>
       </div>
+      )}
 
       {/* Form Lembur */}
       {showForm && (
@@ -436,13 +450,13 @@ export default function LemburView({ onBack }) {
               <span style={{ color: 'var(--text-muted)' }}>Durasi Terhitung: </span>
               <strong style={{ color: '#d97706', fontSize: '12px' }}>{calculateHours()} Jam</strong>
               <span style={{ display: 'block', fontSize: '9px', color: '#92400e' }}>
-                Tarif: Rp {tarifPerJam.toLocaleString('id-ID')} / Jam
+                {tarifPerJam != null ? `Tarif: Rp ${tarifPerJam.toLocaleString('id-ID')} / Jam` : 'Tarif dari server belum tersedia'}
               </span>
             </div>
             <div style={{ textAlign: 'right' }}>
               <span style={{ color: 'var(--text-muted)' }}>Estimasi Upah: </span>
               <strong style={{ color: '#16a34a', fontSize: '13px', display: 'block' }}>
-                Rp {(parseFloat(calculateHours()) * tarifPerJam).toLocaleString('id-ID')}
+                {tarifPerJam != null ? `Rp ${(parseFloat(calculateHours()) * tarifPerJam).toLocaleString('id-ID')}` : '–'}
               </strong>
             </div>
           </div>
@@ -557,10 +571,12 @@ export default function LemburView({ onBack }) {
                 <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '11px', color: 'var(--text-muted)' }}>
                   <span>
                     Jam: <strong style={{ color: 'var(--text-main)', fontFamily: 'monospace', fontWeight: '700' }}>
-                      {item.jam_mulai} - {item.jam_selesai} WIB
+                      {item.jam_mulai || '-'} - {item.jam_selesai || '-'} WIB
                     </strong> ({item.durasi_jam} Jam)
                   </span>
-                  <span style={{ color: '#d97706', fontWeight: '700' }}>{item.total_upah_lembur_formatted}</span>
+                  {item.total_upah_lembur_formatted && (
+                    <span style={{ color: '#d97706', fontWeight: '700' }}>{item.total_upah_lembur_formatted}</span>
+                  )}
                 </div>
 
                 <p style={{ fontSize: '11px', color: 'var(--text-muted)', margin: 0, lineHeight: '1.4' }}>

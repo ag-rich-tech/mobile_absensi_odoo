@@ -532,8 +532,8 @@ export default function RiwayatView({ onBack }) {
             }}>
               <div style={{ display: 'flex', justifyContent: 'space-between' }}>
                 <span style={{ color: 'var(--text-muted)' }}>Status Masuk:</span>
-                <strong style={{ color: selectedDetail.status_masuk === 'terlambat' ? 'var(--danger)' : 'var(--success)' }}>
-                  {selectedDetail.status_masuk === 'terlambat' ? `Terlambat (${selectedDetail.menit_terlambat}m)` : 'Tepat Waktu'}
+                <strong style={{ color: selectedDetail.status_masuk === 'terlambat' ? 'var(--danger)' : (selectedDetail.status_masuk === 'tepat_waktu' ? 'var(--success)' : 'var(--text-muted)') }}>
+                  {selectedDetail.status_masuk === 'terlambat' ? `Terlambat (${selectedDetail.menit_terlambat}m)` : (selectedDetail.status_masuk === 'tepat_waktu' ? 'Tepat Waktu' : 'Tidak diketahui')}
                 </strong>
               </div>
               <div style={{ display: 'flex', justifyContent: 'space-between' }}>
