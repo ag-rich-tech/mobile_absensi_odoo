@@ -466,56 +466,12 @@ export default function FaceEnrollmentPage({ user, onBack, onSuccess }) {
             pointerEvents: 'none',
             zIndex: 10
           }}>
-            {/* FaceID Scanner — disamakan dengan layar absensi
-                (lingkaran + ring putar + garis pindai + corner brackets
-                + ikon tengah gaya absensi), diperbesar 1,5x dari
-                lingkaran enroll lama 110px -> 165px.
-                Label status di bawah lingkaran ala absensi TIDAK
-                disalin: enroll sudah punya pill guideText sendiri.
-                Pemetaan state: isEyeClosed = keadaan terverifikasi
-                absensi (border hijau + corner hijau). */}
-            {!isSuccess && enrollStep !== 'memproses' && (
-              <div style={{
-                position: 'absolute',
-                width: '165px',
-                height: '165px',
-                borderRadius: '50%',
-                border: isEyeClosed ? '3px solid #22c55e' : '3px solid rgba(56,189,248,0.6)',
-                boxShadow: isEyeClosed
-                  ? '0 0 30px rgba(34,197,94,0.6), inset 0 0 20px rgba(34,197,94,0.1)'
-                  : '0 0 25px rgba(56,189,248,0.35), inset 0 0 20px rgba(56,189,248,0.1)',
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'center',
-                pointerEvents: 'none',
-                zIndex: 11,
-                transition: 'all 0.4s ease'
-              }}>
-                {/* Rotating ring (FaceID style, sama seperti absensi) */}
-                <div className="face-id-ring" />
-                {/* Scanning line (sama seperti absensi) */}
-                {detectedConfidence > 0 && !isEyeClosed && <div className="face-id-scan-line" />}
-                {/* Corner brackets (sama seperti absensi) */}
-                <div className={`face-id-corners${isEyeClosed ? ' verified' : ''}`}>
-                  <div className="face-id-corner face-id-corner--tl" />
-                  <div className="face-id-corner face-id-corner--tr" />
-                  <div className="face-id-corner face-id-corner--bl" />
-                  <div className="face-id-corner face-id-corner--br" />
-                </div>
-                {/* Center icon (ukuran gaya absensi) */}
-                <div style={{ zIndex: 13 }}>
-                  {isEyeClosed
-                    ? <CheckCircle2 size={24} style={{ color: '#22c55e' }} />
-                    : detectedConfidence > 0
-                      ? <Eye size={22} style={{ color: '#38bdf8', opacity: 0.85 }} />
-                      : <div style={{ width: 8, height: 8, borderRadius: '50%', background: 'rgba(255,255,255,0.3)' }} />}
-                </div>
-              </div>
-            )}
-
-            {/* Status Liveness Pill */}
+            {/* Status Liveness Pill — elemen flow normal DI ATAS oval
+                (bukan absolute di tengah scanner), jadi tidak mungkin
+                menumpuk wajah pada ukuran layar apa pun. Teks pill
+                tidak diubah. */}
             <div style={{
-              marginTop: '16px',
+              marginBottom: '16px',
               backgroundColor: 'rgba(15, 23, 42, 0.88)',
               border: `1px solid ${detectedConfidence > 0 ? 'rgba(250, 204, 21, 0.4)' : 'rgba(255, 255, 255, 0.1)'}`,
               borderRadius: '20px',
@@ -537,6 +493,60 @@ export default function FaceEnrollmentPage({ user, onBack, onSuccess }) {
                 {guideText}
               </span>
             </div>
+
+            {/* FaceID Scanner OVAL — sebesar tanda kuning king:
+                elips (border-radius 50%), lebar 92% kontainer kamera,
+                aspect-ratio 5/6 (≈ 1:1,20, sama dengan tanda kuning).
+                Menggantikan lingkaran 165px dari patch 3-item.
+                Corner brackets di-inset 15% agar duduk di kurva elips
+                (titik diagonal elips 5:6 ≈ 15% dari tepi box), bukan
+                melayang di luar elips. Ring + garis pindai face-id
+                dipakai ulang tanpa perubahan (ring inset 0 + radius
+                50% otomatis menjadi elips; garis pindai memudar di
+                ujung atas/bawah sehingga tetap di dalam elips).
+                Label status di bawah lingkaran ala absensi TIDAK
+                disalin: enroll sudah punya pill guideText sendiri.
+                Pemetaan state: isEyeClosed = keadaan terverifikasi
+                absensi (border hijau + corner hijau). */}
+            {!isSuccess && enrollStep !== 'memproses' && (
+              <div style={{
+                position: 'relative',
+                width: '92%',
+                aspectRatio: '5 / 6',
+                borderRadius: '50%',
+                border: isEyeClosed ? '3px solid #22c55e' : '3px solid rgba(56,189,248,0.6)',
+                boxShadow: isEyeClosed
+                  ? '0 0 30px rgba(34,197,94,0.6), inset 0 0 20px rgba(34,197,94,0.1)'
+                  : '0 0 25px rgba(56,189,248,0.35), inset 0 0 20px rgba(56,189,248,0.1)',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                pointerEvents: 'none',
+                zIndex: 11,
+                transition: 'all 0.4s ease'
+              }}>
+                {/* Rotating ring (FaceID style, sama seperti absensi) */}
+                <div className="face-id-ring" />
+                {/* Scanning line (sama seperti absensi) */}
+                {detectedConfidence > 0 && !isEyeClosed && <div className="face-id-scan-line" />}
+                {/* Corner brackets (sama seperti absensi) */}
+                <div className={`face-id-corners${isEyeClosed ? ' verified' : ''}`} style={{ inset: '15%' }}>
+                  <div className="face-id-corner face-id-corner--tl" />
+                  <div className="face-id-corner face-id-corner--tr" />
+                  <div className="face-id-corner face-id-corner--bl" />
+                  <div className="face-id-corner face-id-corner--br" />
+                </div>
+                {/* Center icon (ukuran gaya absensi) */}
+                <div style={{ zIndex: 13 }}>
+                  {isEyeClosed
+                    ? <CheckCircle2 size={24} style={{ color: '#22c55e' }} />
+                    : detectedConfidence > 0
+                      ? <Eye size={22} style={{ color: '#38bdf8', opacity: 0.85 }} />
+                      : <div style={{ width: 8, height: 8, borderRadius: '50%', background: 'rgba(255,255,255,0.3)' }} />}
+                </div>
+              </div>
+            )}
+
           </div>
         )}
 
