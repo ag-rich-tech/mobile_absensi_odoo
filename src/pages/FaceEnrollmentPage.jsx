@@ -466,42 +466,48 @@ export default function FaceEnrollmentPage({ user, onBack, onSuccess }) {
             pointerEvents: 'none',
             zIndex: 10
           }}>
-            {/* Animated FaceID Circle Scanner (sheepymeh style) */}
+            {/* FaceID Scanner — disamakan dengan layar absensi
+                (lingkaran + ring putar + garis pindai + corner brackets
+                + ikon tengah gaya absensi), diperbesar 1,5x dari
+                lingkaran enroll lama 110px -> 165px.
+                Label status di bawah lingkaran ala absensi TIDAK
+                disalin: enroll sudah punya pill guideText sendiri.
+                Pemetaan state: isEyeClosed = keadaan terverifikasi
+                absensi (border hijau + corner hijau). */}
             {!isSuccess && enrollStep !== 'memproses' && (
               <div style={{
                 position: 'absolute',
-                width: '110px',
-                height: '110px',
+                width: '165px',
+                height: '165px',
                 borderRadius: '50%',
-                border: detectedConfidence > 0 ? '2px solid rgba(255,255,255,0.3)' : '2px solid rgba(255,255,255,0.1)',
+                border: isEyeClosed ? '3px solid #22c55e' : '3px solid rgba(56,189,248,0.6)',
+                boxShadow: isEyeClosed
+                  ? '0 0 30px rgba(34,197,94,0.6), inset 0 0 20px rgba(34,197,94,0.1)'
+                  : '0 0 25px rgba(56,189,248,0.35), inset 0 0 20px rgba(56,189,248,0.1)',
                 display: 'flex',
                 alignItems: 'center',
                 justifyContent: 'center',
                 pointerEvents: 'none',
-                zIndex: 11
+                zIndex: 11,
+                transition: 'all 0.4s ease'
               }}>
-                {/* Outer spinning ring */}
-                <div className="enroll-scanner-circle" />
-                {/* Inner ring with different delay */}
-                <div className="enroll-scanner-circle enroll-scanner-circle-1" />
-                {/* Scan line when face detected */}
-                {detectedConfidence > 0 && !isEyeClosed && (
-                  <div style={{
-                    position: 'absolute',
-                    left: '15%', right: '15%',
-                    height: '2px',
-                    background: 'linear-gradient(90deg, transparent, #38bdf8, #a78bfa, transparent)',
-                    animation: 'faceIdScanLine 1.6s ease-in-out infinite',
-                    boxShadow: '0 0 6px rgba(56,189,248,0.5)',
-                    zIndex: 12
-                  }} />
-                )}
-                {/* Center icon */}
+                {/* Rotating ring (FaceID style, sama seperti absensi) */}
+                <div className="face-id-ring" />
+                {/* Scanning line (sama seperti absensi) */}
+                {detectedConfidence > 0 && !isEyeClosed && <div className="face-id-scan-line" />}
+                {/* Corner brackets (sama seperti absensi) */}
+                <div className={`face-id-corners${isEyeClosed ? ' verified' : ''}`}>
+                  <div className="face-id-corner face-id-corner--tl" />
+                  <div className="face-id-corner face-id-corner--tr" />
+                  <div className="face-id-corner face-id-corner--bl" />
+                  <div className="face-id-corner face-id-corner--br" />
+                </div>
+                {/* Center icon (ukuran gaya absensi) */}
                 <div style={{ zIndex: 13 }}>
                   {isEyeClosed
-                    ? <CheckCircle2 size={26} style={{ color: '#22c55e' }} />
+                    ? <CheckCircle2 size={24} style={{ color: '#22c55e' }} />
                     : detectedConfidence > 0
-                      ? <Eye size={24} style={{ color: '#38bdf8', opacity: 0.85 }} />
+                      ? <Eye size={22} style={{ color: '#38bdf8', opacity: 0.85 }} />
                       : <div style={{ width: 8, height: 8, borderRadius: '50%', background: 'rgba(255,255,255,0.3)' }} />}
                 </div>
               </div>

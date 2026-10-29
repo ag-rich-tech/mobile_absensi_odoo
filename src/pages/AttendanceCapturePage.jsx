@@ -1,14 +1,13 @@
 import React, { useState, useEffect, useRef } from 'react';
 import {
   ArrowLeft, Camera, RefreshCw, CheckCircle2, AlertCircle,
-  Clock, ShieldCheck, MapPin, Sparkles, AlertTriangle, Upload, Image as ImageIcon,
+  Clock, ShieldCheck, MapPin, AlertTriangle, Upload, Image as ImageIcon,
   Eye, UserCheck, ShieldAlert, Check
 } from 'lucide-react';
 import api, { getServerDate, formatTime24 } from '../services/api';
 import {
   loadFaceModels,
   detectSingleFaceWithDescriptor,
-  checkBlink,
   verifyFaceMatch
 } from '../services/faceService';
 import { playAttendanceSound } from '../services/soundService';
@@ -43,7 +42,6 @@ export default function AttendanceCapturePage({
   const [modelReady, setModelReady] = useState(false);
   const [faceDetected, setFaceDetected] = useState(false);
   const [faceMatched, setFaceMatched] = useState(false);
-  const [blinkDetected, setBlinkDetected] = useState(false);
   const [faceSimilarity, setFaceSimilarity] = useState(0);
   const [faceStatusText, setFaceStatusText] = useState(
     hasFaceEnrolled ? 'Mempersiapkan AI biometrik...' : 'Biometrik belum terdaftar'
@@ -55,8 +53,6 @@ export default function AttendanceCapturePage({
   const fileInputRef = useRef(null);
   const isScanningRef = useRef(false);
   const scanIntervalRef = useRef(null);
-  const hasBlinkedRef = useRef(false);
-  const eyeWasOpenRef = useRef(false);
   const isVerifiedRef = useRef(false);
   const isAutoSubmittingRef = useRef(false);
 
@@ -207,21 +203,6 @@ export default function AttendanceCapturePage({
 
         setFaceDetected(true);
 
-        // Liveness: lacak transisi mata terbuka -> tertutup (kedipan)
-        // lewat checkBlink — pola yang sama seperti FaceEnrollmentPage.
-        // Kedipan yang pernah teramati menetap (ref) untuk sesi ini.
-        try {
-          const blinkInfo = checkBlink(detection.landmarks);
-          if (!blinkInfo.isClosed) {
-            eyeWasOpenRef.current = true;
-          } else if (eyeWasOpenRef.current && blinkInfo.isClosed && !hasBlinkedRef.current) {
-            hasBlinkedRef.current = true;
-            setBlinkDetected(true);
-          }
-        } catch {
-          // Deteksi kedipan gagal — jangan matikan verifikasi wajah.
-        }
-
         // Verifikasi kecocokan wajah (1:1 matching dengan masterDescriptor user)
         const masterDescriptor = user?.face_descriptor;
         if (masterDescriptor) {
@@ -311,9 +292,6 @@ export default function AttendanceCapturePage({
       setIsFaceVerified(false);
       isVerifiedRef.current = false;
       isAutoSubmittingRef.current = false;
-      hasBlinkedRef.current = false;
-      eyeWasOpenRef.current = false;
-      setBlinkDetected(false);
       setCapturedPhoto(event.target.result);
       setCameraError('');
     };
@@ -390,16 +368,6 @@ export default function AttendanceCapturePage({
         setIsSubmitting(false);
         return;
       }
-    }
-
-    // Liveness: bila wajah wajib dan verifikasi lewat kamera live,
-    // kedipan harus pernah teramati (anti foto diam). Jalur file-picker
-    // sudah tertahan gerbang faceMatched di atas, jadi gerbang ini
-    // hanya berlaku untuk verifikasi live.
-    if (hasFaceEnrolled && (faceMatched || isFaceVerified) && !hasBlinkedRef.current) {
-      setErrorMessage('Bukti liveness belum terpenuhi: silakan berkedip sekali di depan kamera, lalu tekan Absen Sekarang.');
-      setIsSubmitting(false);
-      return;
     }
 
     // C6 (K4): belum PERNAH enroll + wajah wajib → BLOKIR. Jangan
@@ -846,11 +814,9 @@ export default function AttendanceCapturePage({
               <div style={{ zIndex: 1 }}>
                 {isFaceVerified
                   ? <CheckCircle2 size={24} style={{ color: '#22c55e' }} />
-                  : faceMatched && !blinkDetected
-                    ? <Sparkles size={20} style={{ color: '#facc15' }} />
-                    : faceDetected
-                      ? <Eye size={22} style={{ color: '#38bdf8', opacity: 0.85 }} />
-                      : <div style={{ width: 8, height: 8, borderRadius: '50%', background: 'rgba(255,255,255,0.3)' }} />}
+                  : faceDetected
+                    ? <Eye size={22} style={{ color: '#38bdf8', opacity: 0.85 }} />
+                    : <div style={{ width: 8, height: 8, borderRadius: '50%', background: 'rgba(255,255,255,0.3)' }} />}
               </div>
               {/* Status label below circle */}
               <div style={{
@@ -953,9 +919,6 @@ export default function AttendanceCapturePage({
                 isAutoSubmittingRef.current = false;
                 setFaceMatched(false);
                 setIsFaceVerified(false);
-                hasBlinkedRef.current = false;
-                eyeWasOpenRef.current = false;
-                setBlinkDetected(false);
                 startCamera();
               }}
               style={{

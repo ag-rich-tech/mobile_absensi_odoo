@@ -1,0 +1,235 @@
+diff --git a/src/index.css b/src/index.css
+index a9f136c..1aa0da8 100644
+--- a/src/index.css
++++ b/src/index.css
+@@ -579,26 +579,12 @@ button:active,
+   animation: faceIdCornersFade 0.6s ease-out forwards;
+ }
+ 
+-/* ── Face Enrollment Circle Scanner (sheepymeh style) ── */
+-@keyframes enrollCircleSpin1 {
+-  0%   { transform: rotate3d(0,0,1,0deg); }
+-  25%  { transform: rotate3d(1,-0.7,0,-160deg); }
+-  40%  { transform: rotate3d(0.2,0.8,-0.2,100deg); }
+-  60%  { transform: rotate3d(-0.4,0.6,0,100deg); }
+-  100% { transform: rotate3d(0,0,0,0deg); }
+-}
+ @keyframes enrollCircleSpin2 {
+   0%   { transform: rotate3d(1,0,0,100deg); }
+   25%  { transform: rotate3d(1,-0.7,0,-160deg); }
+   40%  { transform: rotate3d(1,0,0,-180deg); }
+   100% { transform: rotate3d(1,0,-999,-180deg); }
+ }
+-@keyframes enrollColorOne {
+-  20%  { border-color: #1260cc; }
+-  50%  { border-color: #29c5f6; }
+-  80%  { border-color: #1260cc; }
+-  100% { border-color: #fff; }
+-}
+ @keyframes enrollPseudo {
+   20%  { filter: blur(3px); }
+   50%  { filter: blur(3px); }
+@@ -608,15 +594,6 @@ button:active,
+ @keyframes enrollTick {
+   to { stroke-dashoffset: 0; }
+ }
+-.enroll-scanner-circle {
+-  width: 100px;
+-  height: 100px;
+-  border-radius: 50%;
+-  border: 4px solid transparent;
+-  position: absolute;
+-  animation: enrollCircleSpin1 1s 0.3s ease-out forwards, enrollColorOne 1s 0.3s linear forwards;
+-}
+-.enroll-scanner-circle-1 { animation-delay: 0.375s; }
+ .enroll-scanner-circle-2 { animation-delay: 0.45s; }
+ .enroll-scanner-pseudo { animation: enrollPseudo 1s 0.375s linear forwards; }
+ @keyframes scaleIn {
+diff --git a/src/pages/AttendanceCapturePage.jsx b/src/pages/AttendanceCapturePage.jsx
+index 5ac4770..451a511 100644
+--- a/src/pages/AttendanceCapturePage.jsx
++++ b/src/pages/AttendanceCapturePage.jsx
+@@ -1,14 +1,13 @@
+ import React, { useState, useEffect, useRef } from 'react';
+ import {
+   ArrowLeft, Camera, RefreshCw, CheckCircle2, AlertCircle,
+-  Clock, ShieldCheck, MapPin, Sparkles, AlertTriangle, Upload, Image as ImageIcon,
++  Clock, ShieldCheck, MapPin, AlertTriangle, Upload, Image as ImageIcon,
+   Eye, UserCheck, ShieldAlert, Check
+ } from 'lucide-react';
+ import api, { getServerDate, formatTime24 } from '../services/api';
+ import {
+   loadFaceModels,
+   detectSingleFaceWithDescriptor,
+-  checkBlink,
+   verifyFaceMatch
+ } from '../services/faceService';
+ import { playAttendanceSound } from '../services/soundService';
+@@ -43,7 +42,6 @@ export default function AttendanceCapturePage({
+   const [modelReady, setModelReady] = useState(false);
+   const [faceDetected, setFaceDetected] = useState(false);
+   const [faceMatched, setFaceMatched] = useState(false);
+-  const [blinkDetected, setBlinkDetected] = useState(false);
+   const [faceSimilarity, setFaceSimilarity] = useState(0);
+   const [faceStatusText, setFaceStatusText] = useState(
+     hasFaceEnrolled ? 'Mempersiapkan AI biometrik...' : 'Biometrik belum terdaftar'
+@@ -55,8 +53,6 @@ export default function AttendanceCapturePage({
+   const fileInputRef = useRef(null);
+   const isScanningRef = useRef(false);
+   const scanIntervalRef = useRef(null);
+-  const hasBlinkedRef = useRef(false);
+-  const eyeWasOpenRef = useRef(false);
+   const isVerifiedRef = useRef(false);
+   const isAutoSubmittingRef = useRef(false);
+ 
+@@ -207,21 +203,6 @@ export default function AttendanceCapturePage({
+ 
+         setFaceDetected(true);
+ 
+-        // Liveness: lacak transisi mata terbuka -> tertutup (kedipan)
+-        // lewat checkBlink — pola yang sama seperti FaceEnrollmentPage.
+-        // Kedipan yang pernah teramati menetap (ref) untuk sesi ini.
+-        try {
+-          const blinkInfo = checkBlink(detection.landmarks);
+-          if (!blinkInfo.isClosed) {
+-            eyeWasOpenRef.current = true;
+-          } else if (eyeWasOpenRef.current && blinkInfo.isClosed && !hasBlinkedRef.current) {
+-            hasBlinkedRef.current = true;
+-            setBlinkDetected(true);
+-          }
+-        } catch {
+-          // Deteksi kedipan gagal — jangan matikan verifikasi wajah.
+-        }
+-
+         // Verifikasi kecocokan wajah (1:1 matching dengan masterDescriptor user)
+         const masterDescriptor = user?.face_descriptor;
+         if (masterDescriptor) {
+@@ -311,9 +292,6 @@ export default function AttendanceCapturePage({
+       setIsFaceVerified(false);
+       isVerifiedRef.current = false;
+       isAutoSubmittingRef.current = false;
+-      hasBlinkedRef.current = false;
+-      eyeWasOpenRef.current = false;
+-      setBlinkDetected(false);
+       setCapturedPhoto(event.target.result);
+       setCameraError('');
+     };
+@@ -392,16 +370,6 @@ export default function AttendanceCapturePage({
+       }
+     }
+ 
+-    // Liveness: bila wajah wajib dan verifikasi lewat kamera live,
+-    // kedipan harus pernah teramati (anti foto diam). Jalur file-picker
+-    // sudah tertahan gerbang faceMatched di atas, jadi gerbang ini
+-    // hanya berlaku untuk verifikasi live.
+-    if (hasFaceEnrolled && (faceMatched || isFaceVerified) && !hasBlinkedRef.current) {
+-      setErrorMessage('Bukti liveness belum terpenuhi: silakan berkedip sekali di depan kamera, lalu tekan Absen Sekarang.');
+-      setIsSubmitting(false);
+-      return;
+-    }
+-
+     // C6 (K4): belum PERNAH enroll + wajah wajib → BLOKIR. Jangan
+     // kirim clock-in sama sekali (server backstop juga menolak, tapi
+     // UI tidak boleh lolos diam-diam dengan foto saja seperti dulu).
+@@ -846,11 +814,9 @@ export default function AttendanceCapturePage({
+               <div style={{ zIndex: 1 }}>
+                 {isFaceVerified
+                   ? <CheckCircle2 size={24} style={{ color: '#22c55e' }} />
+-                  : faceMatched && !blinkDetected
+-                    ? <Sparkles size={20} style={{ color: '#facc15' }} />
+-                    : faceDetected
+-                      ? <Eye size={22} style={{ color: '#38bdf8', opacity: 0.85 }} />
+-                      : <div style={{ width: 8, height: 8, borderRadius: '50%', background: 'rgba(255,255,255,0.3)' }} />}
++                  : faceDetected
++                    ? <Eye size={22} style={{ color: '#38bdf8', opacity: 0.85 }} />
++                    : <div style={{ width: 8, height: 8, borderRadius: '50%', background: 'rgba(255,255,255,0.3)' }} />}
+               </div>
+               {/* Status label below circle */}
+               <div style={{
+@@ -953,9 +919,6 @@ export default function AttendanceCapturePage({
+                 isAutoSubmittingRef.current = false;
+                 setFaceMatched(false);
+                 setIsFaceVerified(false);
+-                hasBlinkedRef.current = false;
+-                eyeWasOpenRef.current = false;
+-                setBlinkDetected(false);
+                 startCamera();
+               }}
+               style={{
+diff --git a/src/pages/FaceEnrollmentPage.jsx b/src/pages/FaceEnrollmentPage.jsx
+index 3ce736e..026fbe6 100644
+--- a/src/pages/FaceEnrollmentPage.jsx
++++ b/src/pages/FaceEnrollmentPage.jsx
+@@ -466,42 +466,48 @@ export default function FaceEnrollmentPage({ user, onBack, onSuccess }) {
+             pointerEvents: 'none',
+             zIndex: 10
+           }}>
+-            {/* Animated FaceID Circle Scanner (sheepymeh style) */}
++            {/* FaceID Scanner — disamakan dengan layar absensi
++                (lingkaran + ring putar + garis pindai + corner brackets
++                + ikon tengah gaya absensi), diperbesar 1,5x dari
++                lingkaran enroll lama 110px -> 165px.
++                Label status di bawah lingkaran ala absensi TIDAK
++                disalin: enroll sudah punya pill guideText sendiri.
++                Pemetaan state: isEyeClosed = keadaan terverifikasi
++                absensi (border hijau + corner hijau). */}
+             {!isSuccess && enrollStep !== 'memproses' && (
+               <div style={{
+                 position: 'absolute',
+-                width: '110px',
+-                height: '110px',
++                width: '165px',
++                height: '165px',
+                 borderRadius: '50%',
+-                border: detectedConfidence > 0 ? '2px solid rgba(255,255,255,0.3)' : '2px solid rgba(255,255,255,0.1)',
++                border: isEyeClosed ? '3px solid #22c55e' : '3px solid rgba(56,189,248,0.6)',
++                boxShadow: isEyeClosed
++                  ? '0 0 30px rgba(34,197,94,0.6), inset 0 0 20px rgba(34,197,94,0.1)'
++                  : '0 0 25px rgba(56,189,248,0.35), inset 0 0 20px rgba(56,189,248,0.1)',
+                 display: 'flex',
+                 alignItems: 'center',
+                 justifyContent: 'center',
+                 pointerEvents: 'none',
+-                zIndex: 11
++                zIndex: 11,
++                transition: 'all 0.4s ease'
+               }}>
+-                {/* Outer spinning ring */}
+-                <div className="enroll-scanner-circle" />
+-                {/* Inner ring with different delay */}
+-                <div className="enroll-scanner-circle enroll-scanner-circle-1" />
+-                {/* Scan line when face detected */}
+-                {detectedConfidence > 0 && !isEyeClosed && (
+-                  <div style={{
+-                    position: 'absolute',
+-                    left: '15%', right: '15%',
+-                    height: '2px',
+-                    background: 'linear-gradient(90deg, transparent, #38bdf8, #a78bfa, transparent)',
+-                    animation: 'faceIdScanLine 1.6s ease-in-out infinite',
+-                    boxShadow: '0 0 6px rgba(56,189,248,0.5)',
+-                    zIndex: 12
+-                  }} />
+-                )}
+-                {/* Center icon */}
++                {/* Rotating ring (FaceID style, sama seperti absensi) */}
++                <div className="face-id-ring" />
++                {/* Scanning line (sama seperti absensi) */}
++                {detectedConfidence > 0 && !isEyeClosed && <div className="face-id-scan-line" />}
++                {/* Corner brackets (sama seperti absensi) */}
++                <div className={`face-id-corners${isEyeClosed ? ' verified' : ''}`}>
++                  <div className="face-id-corner face-id-corner--tl" />
++                  <div className="face-id-corner face-id-corner--tr" />
++                  <div className="face-id-corner face-id-corner--bl" />
++                  <div className="face-id-corner face-id-corner--br" />
++                </div>
++                {/* Center icon (ukuran gaya absensi) */}
+                 <div style={{ zIndex: 13 }}>
+                   {isEyeClosed
+-                    ? <CheckCircle2 size={26} style={{ color: '#22c55e' }} />
++                    ? <CheckCircle2 size={24} style={{ color: '#22c55e' }} />
+                     : detectedConfidence > 0
+-                      ? <Eye size={24} style={{ color: '#38bdf8', opacity: 0.85 }} />
++                      ? <Eye size={22} style={{ color: '#38bdf8', opacity: 0.85 }} />
+                       : <div style={{ width: 8, height: 8, borderRadius: '50%', background: 'rgba(255,255,255,0.3)' }} />}
+                 </div>
+               </div>
