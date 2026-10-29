@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useMemo } from 'react';
-import { ChevronLeft, Search, RefreshCw, Users } from 'lucide-react';
+import { ChevronLeft, Search, RefreshCw, Users, AlertCircle } from 'lucide-react';
 import api from '../../services/api';
 
 export default function DaftarKaryawanView({ onBack }) {
