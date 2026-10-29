@@ -141,11 +141,17 @@ export default function TukarShiftModal({ isOpen, onClose, onSuccess }) {
     setFeedback({ type: '', message: '' });
 
     try {
+      // Server /swap/submit membaca tanggal_pengaju/tanggal_tujuan
+      // (bukan id penjadwalan). Id dropdown adalah id SINTETIS dari
+      // enrichSchedule (baseId+i+1), bukan id record Odoo, sehingga
+      // tidak bermakna bagi server — kirim tanggal dari item terpilih.
+      const shiftPengaju = (jadwalPengaju || []).find((s) => String(s.id) === String(selectedJadwalPengajuId));
+      const shiftRekan = (jadwalRekan || []).find((s) => String(s.id) === String(selectedJadwalRekanId));
       const payload = {
         pegawai_tujuan_id: Number(selectedRekanId),
-        penjadwalan_pengaju_id: Number(selectedJadwalPengajuId),
-        penjadwalan_tujuan_id: Number(selectedJadwalRekanId),
-        alasan: alasan.trim()
+        alasan: alasan.trim(),
+        ...(shiftPengaju && shiftPengaju.tanggal ? { tanggal_pengaju: shiftPengaju.tanggal } : {}),
+        ...(shiftRekan && shiftRekan.tanggal ? { tanggal_tujuan: shiftRekan.tanggal } : {}),
       };
 
       const res = await api.ajukanTukarShift(payload);

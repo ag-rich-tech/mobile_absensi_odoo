@@ -264,10 +264,23 @@ export async function odooCall(path, params = {}, { timeoutMs = 30000 } = {}) {
         body: JSON.stringify(params || {}),
         signal: ctrl.signal,
       });
-      json = await res.json().catch(() => ({}));
+      // Baca body sebagai teks dulu: bila server menjawab HTML (mis.
+      // error validasi Odoo yang lolos tanpa amplop JSON), pesan aslinya
+      // masih bisa diekstrak alih-alih hilang jadi pesan generik.
+      const text = await res.text();
+      try {
+        json = JSON.parse(text);
+      } catch {
+        json = {};
+      }
       // Server menjawab JSON error juga untuk status non-2xx (mis. 401).
       if (!res.ok && json.status !== 'error') {
-        json = { status: 'error', code: res.status === 401 ? 'NO_TOKEN' : 'ERROR', message: `Server menjawab HTTP ${res.status}.` };
+        const stripped = text.replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 200);
+        json = {
+          status: 'error',
+          code: res.status === 401 ? 'NO_TOKEN' : 'ERROR',
+          message: stripped || `Server menjawab HTTP ${res.status}.`,
+        };
       }
     } finally {
       clearTimeout(timer);
@@ -356,6 +369,16 @@ function mapPegawai(user, employeeBrief, profile) {
     // lokasi yang diizinkan (wfo): kosong = semua lokasi perusahaan
     allowed_location_ids: emp.allowed_location_ids || [],
     allowed_locations: emp.allowed_locations || [],
+    // Akses WFA diturunkan dari policy (audit Bug 4: field ini tidak
+    // pernah ditempel ke objek pegawai, sehingga Profil selalu tampil
+    // "Wajib di Radius Kantor" dan LocationCheckPage memblokir WFA di
+    // luar radius). Semua jalur (login, getMe, dashboard) memakai
+    // mapPegawai ini, jadi satu tempat ini menyembuhkan semuanya.
+    ijinkan_wfa: (emp.location_policy || 'wfo') === 'anywhere',
+    // Ringkasan pola jadwal dari server (ag 1.2.20: jadwal_ringkasan +
+    // jadwal_hari); kosong bila server belum mengirim.
+    jadwal_ringkasan: emp.jadwal_ringkasan || '',
+    jadwal_hari: emp.jadwal_hari || [],
     // mentah (bila UI butuh)
     _odoo_user: user || null,
     _odoo_employee: emp || null,
@@ -557,13 +580,46 @@ function mapLeave(lv) {
   };
 }
 
+// Pemetaan state Odoo -> state app untuk menu Approval.
+// Server (ag 1.2.20) mengirim status_app; server lama hanya state mentah.
+function mapApprovalStatus(lv, modul) {
+  if (lv.status_app) return lv.status_app;
+  if (modul === 'reimbursement') {
+    const m = { draft: 'menunggu', reported: 'menunggu', submitted: 'menunggu',
+      approved: 'disetujui', refused: 'ditolak', cancelled: 'ditolak',
+      done: 'dicairkan', paid: 'dicairkan' };
+    return m[lv.state] || 'menunggu';
+  }
+  const m = { confirm: 'menunggu', validate1: 'menunggu', validate: 'disetujui',
+    refuse: 'ditolak', cancel: 'dibatalkan', draft: 'menunggu' };
+  return m[lv.state] || 'menunggu';
+}
+
+// Tahap persetujuan: dari info server bila ada; dari validation_type
+// bila ada (both + validate1 = tahap 2 dari 2); bila tak ada info,
+// kembalikan null/null agar view menampilkan netral, bukan angka palsu.
+function mapApprovalSteps(lv) {
+  if (lv.step_ke && lv.total_step) {
+    return { step_ke: lv.step_ke, total_step: lv.total_step };
+  }
+  if (lv.validation_type === 'both') {
+    return lv.state === 'validate1'
+      ? { step_ke: 2, total_step: 2 }
+      : { step_ke: 1, total_step: 2 };
+  }
+  return { step_ke: null, total_step: null };
+}
+
 function mapApprovalItem(lv) {
-  const modul = lv.modul || 'cuti';
+  const modul = lv.kategori === 'dinas' ? 'dinas'
+    : (lv.modul === 'reimbursement' ? 'reimbursement' : 'cuti');
   if (modul === 'reimbursement') {
     const emp = lv.employee || {};
+    const status = mapApprovalStatus(lv, 'reimbursement');
+    const steps = mapApprovalSteps(lv);
     return {
       id: lv.id,
-      pengajuan_id: lv.sheet_id || lv.id,
+      pengajuan_id: lv.pengajuan_id || lv.sheet_id || lv.id,
       modul: 'reimbursement',
       label_modul: 'Klaim Reimbursement',
       pemohon: {
@@ -574,45 +630,63 @@ function mapApprovalItem(lv) {
         foto: emp.photo || null,
       },
       created_at: lv.submit_date ? fmtTanggalId(utcToWib(lv.submit_date)) : '',
-      status: lv.state || 'menunggu',
+      status,
       detail: {
         jenis_pengajuan: lv.product ? (Array.isArray(lv.product) ? lv.product[1] || lv.product[0] : lv.product) || 'Klaim Operasional' : 'Klaim Operasional',
         nominal: `Rp ${Number(lv.total_amount || 0).toLocaleString('id-ID')}`,
         nominal_raw: Number(lv.total_amount || 0),
         tanggal_kuitansi: lv.expense_date || '',
         keterangan: lv.description || '',
-        dokumen_url: lv.attachment || null,
+        dokumen_url: lv.attachment || lv.dokumen_url || null,
       },
       alur_steps: [],
-      catatan_saya: '',
+      catatan_saya: lv.catatan_saya || '',
       is_current: true,
-      step_ke: 1,
-      total_step: 1,
+      step_ke: steps.step_ke,
+      total_step: steps.total_step,
       _raw: lv,
     };
   }
+  const pemohon = lv.pemohon || {};
+  const status = mapApprovalStatus(lv, modul);
+  const steps = mapApprovalSteps(lv);
+  const tanggalMulai = lv.tanggal_mulai
+    || (lv.date_from ? fmtTanggalId(utcToWib(lv.date_from)) : '');
+  const tanggalSelesai = lv.tanggal_selesai
+    || (lv.date_to ? fmtTanggalId(utcToWib(lv.date_to)) : '');
   return {
     id: lv.id,
     pengajuan_id: lv.id,
-    modul: 'cuti',
-    label_modul: 'Cuti / Izin',
-    pemohon: lv.employee_name || '',
+    modul,
+    label_modul: modul === 'dinas' ? 'Dinas Luar Kota' : 'Cuti / Izin',
+    pemohon: {
+      nama: pemohon.nama || lv.employee_name || '',
+      jabatan: pemohon.jabatan || '',
+      departemen: pemohon.departemen || '',
+      nip: pemohon.nip || '',
+      foto: pemohon.foto || null,
+    },
     created_at: lv.date_from ? fmtTanggalId(utcToWib(lv.date_from)) : '',
-    status: lv.state,
+    status,
     detail: {
-      jenis: lv.type ? lv.type.name : '',
-      periode: `${lv.date_from ? fmtTanggalId(utcToWib(lv.date_from)) : ''} s/d ${lv.date_to ? fmtTanggalId(utcToWib(lv.date_to)) : ''}`,
+      jenis: lv.jenis || (lv.type ? lv.type.name : ''),
+      tanggal_mulai: tanggalMulai,
+      tanggal_selesai: tanggalSelesai,
+      periode: `${tanggalMulai} s/d ${tanggalSelesai}`,
       durasi: lv.number_of_days,
-      alasan: lv.name || '',
+      keterangan: lv.keterangan || lv.name || '',
+      alasan: lv.keterangan || lv.name || '',
+      kota_tujuan: lv.kota_tujuan || null,
+      instansi_tujuan: lv.instansi_tujuan || null,
+      anggaran_biaya: lv.anggaran_biaya || null,
     },
     alur_steps: [],
-    catatan_saya: '',
+    catatan_saya: lv.catatan_saya || '',
     is_current: true,
-    step_ke: 1,
-    total_step: 1,
+    step_ke: steps.step_ke,
+    total_step: steps.total_step,
     _raw: lv,
   };
-
 }
 function mapAnnouncement(a) {
   const body = a.body || '';
@@ -624,11 +698,17 @@ function mapAnnouncement(a) {
     tanggal_mulai: a.publish_date ? fmtTanggalId(utcToWib(a.publish_date + ' 00:00:00')) : '',
     created_at_human: a.publish_date ? fmtTanggalId(utcToWib(a.publish_date + ' 00:00:00')) : '',
     is_pinned: !!a.pinned,
-    is_dibaca: false,
+    // Status baca dari server (ag 1.2.20: per user pemanggil); server
+    // lama tidak mengirimnya -> default false (perilaku lama).
+    is_dibaca: !!a.is_dibaca,
     is_khusus: false,
-    has_lampiran: false,
+    // Server lama tidak mengirim lampiran -> false secara jujur.
+    has_lampiran: !!a.has_lampiran,
     gambar_url: null,
     pembuat: 'HRD',
+    // View (modal detail) membaca `konten`; mapper lama hanya mengisi
+    // `isi`, sehingga isi detail selalu kosong.
+    konten: body,
     _raw: a,
   };
 }
@@ -642,28 +722,53 @@ function mapSlip(s) {
     nomor_slip: s.name || `#${s.id}`,
     periode,
     status_pembayaran: s.state_label || s.state,
+    // Angka dari server (bila dikirim). Server lama tidak mengirim angka
+    // sama sekali -> tetap 0 secara jujur, bukan angka karangan.
+    gaji_bersih: s.net_pay ?? s.total ?? s.net ?? 0,
+    gaji_pokok: s.gross ?? s.basic ?? 0,
     _raw: s,
   };
 }
 
 function mapSlipDetail(s) {
   const lines = s.lines || [];
-  const tunjangan = lines.filter((l) => (l.category || '').toLowerCase().includes('allow') || (l.amount || 0) > 0);
-  const potongan = lines.filter((l) => (l.amount || 0) < 0);
+  // Kategori OCA payroll: BASIC (pokok), ALW (tunjangan), DED (potongan),
+  // GROSS, NET. Bila server tidak mengirim kategori, fallback ke tanda
+  // amount (positif = penerimaan, negatif = potongan).
+  const cat = (l) => (l.category || '').toUpperCase();
+  const isBasic = (l) => cat(l) === 'BASIC';
+  const isAlw = (l) => cat(l) === 'ALW';
+  const isDed = (l) => cat(l) === 'DED';
+  const hasCat = lines.some((l) => cat(l));
+  const basicLines = hasCat ? lines.filter(isBasic) : [];
+  const alwLines = hasCat ? lines.filter(isAlw) : lines.filter((l) => (l.amount || 0) > 0 && !isBasic(l));
+  const dedLines = hasCat
+    ? lines.filter(isDed)
+    : lines.filter((l) => (l.amount || 0) < 0);
+  const sum = (arr) => arr.reduce((a, l) => a + Math.abs(l.amount || 0), 0);
+  const gross = s.gross || 0;
+  const alwTotal = sum(alwLines);
+  // Perbaikan penggandaan (audit Bug 2 K7): mapper lama mengeset
+  // gaji_pokok = gross DAN total_tunjangan = gross, sehingga header
+  // penerimaan (pokok + tunjangan) = 2x gross. Sekarang pokok dan
+  // tunjangan adalah komponen yang berbeda dan jumlahnya = gross.
+  const gajiPokok = basicLines.length > 0
+    ? sum(basicLines)
+    : Math.max(0, gross - alwTotal);
   return {
     nomor_slip: s.name || `#${s.id}`,
     periode: s.date_from && s.date_to
       ? `${fmtTanggalId(utcToWib(s.date_from + ' 00:00:00'))} – ${fmtTanggalId(utcToWib(s.date_to + ' 00:00:00'))}`
       : '',
-    gaji_pokok: s.gross || 0,
-    total_tunjangan: Math.max(0, (s.gross || 0) - 0),
-    total_potongan: potongan.reduce((a, l) => a + Math.abs(l.amount || 0), 0),
-    gaji_bersih: s.net_pay || 0,
+    gaji_pokok: gajiPokok,
+    total_tunjangan: alwTotal,
+    total_potongan: sum(dedLines),
+    gaji_bersih: s.net_pay ?? 0,
     total_kehadiran: null,
     total_jam_lembur: null,
     total_menit_terlambat: null,
-    rincian_tunjangan: tunjangan.map((l) => ({ label: l.name, nominal: l.amount })),
-    rincian_potongan: potongan.map((l) => ({ label: l.name, nominal: Math.abs(l.amount) })),
+    rincian_tunjangan: alwLines.map((l) => ({ label: l.name, nominal: l.amount })),
+    rincian_potongan: dedLines.map((l) => ({ label: l.name, nominal: Math.abs(l.amount) })),
     status_pembayaran: s.state_label || s.state,
     metode_pembayaran: s.currency || '',
     _raw: s,
@@ -671,6 +776,17 @@ function mapSlipDetail(s) {
 }
 
 function mapOvertime(ot) {
+  // Badge view membandingkan status huruf kecil ('disetujui'/'ditolak',
+  // default "Menunggu"). Mapper lama mengirim label kapital server
+  // ('Menunggu'/'Disetujui'/'Ditolak') sehingga SEMUA badge jatuh ke
+  // default "Menunggu". Petakan dari state, bukan dari label.
+  const stateMap = {
+    confirm: 'menunggu', draft: 'menunggu',
+    validate: 'disetujui', approved: 'disetujui',
+    refuse: 'ditolak', refused: 'ditolak',
+  };
+  const status = stateMap[ot.state]
+    || (ot.state ? String(ot.state).toLowerCase() : 'menunggu');
   return {
     id: ot.id,
     tanggal_lembur: ot.date ? fmtTanggalId(utcToWib(ot.date + ' 00:00:00')) : '',
@@ -678,7 +794,7 @@ function mapOvertime(ot) {
     jam_selesai: null,
     durasi_jam: ot.approved_hours || ot.proposed_hours || 0,
     keterangan_tugas: ot.name || '',
-    status: ot.state_label || ot.state,
+    status,
     approval_info: { status_label: ot.state_label || ot.state },
     total_upah_lembur_formatted: null,
     _raw: ot,
@@ -998,12 +1114,10 @@ export const api = {
   },
 
   async catatIstirahat(aksi) {
-    try {
-      const res = await odooCall('/attendance/break', { action: aksi });
-      return { success: true, message: res.message || 'Waktu istirahat berhasil dicatat.' };
-    } catch {
-      return { success: true, message: `Istirahat (${aksi}) berhasil dicatat.` };
-    }
+    // JANGAN menelan error jadi sukses (audit Bug 2 M16): DashboardPage
+    // sudah menampilkan alert di catch-nya, jadi biarkan error naik.
+    const res = await odooCall('/attendance/break', { action: aksi });
+    return { success: true, message: res.message || 'Waktu istirahat berhasil dicatat.' };
   },
 
   async getRiwayat(bulan = null, tahun = null) {
@@ -1049,12 +1163,18 @@ export const api = {
     ]);
     const items = (hist.data && hist.data.items) || [];
     const typeItems = (types && types.data && types.data.items) || [];
-    const withBalance = typeItems.find((t) => t.requires_allocation);
+    // Kuota yang ditampilkan = tipe tahunan bila ada, else tipe
+    // requires_allocation pertama (bukan hardcode "Cuti Tahunan" dari
+    // tipe sembarang). Bila server tidak mengirim saldo, sisa = null
+    // agar view menampilkan netral, bukan angka fiktif.
+    const withBalance = typeItems.find((t) => t.requires_allocation
+      && /tahunan|annual/i.test(t.name || ''))
+      || typeItems.find((t) => t.requires_allocation);
     return {
       success: true,
       kuota_cuti: withBalance
-        ? { sisa: withBalance.virtual_remaining_leaves || 0, nama: withBalance.name }
-        : { sisa: 0, nama: '' },
+        ? { sisa: withBalance.virtual_remaining_leaves ?? null, nama: withBalance.name, tahun: new Date().getFullYear() }
+        : { sisa: null, nama: '', tahun: new Date().getFullYear() },
       pengajuan: items.map(mapLeave),
       tipe_cuti: typeItems,
     };
@@ -1067,14 +1187,29 @@ export const api = {
     const types = await odooCall('/timeoff/types');
     const items = (types.data && types.data.items) || [];
     const match = items.find((t) => t.name.toLowerCase().includes(jenis))
-      || items.find((t) => jenis.includes(t.name.toLowerCase().split(' ')[0]))
-      || items[0];
+      || items.find((t) => jenis.includes(t.name.toLowerCase().split(' ')[0]));
+    // JANGAN fallback diam-diam ke jenis pertama: jenis yang tidak
+    // dikenali harus gagal dengan pesan jelas, bukan terkirim sebagai
+    // jenis yang salah.
     if (!match) throw new Error('Tipe cuti tidak tersedia di Odoo.');
+    // Dokumen yang dipilih form ikut terkirim (base64). Server lama
+    // mengabaikan kunci ini; server baru dapat menyimpannya sebagai
+    // lampiran cuti tanpa perubahan app.
+    let dokumen = null;
+    let dokumenNama = null;
+    const docRaw = get('dokumen');
+    if (docRaw && typeof docRaw !== 'string' && docRaw.name) {
+      dokumen = await adapters.fileToBase64(docRaw);
+      dokumenNama = docRaw.name;
+    } else if (typeof docRaw === 'string' && docRaw) {
+      dokumen = docRaw;
+    }
     const res = await odooCall('/timeoff/request', {
       type_id: match.id,
       date_from: get('tanggal_mulai'),
       date_to: get('tanggal_selesai'),
       reason: get('alasan') || match.name,
+      ...(dokumen ? { dokumen, dokumen_nama: dokumenNama } : {}),
     });
     return { success: true, message: res.message || 'Pengajuan terkirim.', data: res.data };
   },
@@ -1085,29 +1220,51 @@ export const api = {
     return { success: true, count: (res.data && res.data.count) || 0 };
   },
 
-  async getApprovals() {
-    const res = await odooCall('/approvals/inbox', { limit: 50 });
+  async getApprovals(tab) {
+    // Tab 'riwayat' memakai route history (ag 1.2.20); tab lain memakai
+    // inbox. Mapper lama mengabaikan argumen tab sehingga Riwayat
+    // selalu menampilkan item menunggu.
+    const path = tab === 'riwayat' ? '/approvals/history' : '/approvals/inbox';
+    const res = await odooCall(path, { limit: 50 });
     const items = (res.data && res.data.items) || [];
     return { success: true, data: items.map(mapApprovalItem) };
   },
 
   async submitApprovalAction(id, data) {
     const aksi = data && data.aksi === 'tolak' ? 'refuse' : 'approve';
-    const res = await odooCall('/approvals/act', { leave_id: id, action: aksi });
+    // Catatan penolakan diteruskan (server lama mengabaikannya; server
+    // baru menyimpannya). Tanpa ini, alasan tolak yang diketik user
+    // hilang di semua jalur.
+    const res = await odooCall('/approvals/act', {
+      leave_id: id,
+      action: aksi,
+      ...(data && data.catatan ? { catatan: data.catatan, reason: data.catatan } : {}),
+    });
     return { success: true, message: res.message || 'Berhasil diproses.' };
   },
 
   // ---- Pengumuman ----
-  async getPengumuman() {
-    const res = await odooCall('/announcement/list', { limit: 50 });
-    const items = (res.data && res.data.items) || [];
-    return { success: true, data: items.map(mapAnnouncement), unread_count: items.length };
+  async getPengumuman(filter) {
+    const res = await odooCall('/announcement/list', { limit: 50, filter: filter || 'semua' });
+    const allItems = ((res.data && res.data.items) || []).map(mapAnnouncement);
+    // Filter benar-benar diterapkan (mapper lama mengabaikan argumen).
+    let items = allItems;
+    if (filter === 'belum_dibaca') items = allItems.filter((i) => !i.is_dibaca);
+    else if (filter === 'penting') items = allItems.filter((i) => i.is_pinned);
+    const unread = (res.data && typeof res.data.unread_count === 'number')
+      ? res.data.unread_count
+      : allItems.filter((i) => !i.is_dibaca).length;
+    return { success: true, data: items, unread_count: unread };
   },
 
   async getPengumumanCount() {
     const res = await odooCall('/announcement/list', { limit: 50 });
-    const count = (res.data && res.data.count) || 0;
-    return { success: true, unread_count: count, urgent_count: 0 };
+    const items = ((res.data && res.data.items) || []).map(mapAnnouncement);
+    const unread = (res.data && typeof res.data.unread_count === 'number')
+      ? res.data.unread_count
+      : items.filter((i) => !i.is_dibaca).length;
+    const urgent = items.filter((i) => i.is_pinned && !i.is_dibaca).length;
+    return { success: true, unread_count: unread, urgent_count: urgent };
   },
 
   async getPengumumanDetail(id) {
@@ -1115,7 +1272,10 @@ export const api = {
     const items = (res.data && res.data.items) || [];
     const found = items.find((a) => String(a.id) === String(id));
     if (!found) throw new Error('Pengumuman tidak ditemukan.');
-    return { success: true, data: mapAnnouncement(found) };
+    // Tandai dibaca di server (ag 1.2.20: POST /announcement/mark_read).
+    // Kegagalan mark-read tidak boleh menggagalkan pembukaan detail.
+    await safe(odooCall('/announcement/mark_read', { announcement_id: id }));
+    return { success: true, data: { ...mapAnnouncement(found), is_dibaca: true } };
   },
 
   // ---- Slip gaji ----
@@ -1146,7 +1306,11 @@ export const api = {
     if (!proposed && payload.jam_mulai && payload.jam_selesai) {
       const [h1, m1] = String(payload.jam_mulai).split(':').map(Number);
       const [h2, m2] = String(payload.jam_selesai).split(':').map(Number);
-      proposed = Math.max(0, (h2 * 60 + m2 - h1 * 60 - m1) / 60);
+      // Lembur lintas tengah malam: selesai < mulai -> tambah 24 jam
+      // (mapper lama memotong jadi 0, padahal form menampilkan 4 jam).
+      let diff = h2 * 60 + m2 - h1 * 60 - m1;
+      if (diff < 0) diff += 24 * 60;
+      proposed = diff / 60;
     }
     const res = await odooCall('/overtime/request', {
       date: payload.tanggal_lembur,
@@ -1164,14 +1328,26 @@ export const api = {
     ]);
     const todayItems = (today && today.data && today.data.items) || [];
     const upItems = (upcoming && upcoming.data && upcoming.data.items) || [];
+    // is_roster dari data nyata, bukan hardcode true: roster = ada
+    // jadwal (hari ini atau 30 hari ke depan).
+    const isRoster = todayItems.length > 0 || upItems.length > 0;
+    // /shift/today membuang hari libur, jadi pada hari libur shift_aktif
+    // jatuh ke null dan view merender kartu mati. Cari dulu di daftar
+    // upcoming tanggal hari ini (yang memuat baris libur) agar kartu
+    // Day Off bisa tampil; bila tetap tidak ada, null dan view
+    // menampilkan kartu netral.
+    const todayWib = fmtYMDWib(new Date(getServerDate().getTime() + 7 * 3600 * 1000));
+    const todayFromUpcoming = upItems.find((s) => s.tanggal === todayWib);
     return {
       success: true,
-      is_roster: true,
-      shift_aktif: todayItems.length ? mapShift(todayItems[0], true) : null,
+      is_roster: isRoster,
+      shift_aktif: todayItems.length
+        ? mapShift(todayItems[0], true)
+        : (todayFromUpcoming ? mapShift(todayFromUpcoming, true) : null),
       roster_bulan_ini: upItems.map((s) => mapShift(s, false)),
       daftar_shift: [],
       hari_kerja: [],
-      hari_libur: [],
+      hari_libur: upItems.filter((s) => s.is_hari_libur).map((s) => mapShift(s, false)),
     };
   },
 

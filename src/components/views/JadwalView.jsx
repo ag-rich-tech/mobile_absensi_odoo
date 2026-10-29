@@ -15,15 +15,15 @@ export default function JadwalView({ onBack }) {
       const res = await api.getJadwal();
       if (res.success) {
         setData(res);
-        if (res.is_roster) {
-          api.getTukarShiftCount()
-            .then(countRes => {
-              if (countRes.success) {
-                setPendingTukarCount(countRes.pending_count || 0);
-              }
-            })
-            .catch(() => { });
-        }
+        // Badge jumlah permintaan swap: adapter mengembalikan `count`
+        // (bukan `pending_count`); hitung tidak bergantung pada roster.
+        api.getTukarShiftCount()
+          .then(countRes => {
+            if (countRes.success) {
+              setPendingTukarCount(countRes.count ?? countRes.pending_count ?? 0);
+            }
+          })
+          .catch(() => { });
       }
     } catch (err) {
       console.error('Gagal memuat jadwal kerja:', err);
@@ -115,7 +115,7 @@ export default function JadwalView({ onBack }) {
                 <span>Selamat beristirahat dan menyegarkan stamina Anda!</span>
               </div>
             </div>
-          ) : (
+          ) : shift ? (
             /* Card Shift Kerja Aktif */
             <div style={{
               background: 'linear-gradient(135deg, #ea580c 0%, #c2410c 100%)',
@@ -181,6 +181,23 @@ export default function JadwalView({ onBack }) {
                   </span>
                 )}
               </div>
+            </div>
+          ) : (
+            /* Kartu netral: server tidak mengirim jadwal hari ini
+               (bukan kartu Shift Kerja dengan jam undefined). */
+            <div style={{
+              backgroundColor: '#ffffff',
+              borderRadius: 'var(--radius-md)',
+              border: '1px solid var(--border-light)',
+              padding: '18px',
+              boxShadow: '0 1px 4px rgba(0, 0, 0, 0.02)'
+            }}>
+              <h3 style={{ fontSize: '15px', fontWeight: '800', color: 'var(--text-main)', margin: '0 0 6px 0' }}>
+                Tidak ada jadwal kerja hari ini
+              </h3>
+              <p style={{ fontSize: '12px', color: 'var(--text-muted)', margin: 0, lineHeight: '1.5' }}>
+                Server tidak mengirim jadwal untuk hari ini. Bila Anda seharusnya bekerja hari ini, hubungi HRD untuk memeriksa kalender kerja Anda.
+              </p>
             </div>
           )}
 

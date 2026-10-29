@@ -510,7 +510,7 @@ export default function ProfileView({ user, onBack, onLogout, onOpenDenda, onOpe
                 <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
                   <CheckCircle2 size={12} color="#16a34a" />
                   <span style={{ fontWeight: '600', color: '#16a34a' }}>
-                    {kpiData.status === 'approved' ? 'Disetujui HRD' : (kpiData.status === 'submitted' ? 'Diserahkan' : 'Draf Evaluasi')}
+                    {kpiData.status_label ? kpiData.status_label : (kpiData.status === 'approved' ? 'Disetujui HRD' : (kpiData.status === 'submitted' ? 'Diserahkan' : 'Draf Evaluasi'))}
                   </span>
                 </div>
                 {kpiData.tanggal_penilaian && (
@@ -546,7 +546,7 @@ export default function ProfileView({ user, onBack, onLogout, onOpenDenda, onOpe
         </div>
         <div style={{ padding: '12px 14px', borderBottom: '1px solid var(--border-subtle)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
           <span style={{ fontSize: '12px', color: 'var(--text-muted)' }}>Pola Jadwal</span>
-          <span style={{ fontSize: '12px', fontWeight: '700', color: 'var(--text-main)' }}>{user?.tipe_jadwal || 'Fleksibel'}</span>
+          <span style={{ fontSize: '12px', fontWeight: '700', color: 'var(--text-main)' }}>{user?.jadwal_ringkasan || user?.tipe_jadwal || 'Fleksibel'}</span>
         </div>
         <div style={{ padding: '12px 14px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
           <span style={{ fontSize: '12px', color: 'var(--text-muted)' }}>Akses WFA</span>

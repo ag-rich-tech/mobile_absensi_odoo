@@ -29,7 +29,7 @@ import {
 } from './api.js';
 import { photoUrl } from '../config.js';
 
-function fileToBase64(file) {
+export function fileToBase64(file) {
   return new Promise((resolve, reject) => {
     if (!file) return resolve(null);
     const reader = new FileReader();
@@ -162,7 +162,13 @@ export async function getKehadiranBawahanList(bulanParam) {
       return { success: true, data: [], message: 'Belum ada bawahan yang terdaftar.' };
     }
     const fotoById = {};
-    for (const e of (allRes.data && allRes.data.employees) || []) fotoById[e.id] = e.photo;
+    const nipById = {};
+    for (const e of (allRes.data && allRes.data.employees) || []) {
+      fotoById[e.id] = e.photo;
+      // NIP dari server (barcode/PIN), bukan id Odoo. /employee/list
+      // mengirim barcode + pin; /subordinates/list tidak mengirim NIP.
+      nipById[e.id] = e.barcode || e.pin || `#${e.id}`;
+    }
     // Paralel per batch (Okt 2026: loop await sekuensial membuat daftar
     // bawahan lambat — N round-trip berurutan, tiap call memindai DB
     // lewat _find_token_db. Batch 10 menjaga server tetap waras.)
@@ -173,10 +179,19 @@ export async function getKehadiranBawahanList(bulanParam) {
       const chunkData = await Promise.all(chunk.map(async (s) => {
         let hadir = 0;
         let izin = 0;
+        let terlambat = 0;
+        let tidakHadir = 0;
+        let sakit = 0;
         try {
           const m = await odooCall('/subordinates/month', { employee_id: s.id, month, year });
-          hadir = ((m.data && m.data.attendance) || []).length;
+          const st = m.data && m.data.statistik;
+          // Server 1.2.20 mengirim statistik nyata; pakai itu bila ada,
+          // fallback ke hitungan array (perilaku lama) bila tidak ada.
+          hadir = st ? (st.hadir || 0) : ((m.data && m.data.attendance) || []).length;
           izin = ((m.data && m.data.leaves) || []).length;
+          terlambat = st ? (st.terlambat || 0) : 0;
+          tidakHadir = st ? (st.tidak_hadir || 0) : 0;
+          sakit = st ? (st.sakit || 0) : 0;
         } catch {
           // ringkasan boleh kosong bila bulan itu gagal dimuat
         }
@@ -184,11 +199,11 @@ export async function getKehadiranBawahanList(bulanParam) {
           id: s.id,
           nama: s.name,
           inisial: inisialDariNama(s.name),
-          nip: String(s.id),
+          nip: s.nip || nipById[s.id] || `#${s.id}`,
           jabatan: (typeof s.job === 'string' ? s.job : (s.job && s.job.name)) || 'Staff',
           departemen: (typeof s.department === 'string' ? s.department : (s.department && s.department.name)) || '',
           foto: photoUrl(fotoById[s.id], getToken()),
-          summary: { hadir, terlambat: 0, tidak_hadir: 0, izin, sakit: 0 },
+          summary: { hadir, terlambat, tidak_hadir: tidakHadir, izin, sakit },
         };
       }));
       data.push(...chunkData);
@@ -244,7 +259,8 @@ export async function getKalenderBawahan(bawahanId, bulanParam) {
   const bawahan = {
     id: emp.id || Number(bawahanId),
     nama: emp.name || 'Bawahan',
-    nip: String(emp.id || bawahanId),
+    // Server 1.2.20 mengirim nip = identification_id di _emp_brief.
+    nip: emp.nip || emp.barcode || emp.pin || `#${emp.id || bawahanId}`,
     jabatan: (emp.job && emp.job.name) || 'Staff',
     departemen: (emp.department && emp.department.name) || '',
   };
@@ -536,6 +552,16 @@ export async function ajukanTukarShift(payload) {
 }
 
 function mapSwapItem(s) {
+  // Server /swap/history tidak mengirim field shift/tanggal. Dua blok
+  // render modal mendereferensi shift_pengaju/shift_tujuan langsung,
+  // sehingga null = crash. Placeholder netral mencegah crash tanpa
+  // mengubah 2 blok JSX identik (12 ekspresi).
+  const placeholderShift = {
+    hari: '-',
+    tanggal_formatted: '-',
+    label: 'Info shift tidak tersedia',
+    is_hari_libur: false,
+  };
   return {
     id: s.id,
     kode_pengajuan: `TS-${s.id}`,
@@ -546,8 +572,8 @@ function mapSwapItem(s) {
     status_label: s.status_label || s.status,
     alasan: s.alasan || '',
     catatan_rekan: s.catatan_rekan || null,
-    shift_pengaju: null,
-    shift_tujuan: null,
+    shift_pengaju: s.shift_pengaju || placeholderShift,
+    shift_tujuan: s.shift_tujuan || placeholderShift,
     created_at: null,
   };
 }
@@ -590,17 +616,31 @@ function fmtTanggalDariYMD(ymd) {
 export async function getDinas() {
   const res = await odooCall('/dinas/list');
   const items = (res.data && res.data.items) || [];
-  const list = items.map((l) => ({
-    id: l.id,
-    kota_tujuan: l.kota_tujuan || 'Dinas Luar Kota',
-    instansi_tujuan: l.instansi_tujuan || 'Klien / Mitra Perusahaan',
-    tanggal_mulai: fmtTanggalDariYMD(l.tanggal_mulai),
-    tanggal_selesai: fmtTanggalDariYMD(l.tanggal_selesai),
-    anggaran_biaya_formatted: 'Ditanggung Perusahaan',
-    keperluan: l.keperluan || 'Perjalanan Dinas',
-    status: l.status || 'menunggu',
-    dokumen_url: l.dokumen_url || null,
-  }));
+  const list = items.map((l) => {
+    // Server mengodekan name = 'kota - instansi: keperluan' lalu
+    // mengirim keperluan = name LENGKAP, sehingga kartu menampilkan
+    // prefix kota+instansi dua kali. Kupas prefix itu bila persis cocok.
+    let keperluan = l.keperluan || 'Perjalanan Dinas';
+    const prefix = `${l.kota_tujuan} - ${l.instansi_tujuan}: `;
+    if (l.kota_tujuan && l.instansi_tujuan && keperluan.startsWith(prefix)) {
+      keperluan = keperluan.slice(prefix.length) || keperluan;
+    }
+    const anggaran = l.anggaran_biaya ?? l.anggaran ?? null;
+    return {
+      id: l.id,
+      kota_tujuan: l.kota_tujuan || 'Dinas Luar Kota',
+      instansi_tujuan: l.instansi_tujuan || 'Klien / Mitra Perusahaan',
+      tanggal_mulai: fmtTanggalDariYMD(l.tanggal_mulai),
+      tanggal_selesai: fmtTanggalDariYMD(l.tanggal_selesai),
+      anggaran_biaya: anggaran,
+      anggaran_biaya_formatted: anggaran != null
+        ? `Rp ${Number(anggaran).toLocaleString('id-ID')}`
+        : 'Ditanggung Perusahaan',
+      keperluan,
+      status: l.status || 'menunggu',
+      dokumen_url: l.dokumen_url || null,
+    };
+  });
   return { success: true, dinas: list };
 }
 
@@ -610,6 +650,9 @@ export async function ajukanDinas(payload) {
   let keperluan = '';
   let tglMulai = fmtYMD(getServerDate());
   let tglSelesai = fmtYMD(getServerDate());
+  let anggaran = null;
+  let dokumen = null;
+  let dokumenNama = null;
 
   if (payload instanceof FormData) {
     kota = payload.get('kota_tujuan') || '';
@@ -617,20 +660,34 @@ export async function ajukanDinas(payload) {
     keperluan = payload.get('keperluan') || '';
     tglMulai = payload.get('tanggal_mulai') || tglMulai;
     tglSelesai = payload.get('tanggal_selesai') || tglSelesai;
+    const ang = payload.get('anggaran_biaya');
+    anggaran = ang !== null && ang !== '' ? Number(ang) : null;
+    const doc = payload.get('dokumen');
+    if (doc && doc.size > 0) {
+      dokumen = await fileToBase64(doc);
+      dokumenNama = doc.name;
+    }
   } else if (payload && typeof payload === 'object') {
     kota = payload.kota_tujuan || '';
     instansi = payload.instansi_tujuan || '';
     keperluan = payload.keperluan || '';
     tglMulai = payload.tanggal_mulai || tglMulai;
     tglSelesai = payload.tanggal_selesai || tglSelesai;
+    anggaran = payload.anggaran_biaya ?? null;
+    if (typeof payload.dokumen === 'string' && payload.dokumen) dokumen = payload.dokumen;
   }
 
+  // Anggaran + dokumen yang dibuang adapter lama kini diteruskan.
+  // Server lama mengabaikan kunci ini; server baru dapat menyimpannya
+  // tanpa perubahan app.
   const res = await odooCall('/dinas/request', {
     kota_tujuan: kota,
     instansi_tujuan: instansi,
     keperluan,
     tanggal_mulai: tglMulai,
     tanggal_selesai: tglSelesai,
+    ...(anggaran != null ? { anggaran_biaya: anggaran } : {}),
+    ...(dokumen ? { dokumen, dokumen_nama: dokumenNama } : {}),
   });
   return { success: true, message: res.message || 'Pengajuan dinas berhasil dikirim.' };
 }
@@ -655,6 +712,9 @@ function mapIssue(m) {
   return {
     ...m,
     tanggal_kejadian_teks: m.tanggal_kejadian ? fmtTanggalDariYMD(m.tanggal_kejadian) : '',
+    // View detail membaca `foto_bukti`; server mengirim
+    // `foto_bukti_url` (saat ini selalu null, tapi jangan dibuang).
+    foto_bukti: m.foto_bukti_url || m.foto_bukti || null,
   };
 }
 
@@ -713,9 +773,14 @@ export async function getMasalahDetail(id) {
 export async function getPenugasan() {
   const res = await odooCall('/task/list');
   const d = res.data || {};
+  const items = d.items || [];
+  // View membaca tugas_berjalan/tugas_selesai; adapter lama hanya
+  // mengembalikan `penugasan`, sehingga daftar tugas selalu kosong.
   return {
     success: true,
-    penugasan: d.items || [],
+    penugasan: items,
+    tugas_berjalan: items.filter((i) => i.status === 'berjalan' || i.status === 'menunggu_review'),
+    tugas_selesai: items.filter((i) => i.status === 'selesai'),
     statistik: d.statistik || { total_semua: 0, total_berjalan: 0, total_selesai: 0 },
   };
 }
@@ -732,6 +797,9 @@ export async function updateStatusPenugasan(id, payload) {
     id,
     ...(payload?.status ? { status: payload.status } : {}),
     ...(payload?.progres != null ? { progres: payload.progres } : {}),
+    // Catatan review diteruskan (server lama mengabaikannya; server
+    // baru dapat menyimpannya tanpa perubahan app).
+    ...(payload?.catatan ? { catatan: payload.catatan } : {}),
   });
   return { success: true, message: res.message || 'Status penugasan berhasil diperbarui.' };
 }
@@ -741,7 +809,20 @@ export async function updateStatusPenugasan(id, payload) {
 // ---------------------------------------------------------------------------
 export async function getKpiTerbaru() {
   const res = await odooCall('/kpi/latest');
-  return { success: true, kpi: res.data || {} };
+  const d = res.data || {};
+  // Server mengirim nilai_akhir (%), grade, status (teks predikat,
+  // mis. 'Sangat Baik'), periode, pencapaian[]. View membaca
+  // total_nilai/grade/predikat + baris status approval — petakan tanpa
+  // memalsukan state approval (nilai server tidak punya state itu).
+  return {
+    success: true,
+    kpi: {
+      ...d,
+      total_nilai: d.nilai_akhir ?? d.total_nilai ?? null,
+      predikat: d.status ?? d.predikat ?? '',
+      status_label: d.status ?? '',
+    },
+  };
 }
 
 export async function getDokumenPreview() {
@@ -766,7 +847,14 @@ export async function updateFotoProfil(formData) {
       setStoredUser(user);
     }
   }
-  return { success: true, foto_url: fotoUrl, message: 'Foto profil berhasil diperbarui.' };
+  return {
+    success: true,
+    // View membaca `foto_profil`; adapter lama hanya mengembalikan
+    // `foto_url`, sehingga avatar tidak berubah saat simpan.
+    foto_url: fotoUrl,
+    foto_profil: fotoUrl,
+    message: 'Foto profil berhasil diperbarui.',
+  };
 }
 
 export async function changePassword({ password_lama, password_baru }) {

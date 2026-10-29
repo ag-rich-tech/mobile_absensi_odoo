@@ -190,6 +190,9 @@ export default function DashboardPage({ user: initialUser, onLogout, onStartAtte
   const [distanceToOffice, setDistanceToOffice] = useState(null);
   // Lokasi terdekat dari daftar yang diizinkan (multi-lokasi 18.0.1.2.0).
   const [nearestOffice, setNearestOffice] = useState(null);
+  // 'Lewati' istirahat hari ini (lokal saja, tanpa mencatat break di
+  // server — beda dari 'Selesai' yang mencatat break_end).
+  const [lewatiIstirahatHariIni, setLewatiIstirahatHariIni] = useState(false);
   const [riwayatBulan, setRiwayatBulan] = useState([]);
   const [isLoadingRiwayat, setIsLoadingRiwayat] = useState(false);
   const [pendingApprovalCount, setPendingApprovalCount] = useState(0);
@@ -370,9 +373,13 @@ export default function DashboardPage({ user: initialUser, onLogout, onStartAtte
       setDistanceToOffice(nearestDist);
     };
     const handlePositionError = (err) => {
-      console.warn('GPS location fallback to office simulator:', err.message);
-      setNearestOffice(candidates[0]);
-      setDistanceToOffice(14); // Fallback jarak dekat untuk pengetesan desktop
+      // JANGAN default ke koordinat kantor: posisi tidak diketahui,
+      // jadi jarak null dan badge menampilkan 'Lokasi tidak diketahui'
+      // (bukan 'Dalam Area' palsu dari jarak 14 m karangan).
+      console.warn('GPS tidak tersedia / ditolak:', err && err.message);
+      setUserLocation(null);
+      setNearestOffice(null);
+      setDistanceToOffice(null);
     };
 
     if ('geolocation' in navigator) {
@@ -383,8 +390,8 @@ export default function DashboardPage({ user: initialUser, onLogout, onStartAtte
       );
       return () => navigator.geolocation.clearWatch(watchId);
     } else {
-      setNearestOffice(candidates[0]);
-      setDistanceToOffice(14);
+      setNearestOffice(null);
+      setDistanceToOffice(null);
     }
   }, [dashboardData?.semua_lokasi, dashboardData?.lokasi_kantor]);
 
@@ -419,11 +426,20 @@ export default function DashboardPage({ user: initialUser, onLogout, onStartAtte
   const handleCatatIstirahat = async (aksi) => {
     if (isSubmittingIstirahat) return;
 
+    // 'Lewati' BERBEDA dari 'Selesai': lewati = tidak mengambil
+    // istirahat hari ini, cukup sembunyikan panel secara lokal TANPA
+    // memanggil endpoint (server memperlakukan semua aksi non-start
+    // sebagai break_end, sehingga memanggil endpoint untuk 'lewati'
+    // sama saja dengan 'selesai'). 'Selesai' tetap mencatat break_end.
+    if (aksi === 'lewati') {
+      const ok = window.confirm('Lewati sesi istirahat hari ini dan langsung lanjut bekerja?');
+      if (!ok) return;
+      setLewatiIstirahatHariIni(true);
+      return;
+    }
+
     if (aksi === 'mulai') {
       const ok = window.confirm('Mulai sesi istirahat sekarang? Jam istirahat Anda akan tercatat dalam sistem.');
-      if (!ok) return;
-    } else if (aksi === 'lewati') {
-      const ok = window.confirm('Lewati sesi istirahat hari ini dan langsung lanjut bekerja?');
       if (!ok) return;
     } else if (aksi === 'selesai') {
       const ok = window.confirm('Selesaikan sesi istirahat dan kembali bekerja?');
@@ -556,12 +572,19 @@ export default function DashboardPage({ user: initialUser, onLogout, onStartAtte
     };
   }, [sudahMasuk, sudahPulang]);
 
-  // Tombol Istirahat & Lewati aktif menggantikan tombol Masuk & Pulang
-  const tampilkanOpsiIstirahat = sudahMasuk && !sudahPulang && isSudahWaktuIstirahat && statusIstirahat === 'belum';
+  // Tombol Istirahat & Lewati aktif menggantikan tombol Masuk & Pulang.
+  // Panel tampil selama sesi clock-in aktif dan istirahat belum diambil
+  // / dilewati — TIDAK digerbang pada jam istirahat server, karena
+  // field jam istirahat tidak pernah dikirim server sehingga gerbang
+  // lama membuat panel mati total. Bila server mengirim jadwal, panel
+  // tetap menampilkan jadwalnya (subtitle di bawah).
+  const tampilkanOpsiIstirahat = sudahMasuk && !sudahPulang && statusIstirahat === 'belum' && !lewatiIstirahatHariIni;
   const sedangIstirahat = sudahMasuk && !sudahPulang && statusIstirahat === 'istirahat';
 
   // Server mengirim radius_m (bukan radius_meter) — pakai kunci yang benar.
-  const isInsideGeofence = distanceToOffice !== null ? distanceToOffice <= (lokasi?.radius_m || 100) : true;
+  // Jarak null (GPS gagal) = TIDAK diketahui, bukan "di dalam area".
+  const isInsideGeofence = distanceToOffice !== null && distanceToOffice <= (lokasi?.radius_m || 100);
+  const badgeLokasi = distanceToOffice === null ? 'unknown' : (isInsideGeofence ? 'inside' : 'outside');
 
   // Status Hari Libur & Hari Kerja
   const isHariLibur = Boolean(jamKerja?.is_hari_libur || !jamKerja?.id || jamKerja?.ada_jadwal_kerja === false);
@@ -864,8 +887,8 @@ export default function DashboardPage({ user: initialUser, onLogout, onStartAtte
 
                   {/* Status Geofencing Badge dengan Animasi Icon */}
                   <div style={{
-                    backgroundColor: isInsideGeofence ? 'rgba(34, 197, 94, 0.28)' : 'rgba(239, 68, 68, 0.25)',
-                    border: isInsideGeofence ? '1.5px solid rgba(74, 222, 128, 0.65)' : '1px solid rgba(255, 255, 255, 0.3)',
+                    backgroundColor: badgeLokasi === 'inside' ? 'rgba(34, 197, 94, 0.28)' : (badgeLokasi === 'outside' ? 'rgba(239, 68, 68, 0.25)' : 'rgba(100, 116, 139, 0.28)'),
+                    border: badgeLokasi === 'inside' ? '1.5px solid rgba(74, 222, 128, 0.65)' : '1px solid rgba(255, 255, 255, 0.3)',
                     padding: '6px 12px',
                     borderRadius: 'var(--radius-full)',
                     display: 'flex',
@@ -873,12 +896,12 @@ export default function DashboardPage({ user: initialUser, onLogout, onStartAtte
                     gap: '8px',
                     fontSize: '11px',
                     fontWeight: '700',
-                    boxShadow: isInsideGeofence ? '0 0 16px rgba(74, 222, 128, 0.35)' : 'none',
+                    boxShadow: badgeLokasi === 'inside' ? '0 0 16px rgba(74, 222, 128, 0.35)' : 'none',
                     backdropFilter: 'blur(8px)',
                     WebkitBackdropFilter: 'blur(8px)',
                     transition: 'all 0.3s ease'
                   }}>
-                    {isInsideGeofence ? (
+                    {badgeLokasi === 'inside' ? (
                       <div style={{ position: 'relative', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
                         {/* Ripple Radar Wave Effect */}
                         <span style={{
@@ -895,17 +918,21 @@ export default function DashboardPage({ user: initialUser, onLogout, onStartAtte
                           <ShieldCheck size={15} color="#4ade80" strokeWidth={2.6} />
                         </div>
                       </div>
-                    ) : (
+                    ) : badgeLokasi === 'outside' ? (
                       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
                         <AlertTriangle size={14} color="#f87171" strokeWidth={2.4} />
+                      </div>
+                    ) : (
+                      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                        <MapPin size={14} color="#cbd5e1" strokeWidth={2.4} />
                       </div>
                     )}
                     <span style={{
                       color: '#ffffff',
-                      textShadow: isInsideGeofence ? '0 1px 2px rgba(0, 0, 0, 0.3)' : 'none',
+                      textShadow: badgeLokasi === 'inside' ? '0 1px 2px rgba(0, 0, 0, 0.3)' : 'none',
                       letterSpacing: '0.2px'
                     }}>
-                      {isInsideGeofence ? 'Dalam Area' : 'Luar Area'}
+                      {badgeLokasi === 'inside' ? 'Dalam Area' : (badgeLokasi === 'outside' ? 'Luar Area' : 'Lokasi tidak diketahui')}
                     </span>
                   </div>
                 </div>
@@ -1327,6 +1354,11 @@ export default function DashboardPage({ user: initialUser, onLogout, onStartAtte
                             Istirahat dilewati
                           </span>
                         )}
+                        {lewatiIstirahatHariIni && statusIstirahat !== 'dilewati' && (
+                          <span style={{ fontSize: '9px', color: '#64748b', display: 'block', textAlign: 'center', marginTop: '4px', fontWeight: '700' }}>
+                            Istirahat dilewati hari ini
+                          </span>
+                        )}
                         {adaSettingIstirahat && !isSudahWaktuIstirahat && (
                           <span style={{ fontSize: '9px', color: '#b45309', display: 'block', textAlign: 'center', marginTop: '4px', fontWeight: '700' }}>
                             Istirahat buka pukul {jamMulaiIstirahat}
@@ -1392,7 +1424,9 @@ export default function DashboardPage({ user: initialUser, onLogout, onStartAtte
                         Sesi Waktu Istirahat
                       </h4>
                       <p style={{ fontSize: '11px', color: '#b45309', margin: 0, fontWeight: '500' }}>
-                        Jadwal: {jamMulaiIstirahat} - {jamSelesaiIstirahat || 'Selesai'}
+                        {adaSettingIstirahat
+                          ? `Jadwal: ${jamMulaiIstirahat} - ${jamSelesaiIstirahat || 'Selesai'}`
+                          : 'Istirahat dapat diambil kapan saja selama jam kerja'}
                       </p>
                     </div>
                   </div>

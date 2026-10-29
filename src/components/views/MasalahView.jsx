@@ -16,6 +16,21 @@ const KATEGORI_OPTIONS = [
   { id: 'lainnya', label: 'Kendala Lainnya', desc: 'Masalah lain seputar akun atau aplikasi' },
 ];
 
+// Label kategori untuk tampil: opsi app dulu (memuat kedua id yang
+// tidak dikenal peta server), lalu label server bila bukan ID mentah,
+// terakhir humanisasi ID — jangan pernah tampilkan ID mentah.
+function labelKategori(item) {
+  if (!item) return '';
+  const opt = KATEGORI_OPTIONS.find((o) => o.id === item.kategori_masalah);
+  if (opt) return opt.label;
+  if (item.label_kategori && !String(item.label_kategori).includes('_')) return item.label_kategori;
+  if (item.kategori_masalah) {
+    return String(item.kategori_masalah).split('_')
+      .map((w) => (w ? w[0].toUpperCase() + w.slice(1) : w)).join(' ');
+  }
+  return item.label_kategori || '';
+}
+
 export default function MasalahView({ onBack }) {
   const [activeTab, setActiveTab] = useState('list'); // 'list' | 'form'
   const [masalahList, setMasalahList] = useState([]);
@@ -805,7 +820,7 @@ export default function MasalahView({ onBack }) {
 
                     <div style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '11px', color: '#64748b', marginBottom: '10px' }}>
                       <span style={{ fontWeight: '600', color: '#ea580c' }}>
-                        {item.label_kategori}
+                        {labelKategori(item)}
                       </span>
                       <span>•</span>
                       <span>{item.tanggal_kejadian_teks}</span>
@@ -915,7 +930,7 @@ export default function MasalahView({ onBack }) {
                 borderRadius: '8px',
                 border: '1px solid #fed7aa'
               }}>
-                {selectedItem.label_kategori}
+                {labelKategori(selectedItem)}
               </span>
               {renderStatusBadge(selectedItem.status)}
             </div>

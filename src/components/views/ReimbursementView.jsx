@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import {
   ArrowLeft, Plus, Calendar, Clock, CheckCircle2, XCircle, AlertCircle,
-  Receipt, Send, UploadCloud, FileCheck, Paperclip, ExternalLink, X,
+  Receipt, Send, UploadCloud, FileCheck, ExternalLink, X,
   Eye, RefreshCw, ChevronRight, Wallet, Info, Sparkles, Building
 } from 'lucide-react';
 import api from '../../services/api';
@@ -16,6 +16,23 @@ export default function ReimbursementView({ onBack }) {
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [previewModal, setPreviewModal] = useState({ isOpen: false, id: null, title: '', modul: 'reimbursement' });
   const [toastMessage, setToastMessage] = useState({ type: '', text: '' });
+  const [detailItem, setDetailItem] = useState(null);
+  const [detailLoading, setDetailLoading] = useState(false);
+
+  // Detail pengajuan: klik kartu -> ambil detail server; bila gagal,
+  // tetap tampilkan data dari daftar (bukan layar kosong).
+  const openDetail = async (item) => {
+    setDetailItem(item);
+    setDetailLoading(true);
+    try {
+      const res = await api.getReimbursementDetail(item.id);
+      if (res.success && res.data) setDetailItem(res.data);
+    } catch {
+      // abaikan: data daftar sudah cukup untuk modal
+    } finally {
+      setDetailLoading(false);
+    }
+  };
 
   // Form State
   const [selectedJenisId, setSelectedJenisId] = useState('');
@@ -418,12 +435,14 @@ export default function ReimbursementView({ onBack }) {
               return (
                 <div
                   key={item.id}
+                  onClick={() => openDetail(item)}
                   style={{
                     backgroundColor: '#ffffff',
                     borderRadius: '16px',
                     border: '1px solid #e2e8f0',
                     boxShadow: '0 2px 6px rgba(0,0,0,0.03)',
-                    overflow: 'hidden'
+                    overflow: 'hidden',
+                    cursor: 'pointer'
                   }}
                 >
                   {/* Header Card */}
@@ -517,37 +536,6 @@ export default function ReimbursementView({ onBack }) {
                       }}>
                         <span style={{ fontWeight: '700', display: 'block', marginBottom: '2px' }}>Catatan Verifikator:</span>
                         <span>{item.catatan_admin}</span>
-                      </div>
-                    )}
-
-                    {/* Tombol Preview Nota Bukti */}
-                    {item.bukti_nota_url && (
-                      <div style={{ paddingTop: '6px', display: 'flex', justifyContent: 'flex-start' }}>
-                        <button
-                          type="button"
-                          onClick={() => setPreviewModal({
-                            isOpen: true,
-                            modul: 'reimbursement',
-                            id: item.id,
-                            title: `Nota ${item.nomor_pengajuan}`
-                          })}
-                          style={{
-                            display: 'inline-flex',
-                            alignItems: 'center',
-                            gap: '6px',
-                            padding: '5px 10px',
-                            borderRadius: '8px',
-                            backgroundColor: '#f1f5f9',
-                            border: '1px solid #e2e8f0',
-                            color: '#334155',
-                            fontSize: '11px',
-                            fontWeight: '700',
-                            cursor: 'pointer'
-                          }}
-                        >
-                          <Paperclip size={12} color="#0f766e" />
-                          <span>Lihat Bukti Nota</span>
-                        </button>
                       </div>
                     )}
 
@@ -858,6 +846,76 @@ export default function ReimbursementView({ onBack }) {
         </div>
       )}
       <br></br><br></br><br></br><br></br><br></br>
+      {/* Modal Detail Pengajuan (klik kartu) */}
+      {detailItem && (
+        <div
+          style={{
+            position: 'fixed', inset: 0, zIndex: 9998,
+            backgroundColor: 'rgba(15, 23, 42, 0.6)',
+            display: 'flex', alignItems: 'flex-end', justifyContent: 'center'
+          }}
+          onClick={() => setDetailItem(null)}
+        >
+          <div
+            style={{
+              backgroundColor: '#ffffff', width: '100%', maxWidth: '480px',
+              maxHeight: '85vh', overflowY: 'auto',
+              borderRadius: '20px 20px 0 0', padding: '20px 16px 32px 16px'
+            }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '14px' }}>
+              <h3 style={{ fontSize: '15px', fontWeight: '800', color: '#0f172a', margin: 0 }}>
+                Detail {detailItem.nomor_pengajuan || 'Pengajuan'}
+              </h3>
+              <button
+                type="button"
+                onClick={() => setDetailItem(null)}
+                style={{ border: 'none', background: '#f1f5f9', borderRadius: '999px', width: '32px', height: '32px', cursor: 'pointer', fontSize: '16px', color: '#334155' }}
+              >
+                ×
+              </button>
+            </div>
+            {detailLoading && (
+              <p style={{ fontSize: '12px', color: '#64748b', margin: '0 0 10px 0' }}>Memuat detail terbaru...</p>
+            )}
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '10px', fontSize: '13px', color: '#334155' }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                <span style={{ color: '#64748b' }}>Jenis</span>
+                <strong style={{ color: '#0f172a' }}>{detailItem.nama_jenis || '-'}</strong>
+              </div>
+              <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                <span style={{ color: '#64748b' }}>Nominal</span>
+                <strong style={{ color: '#0f172a' }}>{detailItem.nominal_format || '-'}</strong>
+              </div>
+              <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                <span style={{ color: '#64748b' }}>Tanggal Kuitansi</span>
+                <strong style={{ color: '#0f172a' }}>{detailItem.tanggal_kuitansi || '-'}</strong>
+              </div>
+              <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                <span style={{ color: '#64748b' }}>Status</span>
+                <strong style={{ color: '#0f172a' }}>{detailItem.status_label || detailItem.status || '-'}</strong>
+              </div>
+              <div>
+                <span style={{ color: '#64748b', display: 'block', marginBottom: '4px' }}>Keterangan</span>
+                <span>{detailItem.keterangan || '-'}</span>
+              </div>
+              <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                <span style={{ color: '#64748b' }}>Dokumen Nota</span>
+                <strong style={{ color: detailItem.dokumen_terlampir ? '#15803d' : '#64748b' }}>
+                  {detailItem.dokumen_terlampir ? 'Terlampir' : 'Tidak ada dokumen'}
+                </strong>
+              </div>
+              {detailItem.catatan_admin && (
+                <div>
+                  <span style={{ color: '#64748b', display: 'block', marginBottom: '4px' }}>Catatan Verifikator</span>
+                  <span>{detailItem.catatan_admin}</span>
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
       {/* Modal In-App Document Preview */}
       <DocumentPreviewModal
         isOpen={previewModal.isOpen}

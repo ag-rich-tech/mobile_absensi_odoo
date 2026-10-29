@@ -90,7 +90,9 @@ export default function ApprovalView({ onBack }) {
     try {
       let res;
       if (actionModal.item.modul === 'reimbursement') {
-        res = await api.approveReimbursement(actionModal.item.id, actionModal.type, actionModal.catatan.trim() || null);
+        // Kirim pengajuan_id (id sheet), BUKAN id expense (mapper lama
+        // mengirim item.id sehingga aksi menarget sheet yang salah).
+        res = await api.approveReimbursement(actionModal.item.pengajuan_id || actionModal.item.id, actionModal.type, actionModal.catatan.trim() || null);
       } else {
         res = await api.submitApprovalAction(actionModal.item.id, {
           aksi: actionModal.type,
@@ -490,8 +492,10 @@ export default function ApprovalView({ onBack }) {
                     padding: '2px 8px',
                     borderRadius: '6px'
                   }}>
-                    {item.status === 'menunggu' 
-                      ? `Tahap ${item.step_ke} dari ${item.total_step}` 
+                    {item.status === 'menunggu'
+                      ? (item.step_ke && item.total_step
+                        ? `Tahap ${item.step_ke} dari ${item.total_step}`
+                        : 'Menunggu Persetujuan')
                       : (item.status === 'disetujui' ? 'Telah Disetujui' : 'Telah Ditolak')}
                   </span>
                 </div>
@@ -586,14 +590,18 @@ export default function ApprovalView({ onBack }) {
                   {/* Kota / Instansi Khusus Dinas */}
                   {item.modul === 'dinas' && (
                     <>
-                      <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-                        <span style={{ color: '#64748b' }}>Tujuan Dinas:</span>
-                        <span style={{ fontWeight: '700', color: '#0f172a' }}>{detail.kota_tujuan} - {detail.instansi_tujuan}</span>
-                      </div>
-                      <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-                        <span style={{ color: '#64748b' }}>Anggaran:</span>
-                        <span style={{ fontWeight: '700', color: '#059669' }}>{detail.anggaran_biaya}</span>
-                      </div>
+                      {detail.kota_tujuan && (
+                        <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                          <span style={{ color: '#64748b' }}>Tujuan Dinas:</span>
+                          <span style={{ fontWeight: '700', color: '#0f172a' }}>{detail.kota_tujuan}{detail.instansi_tujuan ? ` - ${detail.instansi_tujuan}` : ''}</span>
+                        </div>
+                      )}
+                      {detail.anggaran_biaya != null && (
+                        <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                          <span style={{ color: '#64748b' }}>Anggaran:</span>
+                          <span style={{ fontWeight: '700', color: '#059669' }}>{detail.anggaran_biaya}</span>
+                        </div>
+                      )}
                     </>
                   )}
 

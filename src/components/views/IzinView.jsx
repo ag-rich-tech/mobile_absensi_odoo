@@ -4,7 +4,7 @@ import api from '../../services/api';
 import DocumentPreviewModal from '../DocumentPreviewModal';
 
 export default function IzinView({ onBack }) {
-  const [kuota, setKuota] = useState({ total: 12, terpakai: 0, sisa: 12, tahun: new Date().getFullYear() });
+  const [kuota, setKuota] = useState({ total: null, terpakai: null, sisa: null, tahun: new Date().getFullYear() });
   const [list, setList] = useState([]);
   const [isLoading, setIsLoading] = useState(true);
   const [showForm, setShowForm] = useState(false);
@@ -69,10 +69,12 @@ export default function IzinView({ onBack }) {
     }
 
     const durasiHari = calculateDays();
-    if (jenisIzin === 'cuti' && durasiHari > (kuota.sisa || 0)) {
+    // Gate kuota hanya berlaku bila server mengirim sisa angka; bila
+    // null (server tidak mengirim saldo), jangan memblokir pengajuan.
+    if (jenisIzin === 'cuti' && kuota.sisa != null && durasiHari > kuota.sisa) {
       setFormMessage({
         type: 'error',
-        text: `Sisa kuota cuti tahunan Anda (${kuota.sisa || 0} hari) tidak mencukupi untuk pengajuan selama ${durasiHari} hari.`
+        text: `Sisa kuota cuti tahunan Anda (${kuota.sisa} hari) tidak mencukupi untuk pengajuan selama ${durasiHari} hari.`
       });
       return;
     }
@@ -206,14 +208,14 @@ export default function IzinView({ onBack }) {
             Kuota Cuti Tahunan {kuota.tahun}
           </span>
           <span style={{ fontSize: '11px', fontWeight: '800', color: '#38bdf8', backgroundColor: 'rgba(56, 189, 248, 0.15)', padding: '2px 8px', borderRadius: '999px' }}>
-            Sisa {kuota.sisa} Hari
+            Sisa {kuota.sisa ?? '–'} Hari
           </span>
         </div>
 
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '8px', textAlign: 'center' }}>
           <div style={{ padding: '8px', backgroundColor: 'rgba(255, 255, 255, 0.05)', borderRadius: '8px' }}>
             <span style={{ fontSize: '10px', color: '#94a3b8', display: 'block' }}>Hak Kuota</span>
-            <span style={{ fontSize: '18px', fontWeight: '800', color: '#ffffff' }}>{kuota.total}</span>
+            <span style={{ fontSize: '18px', fontWeight: '800', color: '#ffffff' }}>{kuota.total ?? '–'}</span>
             {kuota.tambahan > 0 && (
               <span style={{ fontSize: '9px', color: '#c084fc', display: 'block', fontWeight: '700' }}>
                 +{kuota.tambahan} Bonus
@@ -222,11 +224,11 @@ export default function IzinView({ onBack }) {
           </div>
           <div style={{ padding: '8px', backgroundColor: 'rgba(255, 255, 255, 0.05)', borderRadius: '8px' }}>
             <span style={{ fontSize: '10px', color: '#94a3b8', display: 'block' }}>Terpakai</span>
-            <span style={{ fontSize: '18px', fontWeight: '800', color: '#f59e0b' }}>{kuota.terpakai}</span>
+            <span style={{ fontSize: '18px', fontWeight: '800', color: '#f59e0b' }}>{kuota.terpakai ?? '–'}</span>
           </div>
           <div style={{ padding: '8px', backgroundColor: 'rgba(56, 189, 248, 0.1)', borderRadius: '8px' }}>
             <span style={{ fontSize: '10px', color: '#38bdf8', display: 'block' }}>Sisa Cuti</span>
-            <span style={{ fontSize: '18px', fontWeight: '800', color: '#38bdf8' }}>{kuota.sisa}</span>
+            <span style={{ fontSize: '18px', fontWeight: '800', color: '#38bdf8' }}>{kuota.sisa ?? '–'}</span>
           </div>
         </div>
       </div>
@@ -342,10 +344,10 @@ export default function IzinView({ onBack }) {
           <div style={{
             padding: '10px 12px',
             borderRadius: '10px',
-            backgroundColor: jenisIzin === 'cuti' && calculateDays() > (kuota.sisa || 0)
+            backgroundColor: jenisIzin === 'cuti' && kuota.sisa != null && calculateDays() > kuota.sisa
               ? '#fef2f2'
               : '#f8fafc',
-            border: jenisIzin === 'cuti' && calculateDays() > (kuota.sisa || 0)
+            border: jenisIzin === 'cuti' && kuota.sisa != null && calculateDays() > kuota.sisa
               ? '1px solid #fecaca'
               : '1px solid #e2e8f0',
             fontSize: '11px',
@@ -372,11 +374,13 @@ export default function IzinView({ onBack }) {
                 <span style={{ color: 'var(--text-muted)' }}>Sisa Kuota Cuti Anda:</span>
                 <span style={{
                   fontWeight: '800',
-                  color: calculateDays() > (kuota.sisa || 0) ? '#dc2626' : '#16a34a'
+                  color: kuota.sisa == null ? '#64748b' : (calculateDays() > kuota.sisa ? '#dc2626' : '#16a34a')
                 }}>
-                  {calculateDays() > (kuota.sisa || 0)
-                    ? `Kurang ${calculateDays() - (kuota.sisa || 0)} Hari (Sisa ${kuota.sisa || 0})`
-                    : `Sisa ${kuota.sisa - calculateDays()} Hari`}
+                  {kuota.sisa == null
+                    ? 'Sisa kuota belum tersedia dari server'
+                    : (calculateDays() > kuota.sisa
+                      ? `Kurang ${calculateDays() - kuota.sisa} Hari (Sisa ${kuota.sisa})`
+                      : `Sisa ${kuota.sisa - calculateDays()} Hari`)}
                 </span>
               </div>
             )}
