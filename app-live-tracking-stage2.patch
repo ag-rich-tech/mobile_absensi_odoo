@@ -1,0 +1,1011 @@
+diff --git a/android/app/build.gradle b/android/app/build.gradle
+index 9ac7bd3..cafb10e 100644
+--- a/android/app/build.gradle
++++ b/android/app/build.gradle
+@@ -36,6 +36,11 @@ dependencies {
+     implementation "androidx.coordinatorlayout:coordinatorlayout:$androidxCoordinatorLayoutVersion"
+     implementation "androidx.core:core-splashscreen:$coreSplashScreenVersion"
+     implementation project(':capacitor-android')
++    // Lokasi Fused untuk heartbeat tahap 2 — versi SAMA dengan yang
++    // dipakai plugin background-geolocation (21.0.1), supaya tidak ada
++    // konflik resolusi. implementation (bukan api) di modul plugin tidak
++    // bocor ke classpath modul app, jadi harus dideklarasikan di sini.
++    implementation "com.google.android.gms:play-services-location:21.0.1"
+     testImplementation "junit:junit:$junitVersion"
+     androidTestImplementation "androidx.test.ext:junit:$androidxJunitVersion"
+     androidTestImplementation "androidx.test.espresso:espresso-core:$androidxEspressoCoreVersion"
+diff --git a/android/app/src/main/AndroidManifest.xml b/android/app/src/main/AndroidManifest.xml
+index 08d7b6b..c676e7f 100644
+--- a/android/app/src/main/AndroidManifest.xml
++++ b/android/app/src/main/AndroidManifest.xml
+@@ -27,7 +27,23 @@
+ 
+         </activity>
+ 
+-        <provider
++        <!-- Receivers heartbeat live tracking tahap 2 (alarm per jam). -->
++    <!-- HeartbeatReceiver hanya menerima broadcast eksplisit dari alarm
++         sendiri (exported=false cukup); BootReceiver menerima siaran
++         sistem sehingga exported=true wajib di Android 12+. -->
++    <receiver
++        android:name=".HeartbeatReceiver"
++        android:exported="false" />
++    <receiver
++        android:name=".HeartbeatBootReceiver"
++        android:exported="true">
++        <intent-filter>
++            <action android:name="android.intent.action.BOOT_COMPLETED" />
++            <action android:name="android.intent.action.MY_PACKAGE_REPLACED" />
++        </intent-filter>
++    </receiver>
++
++    <provider
+             android:name="androidx.core.content.FileProvider"
+             android:authorities="${applicationId}.fileprovider"
+             android:exported="false"
+@@ -84,6 +100,18 @@
+     <uses-feature android:name="android.hardware.location.gps" android:required="false" />
+     <uses-feature android:name="android.hardware.location.network" android:required="false" />
+ 
++    <!-- Izin heartbeat live tracking tahap 2 (alarm per jam). -->
++    <!-- SCHEDULE_EXACT_ALARM: alarm tepat-waktu (Android 12+); bila user
++         mencabutnya, kode jatuh ke setAndAllowWhileIdle (inexact). -->
++    <uses-permission android:name="android.permission.SCHEDULE_EXACT_ALARM" />
++    <!-- RECEIVE_BOOT_COMPLETED: jadwalkan ulang alarm sesudah reboot. -->
++    <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
++    <!-- WAKE_LOCK: tahan CPU sebentar saat receiver bekerja (timeout 60 dtk). -->
++    <uses-permission android:name="android.permission.WAKE_LOCK" />
++    <!-- Izin ACCESS_BACKGROUND_LOCATION, FOREGROUND_SERVICE,
++         FOREGROUND_SERVICE_LOCATION, POST_NOTIFICATIONS sudah ada di
++         atas (patch background 28 Okt) — tidak diduplikasi di sini. -->
++
+     <!-- Permissions Kamera Selfie & Face Recognition Biometrik -->
+     <uses-permission android:name="android.permission.CAMERA" />
+     <uses-feature android:name="android.hardware.camera" android:required="false" />
+diff --git a/android/app/src/main/java/com/mobileabsensi/app/HeartbeatBootReceiver.java b/android/app/src/main/java/com/mobileabsensi/app/HeartbeatBootReceiver.java
+new file mode 100644
+index 0000000..bdcf8d5
+--- /dev/null
++++ b/android/app/src/main/java/com/mobileabsensi/app/HeartbeatBootReceiver.java
+@@ -0,0 +1,39 @@
++package com.mobileabsensi.app;
++
++import android.content.BroadcastReceiver;
++import android.content.Context;
++import android.content.Intent;
++
++/**
++ * Pemulih jadwal heartbeat sesudah reboot / update aplikasi.
++ *
++ * AlarmManager MENGHAPUS semua alarm saat reboot dan saat APK di-update.
++ * Receiver ini menjadwalkan ulang HANYA bila flag aktif tersimpan
++ * (user sedang dalam sesi yang seharusnya dilacak); tanpa flag aktif,
++ * tidak ada alarm yang dibuat — tidak ada ping zombie sesudah reboot
++ * untuk user yang sudah check-out.
++ *
++ * Tidak melakukan kerja lokasi/jaringan apa pun di sini.
++ */
++public class HeartbeatBootReceiver extends BroadcastReceiver {
++
++    @Override
++    public void onReceive(Context context, Intent intent) {
++        try {
++            if (intent == null || intent.getAction() == null) {
++                return;
++            }
++            String action = intent.getAction();
++            boolean isBoot = Intent.ACTION_BOOT_COMPLETED.equals(action);
++            boolean isReplaced = Intent.ACTION_MY_PACKAGE_REPLACED.equals(action);
++            if (!isBoot && !isReplaced) {
++                return;
++            }
++            if (HeartbeatScheduler.isActive(context)) {
++                HeartbeatScheduler.scheduleNext(context);
++            }
++        } catch (Exception ignored) {
++            // Tidak boleh crash saat boot.
++        }
++    }
++}
+diff --git a/android/app/src/main/java/com/mobileabsensi/app/HeartbeatPlugin.java b/android/app/src/main/java/com/mobileabsensi/app/HeartbeatPlugin.java
+new file mode 100644
+index 0000000..714945f
+--- /dev/null
++++ b/android/app/src/main/java/com/mobileabsensi/app/HeartbeatPlugin.java
+@@ -0,0 +1,82 @@
++package com.mobileabsensi.app;
++
++import com.getcapacitor.JSObject;
++import com.getcapacitor.Plugin;
++import com.getcapacitor.PluginCall;
++import com.getcapacitor.PluginMethod;
++import com.getcapacitor.annotation.CapacitorPlugin;
++
++/**
++ * Plugin Capacitor lokal "Heartbeat" (Android saja, tahap 2 live tracking).
++ *
++ * Didaftarkan eksplisit di MainActivity (template ini TIDAK memakai
++ * auto-registrasi untuk plugin lokal — lihat FakeGpsPlugin /
++ * PermissionPlugin yang didaftarkan dengan cara yang sama).
++ *
++ * Kontrak JS (lihat src/services/heartbeat.js):
++ *   start({ token, baseUrl, intervalMs, clientUuid })
++ *     -> { started: true, active: true, intervalMs, nextFireAtMs }
++ *   stop() -> { started: false, active: false }
++ *   status() -> { active, intervalMs, nextFireAtMs }
++ *
++ * - token: Bearer token login user (disimpan di SharedPreferences
++ *   privat app; DIHAPUS saat stop() dan saat server menjawab 401).
++ * - baseUrl: root API, mis. https://odoo18.hiddenlab.me/ag_rest_api/v1
++ *   (native menambahkan "/tracking/ping" sendiri).
++ * - intervalMs: bila kosong / <= 0, default 3600000 (1 jam).
++ * - clientUuid: bila kosong, native membuat format DEV- + UUID dan
++ *   menyimpannya (format sama dengan getOrCreateDeviceId() di JS).
++ *
++ * Plugin ini HANYA menjadwalkan; kerja lokasi + kirim dilakukan
++ * {@link HeartbeatReceiver} di luar WebView, sehingga tetap jalan saat
++ * app diminimize / di-swipe (selama OS tidak membunuhnya — lihat batas
++ * di docs/live-tracking-heartbeat-stage2.md).
++ */
++@CapacitorPlugin(name = "Heartbeat")
++public class HeartbeatPlugin extends Plugin {
++
++    @PluginMethod
++    public void start(PluginCall call) {
++        String token = call.getString("token");
++        String baseUrl = call.getString("baseUrl");
++        String clientUuid = call.getString("clientUuid");
++        Integer interval = call.getInt("intervalMs");
++        if (token == null || token.isEmpty() || baseUrl == null || baseUrl.isEmpty()) {
++            call.reject("token dan baseUrl wajib diisi.");
++            return;
++        }
++        long intervalMs = (interval != null && interval > 0)
++                ? interval.longValue() : HeartbeatScheduler.DEFAULT_INTERVAL_MS;
++        // Normalisasi: buang garis miring akhir supaya gabungan URL stabil.
++        while (baseUrl.endsWith("/")) {
++            baseUrl = baseUrl.substring(0, baseUrl.length() - 1);
++        }
++        HeartbeatScheduler.saveConfig(
++                getContext(), token, baseUrl, intervalMs, clientUuid);
++        HeartbeatScheduler.scheduleNext(getContext(), intervalMs);
++        JSObject ret = new JSObject();
++        ret.put("started", true);
++        ret.put("active", true);
++        ret.put("intervalMs", intervalMs);
++        ret.put("nextFireAtMs", HeartbeatScheduler.getNextFireMs(getContext()));
++        call.resolve(ret);
++    }
++
++    @PluginMethod
++    public void stop(PluginCall call) {
++        HeartbeatScheduler.cancelAndClear(getContext());
++        JSObject ret = new JSObject();
++        ret.put("started", false);
++        ret.put("active", false);
++        call.resolve(ret);
++    }
++
++    @PluginMethod
++    public void status(PluginCall call) {
++        JSObject ret = new JSObject();
++        ret.put("active", HeartbeatScheduler.isActive(getContext()));
++        ret.put("intervalMs", HeartbeatScheduler.getIntervalMs(getContext()));
++        ret.put("nextFireAtMs", HeartbeatScheduler.getNextFireMs(getContext()));
++        call.resolve(ret);
++    }
++}
+diff --git a/android/app/src/main/java/com/mobileabsensi/app/HeartbeatReceiver.java b/android/app/src/main/java/com/mobileabsensi/app/HeartbeatReceiver.java
+new file mode 100644
+index 0000000..c39838c
+--- /dev/null
++++ b/android/app/src/main/java/com/mobileabsensi/app/HeartbeatReceiver.java
+@@ -0,0 +1,299 @@
++package com.mobileabsensi.app;
++
++import android.content.BroadcastReceiver;
++import android.content.Context;
++import android.content.Intent;
++import android.content.IntentFilter;
++import android.content.pm.PackageManager;
++import android.location.Location;
++import android.os.BatteryManager;
++import android.os.Build;
++import android.os.PowerManager;
++
++import androidx.core.content.ContextCompat;
++
++import com.google.android.gms.location.FusedLocationProviderClient;
++import com.google.android.gms.location.LocationServices;
++import com.google.android.gms.location.Priority;
++import com.google.android.gms.tasks.CancellationTokenSource;
++
++import org.json.JSONObject;
++
++import java.io.ByteArrayOutputStream;
++import java.io.InputStream;
++import java.io.OutputStream;
++import java.net.HttpURLConnection;
++import java.net.URL;
++import java.nio.charset.StandardCharsets;
++import java.util.UUID;
++import java.util.concurrent.CountDownLatch;
++import java.util.concurrent.TimeUnit;
++
++/**
++ * Penerima alarm heartbeat live tracking tahap 2 (Android saja).
++ *
++ * Alur tiap bunyi alarm (semuanya di thread latar + wake lock, tidak
++ * pernah di main thread, tidak pernah melempar):
++ *   1. Bila flag aktif tidak tersimpan -> berhenti (tidak dijadwalkan
++ *      ulang). Ini pengaman bila alarm yatim masih tersisa.
++ *   2. Jadwalkan ulang alarm berikutnya SEBELUM bekerja, supaya
++ *      kegagalan lokasi/jaringan di bawah tidak memutus rantai.
++ *   3. Ambil lokasi (Fused, akurasi tinggi, timeout 20 dtk; fallback
++ *      lastLocation 5 dtk; tanpa lokasi -> lewati kirim, rantai tetap).
++ *   4. Kirim POST ke endpoint yang SAMA dengan jalur JS
++ *      ({baseUrl}/tracking/ping, header Bearer, body JSON yang sama
++ *      persis: latitude, longitude, accuracy_m, battery_level,
++ *      mock_detected, client_uuid). Server memberi stempel waktu
++ *      sendiri (create_date) — native TIDAK mengirim field waktu, jadi
++ *      tidak ada risiko salah zona seperti insiden ping_time dulu.
++ *   5. Bila server menjawab 401 (token mati) atau NOT_CHECKED_IN
++ *      (sesi berakhir / auto-check-out) -> hentikan rantai total
++ *      (batal + hapus token). App akan memulai ulang saat clock-in
++ *      berikutnya; alarm zombie tiap jam dicegah.
++ *
++ * Batasan jujur: receiver ini TIDAK jalan sesudah Force Stop via
++ * Settings (sistem menghapus alarm) dan TIDAK jalan saat reboot sampai
++ * {@link HeartbeatBootReceiver} menjadwalkan ulang.
++ */
++public class HeartbeatReceiver extends BroadcastReceiver {
++
++    private static final long LOCATION_TIMEOUT_MS = 20000L;
++    private static final long LAST_LOCATION_TIMEOUT_MS = 5000L;
++    private static final long WAKE_LOCK_TIMEOUT_MS = 60000L;
++
++    @Override
++    public void onReceive(Context context, Intent intent) {
++        final BroadcastReceiver.PendingResult pendingResult = goAsync();
++        PowerManager powerManager =
++                (PowerManager) context.getSystemService(Context.POWER_MANAGER);
++        PowerManager.WakeLock wakeLock = null;
++        if (powerManager != null) {
++            wakeLock = powerManager.newWakeLock(
++                    PowerManager.PARTIAL_WAKE_LOCK, "AliAttendance:Heartbeat");
++            try {
++                wakeLock.acquire(WAKE_LOCK_TIMEOUT_MS);
++            } catch (Exception ignored) {
++                wakeLock = null;
++            }
++        }
++        final PowerManager.WakeLock heldLock = wakeLock;
++        final Context appContext = context.getApplicationContext();
++        new Thread(() -> {
++            try {
++                runHeartbeat(appContext);
++            } catch (Exception ignored) {
++                // Tidak boleh crash / menghentikan rantai.
++            } finally {
++                try {
++                    if (heldLock != null && heldLock.isHeld()) {
++                        heldLock.release();
++                    }
++                } catch (Exception ignored) {
++                }
++                try {
++                    pendingResult.finish();
++                } catch (Exception ignored) {
++                }
++            }
++        }).start();
++    }
++
++    private void runHeartbeat(Context context) {
++        // 1. Pengaman alarm yatim: tanpa flag aktif, jangan jadwalkan ulang.
++        if (!HeartbeatScheduler.isActive(context)) {
++            return;
++        }
++        String token = HeartbeatScheduler.getToken(context);
++        String baseUrl = HeartbeatScheduler.getBaseUrl(context);
++        if (token == null || token.isEmpty() || baseUrl == null || baseUrl.isEmpty()) {
++            HeartbeatScheduler.cancelAndClear(context);
++            return;
++        }
++        // 2. Rantai dulu, kerja kemudian.
++        HeartbeatScheduler.scheduleNext(context);
++
++        // 3. Lokasi (butuh izin lokasi; tanpa izin -> lewati, rantai tetap).
++        boolean hasFine = ContextCompat.checkSelfPermission(
++                context, android.Manifest.permission.ACCESS_FINE_LOCATION)
++                == PackageManager.PERMISSION_GRANTED;
++        boolean hasCoarse = ContextCompat.checkSelfPermission(
++                context, android.Manifest.permission.ACCESS_COARSE_LOCATION)
++                == PackageManager.PERMISSION_GRANTED;
++        if (!hasFine && !hasCoarse) {
++            return;
++        }
++        Location location = fetchLocation(context);
++        if (location == null) {
++            return;
++        }
++        // 4. Kirim replika payload JS.
++        try {
++            sendPing(context, token, baseUrl, location);
++        } catch (Exception ignored) {
++            // Jaringan gagal: rantai sudah dijadwalkan, coba lagi jam depan.
++        }
++    }
++
++    /**
++     * getCurrentLocation akurasi tinggi + timeout; fallback lastLocation.
++     * Mengembalikan null bila keduanya gagal (tanpa melempar).
++     */
++    private Location fetchLocation(Context context) {
++        try {
++            FusedLocationProviderClient fused =
++                    LocationServices.getFusedLocationProviderClient(context);
++            final Location[] holder = new Location[1];
++            final CountDownLatch latch = new CountDownLatch(1);
++            CancellationTokenSource cts = new CancellationTokenSource();
++            fused.getCurrentLocation(Priority.PRIORITY_HIGH_ACCURACY, cts.getToken())
++                    .addOnSuccessListener(location -> {
++                        holder[0] = location;
++                        latch.countDown();
++                    })
++                    .addOnFailureListener(e -> latch.countDown());
++            boolean done;
++            try {
++                done = latch.await(LOCATION_TIMEOUT_MS, TimeUnit.MILLISECONDS);
++            } catch (InterruptedException e) {
++                Thread.currentThread().interrupt();
++                done = false;
++            }
++            if (!done) {
++                try {
++                    cts.cancel();
++                } catch (Exception ignored) {
++                }
++            }
++            if (holder[0] != null) {
++                return holder[0];
++            }
++            final CountDownLatch latch2 = new CountDownLatch(1);
++            fused.getLastLocation()
++                    .addOnSuccessListener(location -> {
++                        holder[0] = location;
++                        latch2.countDown();
++                    })
++                    .addOnFailureListener(e -> latch2.countDown());
++            try {
++                latch2.await(LAST_LOCATION_TIMEOUT_MS, TimeUnit.MILLISECONDS);
++            } catch (InterruptedException e) {
++                Thread.currentThread().interrupt();
++            }
++            return holder[0];
++        } catch (Exception ignored) {
++            return null;
++        }
++    }
++
++    @SuppressWarnings("deprecation")
++    private boolean isMockLocation(Location location) {
++        // isMock() hanya API 31+; isFromMockProvider() bekerja di semua
++        // API tapi deprecated sejak 31 (tetap fungsional, bukan dihapus).
++        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
++            return location.isMock();
++        }
++        return location.isFromMockProvider();
++    }
++
++    /** Baterai persen 0-100 dari BatteryManager, atau null bila tak terbaca. */
++    private Integer readBatteryPercent(Context context) {
++        try {
++            Intent status = context.registerReceiver(
++                    null, new IntentFilter(Intent.ACTION_BATTERY_CHANGED));
++            if (status == null) {
++                return null;
++            }
++            int level = status.getIntExtra(BatteryManager.EXTRA_LEVEL, -1);
++            int scale = status.getIntExtra(BatteryManager.EXTRA_SCALE, -1);
++            if (level < 0 || scale <= 0) {
++                return null;
++            }
++            return Math.round(level * 100f / scale);
++        } catch (Exception ignored) {
++            return null;
++        }
++    }
++
++    private void sendPing(Context context, String token, String baseUrl,
++                          Location location) throws Exception {
++        String clientUuid = HeartbeatScheduler.getClientUuid(context);
++        if (clientUuid == null || clientUuid.isEmpty()) {
++            // Fallback format sama dengan JS (DEV- + UUID huruf besar).
++            clientUuid = "DEV-" + UUID.randomUUID().toString().toUpperCase();
++            HeartbeatScheduler.setClientUuid(context, clientUuid);
++        }
++        Integer battery = readBatteryPercent(context);
++
++        JSONObject body = new JSONObject();
++        body.put("latitude", location.getLatitude());
++        body.put("longitude", location.getLongitude());
++        body.put("accuracy_m", location.hasAccuracy() ? (double) location.getAccuracy() : 0);
++        if (battery == null) {
++            body.put("battery_level", JSONObject.NULL);
++        } else {
++            body.put("battery_level", battery.intValue());
++        }
++        body.put("mock_detected", isMockLocation(location));
++        body.put("client_uuid", clientUuid);
++
++        HttpURLConnection conn = null;
++        try {
++            URL url = new URL(baseUrl + "/tracking/ping");
++            conn = (HttpURLConnection) url.openConnection();
++            conn.setRequestMethod("POST");
++            conn.setConnectTimeout(15000);
++            conn.setReadTimeout(20000);
++            conn.setDoOutput(true);
++            conn.setRequestProperty("Content-Type", "application/json");
++            conn.setRequestProperty("Accept", "application/json");
++            conn.setRequestProperty("Authorization", "Bearer " + token);
++            byte[] payload = body.toString().getBytes(StandardCharsets.UTF_8);
++            try (OutputStream os = conn.getOutputStream()) {
++                os.write(payload);
++            }
++            int code = conn.getResponseCode();
++            String responseBody = readBody(conn);
++            // Self-stop: token mati atau sesi berakhir -> jangan kirim
++            // tiap jam selamanya; app memulai ulang saat clock-in lagi.
++            if (code == 401 || (responseBody != null
++                    && responseBody.contains("NOT_CHECKED_IN"))) {
++                HeartbeatScheduler.cancelAndClear(context);
++            }
++        } finally {
++            if (conn != null) {
++                conn.disconnect();
++            }
++        }
++    }
++
++    /** Baca body respons (sukses maupun error) sebagai teks, atau null. */
++    private String readBody(HttpURLConnection conn) {
++        InputStream in = null;
++        try {
++            try {
++                in = conn.getInputStream();
++            } catch (Exception e) {
++                in = conn.getErrorStream();
++            }
++            if (in == null) {
++                return null;
++            }
++            ByteArrayOutputStream out = new ByteArrayOutputStream();
++            byte[] buf = new byte[1024];
++            int n;
++            while ((n = in.read(buf)) != -1) {
++                out.write(buf, 0, n);
++            }
++            return out.toString(StandardCharsets.UTF_8.name());
++        } catch (Exception ignored) {
++            return null;
++        } finally {
++            if (in != null) {
++                try {
++                    in.close();
++                } catch (Exception ignored) {
++                }
++            }
++        }
++    }
++}
+diff --git a/android/app/src/main/java/com/mobileabsensi/app/HeartbeatScheduler.java b/android/app/src/main/java/com/mobileabsensi/app/HeartbeatScheduler.java
+new file mode 100644
+index 0000000..7310608
+--- /dev/null
++++ b/android/app/src/main/java/com/mobileabsensi/app/HeartbeatScheduler.java
+@@ -0,0 +1,150 @@
++package com.mobileabsensi.app;
++
++import android.app.AlarmManager;
++import android.app.PendingIntent;
++import android.content.Context;
++import android.content.Intent;
++import android.content.SharedPreferences;
++import android.os.Build;
++
++/**
++ * Penjadwal heartbeat live tracking tahap 2 (Android saja).
++ *
++ * Satu-satunya sumber kebenaran penjadwalan: SharedPreferences di bawah.
++ * Alarm bersifat one-shot: tiap kali {@link HeartbeatReceiver} berbunyi,
++ * ia LANGSUNG menjadwalkan ulang alarm berikutnya sebelum bekerja, supaya
++ * satu kegagalan lokasi/jaringan tidak pernah memutus rantai.
++ *
++ * Izin exact alarm (Android 12+, API 31): bila
++ * {@link AlarmManager#canScheduleExactAlarms()} false (user mencabut lewat
++ * Settings > Aplikasi > Ali Attendance > Alarm & pengingat), dipakai
++ * setAndAllowWhileIdle (inexact): alarm tetap jalan tapi bisa bergeser,
++ * terutama saat Doze. Tidak pernah crash karena izin ini.
++ *
++ * Alarm TIDAK bertahan dari: Force Stop via Settings (sistem menghapus
++ * semua alarm + receiver tidak jalan sampai app dibuka lagi), dan reboot
++ * (dipulihkan {@link HeartbeatBootReceiver} bila flag aktif tersimpan).
++ */
++public final class HeartbeatScheduler {
++
++    private HeartbeatScheduler() {
++    }
++
++    static final String PREFS_NAME = "heartbeat_prefs";
++    static final String KEY_ACTIVE = "active";
++    static final String KEY_TOKEN = "token";
++    static final String KEY_BASE_URL = "base_url";
++    static final String KEY_INTERVAL_MS = "interval_ms";
++    static final String KEY_CLIENT_UUID = "client_uuid";
++    static final String KEY_NEXT_FIRE_MS = "next_fire_ms";
++
++    static final String ACTION_ALARM = "com.mobileabsensi.app.HEARTBEAT_ALARM";
++
++    /** Interval default: 1 jam, sama dengan timer foreground Dashboard. */
++    static final long DEFAULT_INTERVAL_MS = 3600000L;
++
++    private static final int REQUEST_CODE = 0x4842;
++
++    private static SharedPreferences prefs(Context context) {
++        return context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE);
++    }
++
++    private static PendingIntent alarmIntent(Context context) {
++        Intent intent = new Intent(context, HeartbeatReceiver.class);
++        intent.setAction(ACTION_ALARM);
++        int flags = PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE;
++        return PendingIntent.getBroadcast(context, REQUEST_CODE, intent, flags);
++    }
++
++    /** Simpan konfigurasi + tandai aktif (dipanggil plugin start()). */
++    static void saveConfig(Context context, String token, String baseUrl,
++                           long intervalMs, String clientUuid) {
++        prefs(context).edit()
++                .putBoolean(KEY_ACTIVE, true)
++                .putString(KEY_TOKEN, token)
++                .putString(KEY_BASE_URL, baseUrl)
++                .putLong(KEY_INTERVAL_MS, intervalMs)
++                .putString(KEY_CLIENT_UUID, clientUuid)
++                .apply();
++    }
++
++    static boolean isActive(Context context) {
++        return prefs(context).getBoolean(KEY_ACTIVE, false);
++    }
++
++    static String getToken(Context context) {
++        return prefs(context).getString(KEY_TOKEN, null);
++    }
++
++    static String getBaseUrl(Context context) {
++        return prefs(context).getString(KEY_BASE_URL, null);
++    }
++
++    static long getIntervalMs(Context context) {
++        long v = prefs(context).getLong(KEY_INTERVAL_MS, DEFAULT_INTERVAL_MS);
++        return v > 0 ? v : DEFAULT_INTERVAL_MS;
++    }
++
++    static String getClientUuid(Context context) {
++        return prefs(context).getString(KEY_CLIENT_UUID, null);
++    }
++
++    static long getNextFireMs(Context context) {
++        return prefs(context).getLong(KEY_NEXT_FIRE_MS, 0L);
++    }
++
++    static void setClientUuid(Context context, String clientUuid) {
++        prefs(context).edit().putString(KEY_CLIENT_UUID, clientUuid).apply();
++    }
++
++    /** Jadwalkan alarm berikutnya = sekarang + interval tersimpan. */
++    static void scheduleNext(Context context) {
++        scheduleNext(context, getIntervalMs(context));
++    }
++
++    /** Jadwalkan alarm berikutnya = sekarang + intervalMs. */
++    static void scheduleNext(Context context, long intervalMs) {
++        AlarmManager alarmManager =
++                (AlarmManager) context.getSystemService(Context.ALARM_SERVICE);
++        if (alarmManager == null) {
++            return;
++        }
++        long triggerAt = System.currentTimeMillis() + intervalMs;
++        PendingIntent pendingIntent = alarmIntent(context);
++        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S
++                && !alarmManager.canScheduleExactAlarms()) {
++            // Fallback inexact: tetap jalan, bisa bergeser (terutama Doze).
++            alarmManager.setAndAllowWhileIdle(
++                    AlarmManager.RTC_WAKEUP, triggerAt, pendingIntent);
++        } else {
++            alarmManager.setExactAndAllowWhileIdle(
++                    AlarmManager.RTC_WAKEUP, triggerAt, pendingIntent);
++        }
++        prefs(context).edit().putLong(KEY_NEXT_FIRE_MS, triggerAt).apply();
++    }
++
++    /** Batalkan alarm berikutnya (tanpa menghapus konfigurasi). */
++    static void cancelAlarm(Context context) {
++        AlarmManager alarmManager =
++                (AlarmManager) context.getSystemService(Context.ALARM_SERVICE);
++        if (alarmManager != null) {
++            alarmManager.cancel(alarmIntent(context));
++        }
++        prefs(context).edit().putLong(KEY_NEXT_FIRE_MS, 0L).apply();
++    }
++
++    /**
++     * Hentikan total: batalkan alarm + hapus flag aktif + hapus token
++     * tersimpan (dipanggil plugin stop() dan saat server menjawab 401 /
++     * NOT_CHECKED_IN — token mati atau sesi berakhir tidak boleh
++     * meninggalkan alarm zombie yang mengirim tiap jam).
++     */
++    static void cancelAndClear(Context context) {
++        cancelAlarm(context);
++        prefs(context).edit()
++                .putBoolean(KEY_ACTIVE, false)
++                .remove(KEY_TOKEN)
++                .putLong(KEY_NEXT_FIRE_MS, 0L)
++                .apply();
++    }
++}
+diff --git a/android/app/src/main/java/com/mobileabsensi/app/MainActivity.java b/android/app/src/main/java/com/mobileabsensi/app/MainActivity.java
+index af3655c..f1a973a 100644
+--- a/android/app/src/main/java/com/mobileabsensi/app/MainActivity.java
++++ b/android/app/src/main/java/com/mobileabsensi/app/MainActivity.java
+@@ -15,6 +15,7 @@ public class MainActivity extends BridgeActivity {
+ 
+         registerPlugin(FakeGpsPlugin.class);
+         registerPlugin(PermissionPlugin.class);
++        registerPlugin(HeartbeatPlugin.class);
+         super.onCreate(savedInstanceState);
+     }
+ }
+diff --git a/docs/live-tracking-heartbeat-stage2.md b/docs/live-tracking-heartbeat-stage2.md
+new file mode 100644
+index 0000000..6630762
+--- /dev/null
++++ b/docs/live-tracking-heartbeat-stage2.md
+@@ -0,0 +1,148 @@
++# Live Tracking — Heartbeat Tahap 2 (alarm per jam, Android)
++
++## Masalah yang dipecahkan
++
++Watcher background tahap 1 (`backgroundTracking.js`, plugin
++`@capacitor-community/background-geolocation`) **berbasis jarak**:
++callback hanya datang bila perangkat berpindah >= 100 m. Karyawan yang
++diam di office seharian tidak pernah tercapture — gap 13:15 → 17:36
++pada 29 Okt 2026 adalah buktinya (koordinat sama persis, bukan service
++mati).
++
++Heartbeat tahap 2 menambahkan **alarm native tiap jam** yang berbunyi
++walau user diam di tempat, di luar WebView, sehingga tetap jalan saat
++app diminimize / di-swipe. Ini ADITIF: timer foreground 1 jam dan
++watcher jarak tetap jalan seperti dulu.
++
++## Arsitektur
++
++```
++Dashboard (sesi aktif)
++  └─ startHeartbeat() ──► Plugin "Heartbeat" (MainActivity, eksplisit)
++       ├─ simpan token + baseUrl + interval + clientUuid (SharedPreferences)
++       └─ AlarmManager one-shot (sekarang + 1 jam)
++            └─ HeartbeatReceiver (goAsync + thread + wake lock 60 dtk)
++                 ├─ flag aktif? tidak -> berhenti (alarm yatim)
++                 ├─ jadwalkan ulang alarm berikutnya DULU (rantai anti-putus)
++                 ├─ lokasi: Fused getCurrentLocation (akurasi tinggi,
++                 │   timeout 20 dtk) -> fallback lastLocation (5 dtk)
++                 ├─ baterai: BatteryManager (tanpa izin tambahan)
++                 ├─ mock: Location.isMock() (API 31+) / isFromMockProvider()
++                 └─ POST {baseUrl}/tracking/ping (replika payload JS)
++                      ├─ 401 / NOT_CHECKED_IN -> hentikan rantai total
++                      └─ gagal lain -> lewati, coba lagi jam depan
++HeartbeatBootReceiver: reboot / update APK -> jadwalkan ulang HANYA
++  bila flag aktif tersimpan (tanpa flag = tidak ada ping zombie).
++```
++
++File:
++
++| File | Peran |
++|---|---|
++| `android/.../HeartbeatPlugin.java` | Plugin Capacitor lokal `Heartbeat`: `start` / `stop` / `status`. Didaftarkan eksplisit di `MainActivity` (template ini tidak auto-registrasi plugin lokal). |
++| `android/.../HeartbeatScheduler.java` | Satu-satunya penjadwal: SharedPreferences + AlarmManager + PendingIntent. |
++| `android/.../HeartbeatReceiver.java` | Kerja tiap bunyi alarm: lokasi + kirim + self-stop. |
++| `android/.../HeartbeatBootReceiver.java` | Pulihkan jadwal sesudah reboot / update APK. |
++| `android/.../MainActivity.java` | + `registerPlugin(HeartbeatPlugin.class)`. |
++| `android/.../AndroidManifest.xml` | + 2 receiver + 3 izin baru (di bawah). |
++| `android/.../app/build.gradle` | + `play-services-location:21.0.1` (versi SAMA dengan plugin background-geolocation; `implementation` di modul plugin tidak bocor ke classpath modul app). |
++| `src/services/heartbeat.js` | Bungkus JS: guard Android, ambil token/baseUrl/clientUuid dari JS (native tidak bisa membaca localStorage WebView), start/stop/status. |
++| `src/pages/DashboardPage.jsx` | Start saat sesi aktif (berdampingan watcher), stop saat cleanup efek + penjaga tanpa-sesi. |
++| `src/App.jsx` | Stop saat logout (jaring pengaman supaya token tidak tertinggal). |
++
++## Pemetaan payload native vs JS
++
++Endpoint SAMA (`POST {ODOO_URL}{API_BASE}/tracking/ping`, header
++`Authorization: Bearer <token>`, body JSON mentah — bukan JSON-RPC).
++Server memberi stempel waktu sendiri (`create_date`); native TIDAK
++mengirim field waktu, jadi tidak ada risiko salah zona.
++
++| Field | Jalur JS (`api.sendTrackingPing`) | Jalur native (HeartbeatReceiver) |
++|---|---|---|
++| `latitude` | `pos.coords.latitude` | `location.getLatitude()` |
++| `longitude` | `pos.coords.longitude` | `location.getLongitude()` |
++| `accuracy_m` | `coords.accuracy \|\| 0` | `hasAccuracy() ? accuracy : 0` |
++| `battery_level` | Device API (`batteryLevel * 100`, null bila gagal) | BatteryManager `level*100/scale`, null bila tak terbaca |
++| `mock_detected` | `checkFakeGps` (foreground) / `simulated` plugin (background) | `isMock()` / `isFromMockProvider()` |
++| `client_uuid` | `getOrCreateDeviceId()` (localStorage `DEV-...`) | Sama, dikirim JS saat `start()`; bila kosong, native buat format `DEV-` + UUID dan simpan |
++
++Server: menolak bila tidak ada sesi berjalan (`NOT_CHECKED_IN`),
++mendup interval < `live_tracking_interval_s` (default 30 dtk),
++meng-clamp baterai 0–100. Karena dedup server hanya 30 detik (bukan
++1 jam), kasus terburuk saat app terbuka adalah ~2 ping/jam (timer JS
+++ alarm native) — itu wajar untuk audit, bukan spam.
++
++## Izin
++
++Baru di tahap 2 (ditambahkan ke `AndroidManifest.xml`):
++
++- `SCHEDULE_EXACT_ALARM` (Android 12+): alarm tepat-waktu. Bila user
++  mencabutnya (Settings > Aplikasi > Ali Attendance > Alarm &
++  pengingat), kode jatuh ke `setAndAllowWhileIdle` (inexact): alarm
++  tetap jalan tapi bisa bergeser, terutama saat Doze. Tidak crash.
++- `RECEIVE_BOOT_COMPLETED`: pulihkan jadwal sesudah reboot.
++- `WAKE_LOCK`: tahan CPU sebentar saat receiver bekerja (timeout 60 dtk).
++
++Sudah ada dari patch background 28 Okt (tidak diduplikasi):
++`INTERNET`, `ACCESS_FINE_LOCATION`, `ACCESS_COARSE_LOCATION`,
++`ACCESS_BACKGROUND_LOCATION`, `FOREGROUND_SERVICE`,
++`FOREGROUND_SERVICE_LOCATION`, `POST_NOTIFICATIONS`.
++
++## Setting HP wajib (khususnya Xiaomi / HyperOS)
++
++Tanpa ini, MIUI tetap bisa menunda/membunuh alarm walau kode sudah
++benar (berlaku juga untuk tahap 1):
++
++1. Setelan > Aplikasi > Kelola aplikasi > Ali Attendance >
++   **Mulai otomatis: ON**.
++2. Di layar yang sama > **Penghemat baterai: Tanpa batasan**.
++3. Recent apps > tahan kartu Ali Attendance > **ikon gembok**
++   (kunci supaya swipe tidak membunuhnya).
++4. Izin lokasi app: **Sepanjang waktu**.
++5. Settings > Aplikasi > Ali Attendance > **Alarm & pengingat:
++   Izinkan** (supaya alarm tetap exact; bila dicabut, fallback inexact).
++
++## Langkah king
++
++```bash
++git apply <patch-tahap-2>.patch
++npx cap sync android
++# rebuild APK (tidak ada dependensi npm baru — plugin ini lokal,
++# hanya memakai Play Services location yang sudah dipakai plugin existing)
++```
++
++Tidak ada `npm install` baru yang wajib (tidak ada paket npm baru);
++`cap sync` wajib supaya file Java + manifest masuk ke proyek Android.
++
++## Rencana tes HP (bukti akhir di HP king, bukan sandbox)
++
++1. **Diam di office (tes utama):** clock-in, tutup app (minimize,
++   jangan dibuka lagi), diam di office 1–2 jam, cek peta / daftar
++   Live Tracking. Harus ada ping baru tiap jam walau tidak bergerak.
++2. **Swipe + bergerak:** swipe dari recent, jalan >100 m tanpa buka
++   app, cek peta. Harus ada ping (watcher jarak + heartbeat).
++3. **Reboot:** restart HP (sesi masih terbuka), tunggu 1 jam tanpa
++   buka app, cek peta. Harus ada ping (BootReceiver).
++4. **Clock-out:** sesudah pulang, tidak boleh ada ping baru lagi.
++5. **Logout:** sesudah logout, tidak boleh ada ping baru lagi
++   (token sudah dihapus dari SharedPreferences).
++
++## Batas jujur
++
++- **Force Stop via Settings membunuh segalanya** (sistem menghapus
++  alarm; receiver tidak jalan sampai app dibuka lagi). Tidak ada app
++  yang kebal ini.
++- **Xiaomi tanpa setting di atas tetap bisa menunda** alarm (Doze +
++  MIUI agresif). Bila tes 1 gagal padahal setting sudah benar,
++  laporkan — itu level OEM, bukan lagi kode.
++- **Fallback inexact bisa bergeser** dari tepat 1 jam bila izin exact
++  dicabut (terutama saat Doze).
++- **Token kedaluwarsa menghentikan rantai** (401 -> stop). Login ulang
++  memulai lagi otomatis lewat Dashboard.
++- **Auto-check-out server menghentikan rantai** (`NOT_CHECKED_IN` ->
++  stop). Clock-in berikutnya memulai lagi.
++- **iOS TIDAK dicakup** tahap ini (hanya Android; plugin tidak punya
++  kode iOS, dan JS meng-guard platform Android saja).
++- **Kompilasi native tidak terverifikasi dari sandbox** (tidak ada
++  Android SDK di sana) — kompilasi pertama terjadi di PC king saat
++  `cap sync` + build APK. Bila ada error kompilasi, kirimkan lognya.
+diff --git a/src/App.jsx b/src/App.jsx
+index f614a2d..e107870 100644
+--- a/src/App.jsx
++++ b/src/App.jsx
+@@ -12,6 +12,7 @@ import api from './services/api';
+ import { preloadAttendanceSounds } from './services/soundService';
+ import { App as CapacitorApp } from '@capacitor/app';
+ import { clearAllDrafts } from './services/draftService';
++import { stopHeartbeat } from './services/heartbeat.js';
+ import {
+   getDashboardNav, requestDashboardBackToHome,
+   setPendingDashboardNav, deepLinkToDashboardNav,
+@@ -151,6 +152,12 @@ function App() {
+   };
+ 
+   const handleLogout = async () => {
++    // Heartbeat native harus berhenti di logout (alarm bertahan melewati
++    // restart app; Dashboard yang ter-unmount juga menghentikannya lewat
++    // cleanup efek, tapi logout eksplisit di sini adalah jaring pengaman
++    // supaya token tidak tertinggal di SharedPreferences sesudah keluar).
++    // Fire-and-forget: tidak boleh menunda logout bila plugin gagal.
++    stopHeartbeat().catch(() => {});
+     try {
+       await api.logout();
+     } catch {
+diff --git a/src/pages/DashboardPage.jsx b/src/pages/DashboardPage.jsx
+index 6ecbe5e..338642e 100644
+--- a/src/pages/DashboardPage.jsx
++++ b/src/pages/DashboardPage.jsx
+@@ -19,6 +19,10 @@ import {
+   markTrackingPingSent,
+   resetTrackingPingThrottle,
+ } from '../services/backgroundTracking.js';
++import {
++  startHeartbeat,
++  stopHeartbeat,
++} from '../services/heartbeat.js';
+ import RiwayatView from '../components/views/RiwayatView';
+ import IzinView from '../components/views/IzinView';
+ import DinasView from '../components/views/DinasView';
+@@ -549,10 +553,17 @@ export default function DashboardPage({ user: initialUser, onLogout, onStartAtte
+     // Gagal mulai (plugin belum di-install/sync, bukan Android, izin
+     // ditolak) TIDAK menghentikan ping foreground di atas.
+     startBackgroundTracking().catch(() => {});
++    // Heartbeat tahap 2 (alarm native tiap jam, plugin lokal
++    // "Heartbeat"): ADITIF — tidak menggantikan timer foreground di
++    // atas maupun watcher jarak. Gagal mulai sama sekali tidak
++    // menghentikan keduanya; alarm tetap jalan saat app diminimize /
++    // di-swipe, walau user diam di tempat.
++    startHeartbeat().catch(() => {});
+     return () => {
+       stopped = true;
+       clearInterval(trackInterval);
+       stopBackgroundTracking().catch(() => {});
++      stopHeartbeat().catch(() => {});
+     };
+   }, [sudahMasuk, sudahPulang]);
+ 
+@@ -563,9 +574,12 @@ export default function DashboardPage({ user: initialUser, onLogout, onStartAtte
+   // lama bisa tetap hidup. Penjaga kecil ini memastikan watcher
+   // berhenti setiap kali dashboard mount/berubah ke tanpa-sesi.
+   // Idempotent: stopBackgroundTracking aman dipanggil berulang.
++  // Heartbeat ikut dihentikan di sini dengan alasan yang sama
++  // (alarm native bertahan melewati restart app).
+   useEffect(() => {
+     if (sudahMasuk && !sudahPulang) return;
+     stopBackgroundTracking().catch(() => {});
++    stopHeartbeat().catch(() => {});
+   }, [sudahMasuk, sudahPulang]);
+ 
+ 
+diff --git a/src/services/heartbeat.js b/src/services/heartbeat.js
+new file mode 100644
+index 0000000..deea2e5
+--- /dev/null
++++ b/src/services/heartbeat.js
+@@ -0,0 +1,110 @@
++import { registerPlugin, Capacitor } from '@capacitor/core';
++import { getToken, getOrCreateDeviceId } from './api.js';
++import { ODOO_URL, API_BASE } from '../config.js';
++
++// ---------------------------------------------------------------------------
++// Heartbeat live tracking tahap 2 (Android saja, aditif).
++//
++// Masalah yang dipecahkan: watcher background (backgroundTracking.js)
++// BERBASIS JARAK — callback hanya datang bila perangkat berpindah
++// >= 100 m. Karyawan yang diam di office seharian tidak pernah
++// tercapture walau service-nya hidup. Heartbeat ini memakai alarm
++// native (AlarmManager) yang berbunyi TIAP JAM walau diam, di luar
++// WebView, sehingga tetap jalan saat app diminimize / di-swipe.
++//
++// Plugin native lokal "Heartbeat" didaftarkan by-name (pola sama seperti
++// backgroundTracking.js): registerPlugin hanya membuat proxy malas,
++// error baru muncul saat method dipanggil dan itu ditangkap di bawah,
++// sehingga gagal mulai heartbeat TIDAK PERNAH menghentikan ping
++// foreground / watcher jarak yang sudah ada.
++//
++// Kontrak plugin (android/.../HeartbeatPlugin.java):
++//   start({ token, baseUrl, intervalMs, clientUuid })
++//     -> { started, active, intervalMs, nextFireAtMs }
++//   stop() -> { started: false, active: false }
++//   status() -> { active, intervalMs, nextFireAtMs }
++//
++// - baseUrl: root API produksi (ODOO_URL + API_BASE); native menambah
++//   "/tracking/ping" sendiri. Token + clientUuid dikirim dari JS karena
++//   native TIDAK bisa membaca localStorage WebView.
++// - Payload native adalah replika persis jalur JS (endpoint, header
++//   Bearer, field latitude/longitude/accuracy_m/battery_level/
++//   mock_detected/client_uuid). Server memberi stempel waktu sendiri,
++//   jadi tidak ada field waktu yang bisa salah zona.
++// - Alarm bersifat one-shot + dijadwalkan ulang tiap bunyi; server yang
++//   menjawab 401 / NOT_CHECKED_IN menghentikan rantai (token mati /
++//   sesi berakhir) dan app memulai ulang saat clock-in berikutnya.
++// - Heartbeat TIDAK menggantikan timer foreground 1 jam maupun watcher
++//   jarak — ketiganya jalan berdampingan. Kasus terburuk saat app
++//   terbuka: ~2 ping/jam (timer JS + alarm native); server mendup
++//   interval < 30 detik, jadi tidak ada spam.
++// ---------------------------------------------------------------------------
++
++const Heartbeat = registerPlugin('Heartbeat');
++
++// Interval heartbeat: 1 JAM, sama dengan timer foreground Dashboard.
++export const TRACKING_HEARTBEAT_INTERVAL_MS = 3600000;
++
++// Flag JS saja (bukan sumber kebenaran): status asli ada di native
++// (SharedPreferences) dan bertahan melewati restart app.
++let started = false;
++
++export function isHeartbeatRunning() {
++  return started;
++}
++
++// Mulai heartbeat. Harus dipanggil saat sesi clock-in aktif (Dashboard).
++// Gagal mulai (bukan Android, belum login, plugin belum di-sync)
++// TIDAK melempar: mengembalikan { started: false } supaya jalur
++// tracking yang sudah ada tetap jalan.
++export async function startHeartbeat() {
++  if (Capacitor.getPlatform() !== 'android') {
++    return { started: false, reason: 'unsupported-platform' };
++  }
++  if (started) {
++    return { started: true };
++  }
++  const token = getToken();
++  if (!token || token === 'session' || token === 'mock') {
++    return { started: false, reason: 'no-token' };
++  }
++  try {
++    await Heartbeat.start({
++      token,
++      // URL absolut (ODOO_URL + API_BASE), BUKAN apiUrl(''): di dev,
++      // apiUrl memakai path relatif (vite proxy) yang tidak bisa
++      // dipakai HttpURLConnection native. Produksi: nilai yang sama
++      // persis dengan yang dipakai odooCall.
++      baseUrl: `${ODOO_URL}${API_BASE}`,
++      intervalMs: TRACKING_HEARTBEAT_INTERVAL_MS,
++      clientUuid: getOrCreateDeviceId(),
++    });
++    started = true;
++    return { started: true };
++  } catch (err) {
++    console.warn('Heartbeat gagal dimulai:', err);
++    return { started: false, reason: 'start-failed' };
++  }
++}
++
++// Hentikan heartbeat (clock-out / logout / sesi berakhir).
++// Selalu aman dipanggil walau tidak jalan; selalu mencoba stop native
++// (flag JS bisa basi sesudah restart app, sementara alarm native
++// masih aktif) — dan tidak pernah melempar.
++export async function stopHeartbeat() {
++  try {
++    await Heartbeat.stop();
++  } catch {
++    // Plugin belum di-sync / sudah hilang — abaikan.
++  }
++  started = false;
++}
++
++// Status native (diagnostik; tidak dipakai UI).
++export async function statusHeartbeat() {
++  try {
++    return await Heartbeat.status();
++  } catch {
++    return { active: false, intervalMs: 0, nextFireAtMs: 0 };
++  }
++}

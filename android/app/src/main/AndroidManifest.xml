@@ -27,7 +27,23 @@
 
         </activity>
 
-        <provider
+        <!-- Receivers heartbeat live tracking tahap 2 (alarm per jam). -->
+    <!-- HeartbeatReceiver hanya menerima broadcast eksplisit dari alarm
+         sendiri (exported=false cukup); BootReceiver menerima siaran
+         sistem sehingga exported=true wajib di Android 12+. -->
+    <receiver
+        android:name=".HeartbeatReceiver"
+        android:exported="false" />
+    <receiver
+        android:name=".HeartbeatBootReceiver"
+        android:exported="true">
+        <intent-filter>
+            <action android:name="android.intent.action.BOOT_COMPLETED" />
+            <action android:name="android.intent.action.MY_PACKAGE_REPLACED" />
+        </intent-filter>
+    </receiver>
+
+    <provider
             android:name="androidx.core.content.FileProvider"
             android:authorities="${applicationId}.fileprovider"
             android:exported="false"
@@ -83,6 +99,18 @@
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_LOCATION" />
     <uses-feature android:name="android.hardware.location.gps" android:required="false" />
     <uses-feature android:name="android.hardware.location.network" android:required="false" />
+
+    <!-- Izin heartbeat live tracking tahap 2 (alarm per jam). -->
+    <!-- SCHEDULE_EXACT_ALARM: alarm tepat-waktu (Android 12+); bila user
+         mencabutnya, kode jatuh ke setAndAllowWhileIdle (inexact). -->
+    <uses-permission android:name="android.permission.SCHEDULE_EXACT_ALARM" />
+    <!-- RECEIVE_BOOT_COMPLETED: jadwalkan ulang alarm sesudah reboot. -->
+    <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
+    <!-- WAKE_LOCK: tahan CPU sebentar saat receiver bekerja (timeout 60 dtk). -->
+    <uses-permission android:name="android.permission.WAKE_LOCK" />
+    <!-- Izin ACCESS_BACKGROUND_LOCATION, FOREGROUND_SERVICE,
+         FOREGROUND_SERVICE_LOCATION, POST_NOTIFICATIONS sudah ada di
+         atas (patch background 28 Okt) — tidak diduplikasi di sini. -->
 
     <!-- Permissions Kamera Selfie & Face Recognition Biometrik -->
     <uses-permission android:name="android.permission.CAMERA" />

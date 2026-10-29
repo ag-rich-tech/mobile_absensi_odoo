@@ -19,6 +19,10 @@ import {
   markTrackingPingSent,
   resetTrackingPingThrottle,
 } from '../services/backgroundTracking.js';
+import {
+  startHeartbeat,
+  stopHeartbeat,
+} from '../services/heartbeat.js';
 import RiwayatView from '../components/views/RiwayatView';
 import IzinView from '../components/views/IzinView';
 import DinasView from '../components/views/DinasView';
@@ -549,10 +553,17 @@ export default function DashboardPage({ user: initialUser, onLogout, onStartAtte
     // Gagal mulai (plugin belum di-install/sync, bukan Android, izin
     // ditolak) TIDAK menghentikan ping foreground di atas.
     startBackgroundTracking().catch(() => {});
+    // Heartbeat tahap 2 (alarm native tiap jam, plugin lokal
+    // "Heartbeat"): ADITIF — tidak menggantikan timer foreground di
+    // atas maupun watcher jarak. Gagal mulai sama sekali tidak
+    // menghentikan keduanya; alarm tetap jalan saat app diminimize /
+    // di-swipe, walau user diam di tempat.
+    startHeartbeat().catch(() => {});
     return () => {
       stopped = true;
       clearInterval(trackInterval);
       stopBackgroundTracking().catch(() => {});
+      stopHeartbeat().catch(() => {});
     };
   }, [sudahMasuk, sudahPulang]);
 
@@ -563,9 +574,12 @@ export default function DashboardPage({ user: initialUser, onLogout, onStartAtte
   // lama bisa tetap hidup. Penjaga kecil ini memastikan watcher
   // berhenti setiap kali dashboard mount/berubah ke tanpa-sesi.
   // Idempotent: stopBackgroundTracking aman dipanggil berulang.
+  // Heartbeat ikut dihentikan di sini dengan alasan yang sama
+  // (alarm native bertahan melewati restart app).
   useEffect(() => {
     if (sudahMasuk && !sudahPulang) return;
     stopBackgroundTracking().catch(() => {});
+    stopHeartbeat().catch(() => {});
   }, [sudahMasuk, sudahPulang]);
 
 

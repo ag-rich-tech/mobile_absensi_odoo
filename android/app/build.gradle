@@ -36,6 +36,11 @@ dependencies {
     implementation "androidx.coordinatorlayout:coordinatorlayout:$androidxCoordinatorLayoutVersion"
     implementation "androidx.core:core-splashscreen:$coreSplashScreenVersion"
     implementation project(':capacitor-android')
+    // Lokasi Fused untuk heartbeat tahap 2 — versi SAMA dengan yang
+    // dipakai plugin background-geolocation (21.0.1), supaya tidak ada
+    // konflik resolusi. implementation (bukan api) di modul plugin tidak
+    // bocor ke classpath modul app, jadi harus dideklarasikan di sini.
+    implementation "com.google.android.gms:play-services-location:21.0.1"
     testImplementation "junit:junit:$junitVersion"
     androidTestImplementation "androidx.test.ext:junit:$androidxJunitVersion"
     androidTestImplementation "androidx.test.espresso:espresso-core:$androidxEspressoCoreVersion"

@@ -12,6 +12,7 @@ import api from './services/api';
 import { preloadAttendanceSounds } from './services/soundService';
 import { App as CapacitorApp } from '@capacitor/app';
 import { clearAllDrafts } from './services/draftService';
+import { stopHeartbeat } from './services/heartbeat.js';
 import {
   getDashboardNav, requestDashboardBackToHome,
   setPendingDashboardNav, deepLinkToDashboardNav,
@@ -151,6 +152,12 @@ function App() {
   };
 
   const handleLogout = async () => {
+    // Heartbeat native harus berhenti di logout (alarm bertahan melewati
+    // restart app; Dashboard yang ter-unmount juga menghentikannya lewat
+    // cleanup efek, tapi logout eksplisit di sini adalah jaring pengaman
+    // supaya token tidak tertinggal di SharedPreferences sesudah keluar).
+    // Fire-and-forget: tidak boleh menunda logout bila plugin gagal.
+    stopHeartbeat().catch(() => {});
     try {
       await api.logout();
     } catch {

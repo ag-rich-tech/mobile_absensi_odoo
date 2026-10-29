@@ -15,6 +15,7 @@ public class MainActivity extends BridgeActivity {
 
         registerPlugin(FakeGpsPlugin.class);
         registerPlugin(PermissionPlugin.class);
+        registerPlugin(HeartbeatPlugin.class);
         super.onCreate(savedInstanceState);
     }
 }
