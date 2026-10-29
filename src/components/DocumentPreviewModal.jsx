@@ -11,6 +11,38 @@ export default function DocumentPreviewModal({ isOpen, onClose, modul, id, title
   const [errorMessage, setErrorMessage] = useState('');
   const [zoomLevel, setZoomLevel] = useState(1);
   const [rotation, setRotation] = useState(0);
+  // PDF-blob (1.2.24-fix): URL blob untuk iframe PDF. WebView Android
+  // (Capacitor) TIDAK merender PDF dari data-URL (data:application/pdf)
+  // di iframe — tampil putih kosong seperti laporan king 29 Okt
+  // (modal slip gaji blank padahal file + nama dokumen berhasil
+  // dimuat). Skema blob: dirender viewer PDF bawaan Chrome. Gambar
+  // tidak diubah (tag img menangani data-URL dengan benar).
+  const [pdfBlobUrl, setPdfBlobUrl] = useState(null);
+
+  // Revoke URL blob lama setiap kali berganti / saat unmount.
+  useEffect(() => {
+    return () => {
+      if (pdfBlobUrl) URL.revokeObjectURL(pdfBlobUrl);
+    };
+  }, [pdfBlobUrl]);
+
+  // Konversi data-URL -> blob-URL. Gagal -> null (pemanggil fallback
+  // ke data-URL lama, perilaku sebelum patch).
+  const dataUrlToBlobUrl = (dataUrl) => {
+    try {
+      if (!dataUrl || !dataUrl.startsWith('data:')) return null;
+      const comma = dataUrl.indexOf(',');
+      if (comma < 0) return null;
+      const mime = (dataUrl.slice(0, comma).match(/data:([^;]+)/) || [])[1]
+        || 'application/pdf';
+      const bin = atob(dataUrl.slice(comma + 1));
+      const bytes = new Uint8Array(bin.length);
+      for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+      return URL.createObjectURL(new Blob([bytes], { type: mime }));
+    } catch {
+      return null;
+    }
+  };
 
   useEffect(() => {
     if (isOpen && modul && id) {
@@ -18,6 +50,7 @@ export default function DocumentPreviewModal({ isOpen, onClose, modul, id, title
     } else {
       // Reset state saat modal ditutup
       setDocData(null);
+      setPdfBlobUrl(null);
       setErrorMessage('');
       setZoomLevel(1);
       setRotation(0);
@@ -27,10 +60,12 @@ export default function DocumentPreviewModal({ isOpen, onClose, modul, id, title
   const loadDocument = async () => {
     setIsLoading(true);
     setErrorMessage('');
+    setPdfBlobUrl(null);
     try {
       const res = await api.getDokumenPreview(modul, id);
       if (res && res.success) {
         setDocData(res);
+        if (res.is_pdf) setPdfBlobUrl(dataUrlToBlobUrl(res.data_url));
       } else {
         setErrorMessage(res?.message || 'Dokumen tidak dapat dimuat dari server.');
       }
@@ -43,9 +78,12 @@ export default function DocumentPreviewModal({ isOpen, onClose, modul, id, title
   };
 
   const handleDownload = () => {
-    if (!docData?.data_url) return;
+    // PDF: pakai blob-URL bila ada (unduhan data-URL di WebView
+    // sering diam-diam gagal); selain itu data-URL seperti semula.
+    const href = (docData?.is_pdf && pdfBlobUrl) || docData?.data_url;
+    if (!href) return;
     const a = document.createElement('a');
-    a.href = docData.data_url;
+    a.href = href;
     a.download = docData.nama_dokumen || 'dokumen_pendukung';
     document.body.appendChild(a);
     a.click();
@@ -244,10 +282,10 @@ export default function DocumentPreviewModal({ isOpen, onClose, modul, id, title
             </div>
           </div>
         ) : docData?.is_pdf ? (
-          /* PDF Viewer In-App */
+          /* PDF Viewer In-App (blob-URL; fallback data-URL) */
           <div style={{ width: '100%', height: '100%', display: 'flex', flexDirection: 'column' }}>
             <iframe
-              src={docData.data_url}
+              src={pdfBlobUrl || docData.data_url}
               title={docData.nama_dokumen || 'PDF Preview'}
               style={{
                 width: '100%',
