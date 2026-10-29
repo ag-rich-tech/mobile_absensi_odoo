@@ -6,9 +6,11 @@ import {
   PlaneTakeoff, Timer, CircleDollarSign, ChevronLeft, Info, ShieldAlert,
   Receipt, HelpCircle, Coffee, Sparkles, CheckCheck, Megaphone, Bell, Wallet, Users
 } from 'lucide-react';
-import AttendanceModal from '../components/AttendanceModal';
 import BottomNav from '../components/BottomNav';
 import api, { getServerDate, formatTime24, formatDurasiMenit } from '../services/api';
+import {
+  setDashboardNav, consumePendingDashboardNav,
+} from '../services/navState';
 import { checkFakeGps } from '../services/fakeGpsService.js';
 import {
   startBackgroundTracking,
@@ -158,7 +160,8 @@ const getTimeTheme = (date) => {
 
 export default function DashboardPage({ user: initialUser, onLogout, onStartAttendance, onNavigateToEnrollment }) {
   const [currentTime, setCurrentTime] = useState(getServerDate());
-  const [activeNav, setActiveNav] = useState('home'); // 'home' | 'history' | 'profile'
+  // Subview awal dari deep link (bila ada) — navState dikonsumsi sekali.
+  const [activeNav, setActiveNav] = useState(() => consumePendingDashboardNav() || 'home');
   const [exitingNav, setExitingNav] = useState(null);
   const screenScrollRef = useRef(null);
 
@@ -182,7 +185,18 @@ export default function DashboardPage({ user: initialUser, onLogout, onStartAtte
     setActiveNav(newNav);
   };
 
-  const [modalType, setModalType] = useState(null); // 'masuk' | 'pulang' | null
+  // Laporkan subview aktif ke registry (back handler Android) + dengar
+  // permintaan kembali-ke-Beranda dari back handler.
+  useEffect(() => {
+    setDashboardNav(activeNav);
+  }, [activeNav]);
+  useEffect(() => {
+    const goHome = () => handleNavBack('home');
+    window.addEventListener('dashboard-back-to-home', goHome);
+    return () => window.removeEventListener('dashboard-back-to-home', goHome);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeNav]);
+
   const [isLoading, setIsLoading] = useState(true);
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [dashboardData, setDashboardData] = useState(null);
@@ -431,24 +445,17 @@ export default function DashboardPage({ user: initialUser, onLogout, onStartAtte
     }
   }, [activeNav]);
 
-  const handleAttendanceSuccess = (result) => {
-    setModalType(null);
-    // Refresh data dashboard riil dari server
-    loadDashboardData();
-  };
-
   const handleLogoutClick = async () => {
+    if (!window.confirm('Keluar dari aplikasi? Anda harus login lagi untuk memakai aplikasi.')) return;
     await api.logout();
     onLogout();
   };
 
   const pegawai = dashboardData?.pegawai || initialUser;
   const jamKerja = dashboardData?.jam_kerja_hari_ini;
-  // Lokasi yang ditampilkan + dipakai modal absensi = lokasi terdekat
-  // (bila GPS sudah jalan), fallback lokasi pertama dari server.
-  const lokasi = nearestOffice || dashboardData?.lokasi_kantor;
+  // Lokasi yang ditampilkan = lokasi terdekat (bila GPS sudah jalan),
+  // fallback lokasi pertama dari server.
   const absensiHariIni = dashboardData?.absensi_hari_ini;
-  const stats = dashboardData?.statistik_bulan_ini;
   const riwayatList = dashboardData?.riwayat_terakhir || [];
 
   const sudahMasukRaw = absensiHariIni?.sudah_masuk;
@@ -479,6 +486,10 @@ export default function DashboardPage({ user: initialUser, onLogout, onStartAtte
   // tetap hanya di jalur check-in/out. Throttle 1 jam dipakai BERSAMA
   // watcher background (backgroundTracking.js) supaya total kiriman ke
   // server maksimal 1/jam, baik dari foreground maupun background.
+  // Reset throttle HANYA pada transisi tidak-aktif -> aktif (sesi baru):
+  // reset tiap efek jalan (termasuk remount dashboardKey) menggugurkan
+  // batas 1/jam. Throttle sendiri kini persisten (localStorage).
+  const sessionActiveRef = useRef(false);
   useEffect(() => {
     // Hanya selama sesi clock-in AKTIF (sudah masuk tapi BELUM
     // pulang). Hari yang sudah pulang punya sudahMasuk=true (kartu
@@ -486,9 +497,14 @@ export default function DashboardPage({ user: initialUser, onLogout, onStartAtte
     // ini efek tracking ikut jalan sesudah check-out: server menolak
     // ping-nya (NOT_CHECKED_IN) sambil menguras baterai + menyalakan
     // foreground service tanpa keperluan.
-    if (!sudahMasuk || sudahPulang) return;
+    if (!sudahMasuk || sudahPulang) {
+      sessionActiveRef.current = false;
+      return;
+    }
+    const isFreshSession = !sessionActiveRef.current;
+    sessionActiveRef.current = true;
     let stopped = false;
-    resetTrackingPingThrottle();
+    if (isFreshSession) resetTrackingPingThrottle();
 
     const sendPing = () => {
       if (stopped || !navigator.geolocation) return;
@@ -568,8 +584,8 @@ export default function DashboardPage({ user: initialUser, onLogout, onStartAtte
   // dashboardData.jadwal_ok — KONTRAK, lihat app2-notes). Strict
   // === false: undefined = perilaku lama (tidak ada alarm palsu).
   // Saat gagal, SEMUA tampilan turunan jadwal (banner Day Off, chip
-  // "Hari Libur"/"Tidak Ada Jadwal", subtitle "Jadwal: ..." panel
-  // istirahat) disembunyikan dan diganti banner peringatan — jangan
+  // "Hari Libur"/"Tidak Ada Jadwal", subtitle "Jadwal: ...")
+  // disembunyikan dan diganti banner peringatan — jangan
   // sampai kegagalan muat disajikan sebagai fakta jadwal.
   const jadwalGagalMuat = dashboardData?.jadwal_ok === false;
 
@@ -1269,7 +1285,7 @@ export default function DashboardPage({ user: initialUser, onLogout, onStartAtte
                     <div>
                       <button
                         type="button"
-                        onClick={() => onStartAttendance ? onStartAttendance('masuk') : setModalType('masuk')}
+                        onClick={() => { if (onStartAttendance) onStartAttendance('masuk'); }}
                         style={{
                           width: '100%',
                           padding: '8px 12px',
@@ -1325,7 +1341,7 @@ export default function DashboardPage({ user: initialUser, onLogout, onStartAtte
                       padding: '3px 8px',
                       borderRadius: 'var(--radius-full)'
                     }}>
-                      {absensiHariIni?.status_pulang === 'pulang_cepat' ? `Pulang Cepat ${absensiHariIni.menit_pulang_cepat}m` : 'Pulang Normal'}
+                      {absensiHariIni?.status_pulang === 'pulang_cepat' ? `Pulang Cepat ${formatDurasiMenit(absensiHariIni.menit_pulang_cepat)}` : 'Pulang Normal'}
                     </span>
                   ) : isBatasPulangTerlewati ? (
                     <div>
@@ -1348,7 +1364,7 @@ export default function DashboardPage({ user: initialUser, onLogout, onStartAtte
                       <div>
                         <button
                           type="button"
-                          onClick={() => onStartAttendance ? onStartAttendance('pulang') : setModalType('pulang')}
+                          onClick={() => { if (onStartAttendance) onStartAttendance('pulang'); }}
                           style={{
                             width: '100%',
                             padding: '8px 12px',
@@ -1592,8 +1608,6 @@ export default function DashboardPage({ user: initialUser, onLogout, onStartAtte
                     const aksiAbsen = sudahPulang ? 'masuk' : (sudahMasuk ? 'pulang' : 'masuk');
                     if (onStartAttendance) {
                       onStartAttendance(aksiAbsen);
-                    } else {
-                      setModalType(aksiAbsen);
                     }
                   }}
                   style={{
@@ -2294,16 +2308,6 @@ export default function DashboardPage({ user: initialUser, onLogout, onStartAtte
       {/* Floating Bottom Navigation (Statis di Bawah) */}
       <BottomNav activeNav={activeNav} onChangeNav={handleNavChange} />
 
-      {/* Modal Absensi Riil */}
-      {modalType && (
-        <AttendanceModal
-          type={modalType}
-          user={pegawai}
-          lokasiKantor={lokasi}
-          onClose={() => setModalType(null)}
-          onSuccess={handleAttendanceSuccess}
-        />
-      )}
     </div>
   );
 }

@@ -134,6 +134,25 @@ export default function LemburView({ onBack }) {
   const [keteranganTugas, setKeteranganTugas] = useState(draft0.keteranganTugas || '');
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [formMessage, setFormMessage] = useState({ type: '', text: '' });
+  const [cancelMessage, setCancelMessage] = useState({ type: '', text: '' });
+  const [cancellingId, setCancellingId] = useState(null);
+
+  // Batalkan lembur draft (endpoint baru agen server; bila endpoint
+  // belum ada, error ditampilkan — bukan diam).
+  const handleCancelLembur = async (overtimeId) => {
+    if (!window.confirm('Batalkan pengajuan lembur draft ini?')) return;
+    setCancellingId(overtimeId);
+    setCancelMessage({ type: '', text: '' });
+    try {
+      await api.cancelLembur(overtimeId);
+      setCancelMessage({ type: 'success', text: 'Pengajuan lembur draft dibatalkan.' });
+      loadData();
+    } catch (err) {
+      setCancelMessage({ type: 'error', text: err.message || 'Gagal membatalkan pengajuan lembur.' });
+    } finally {
+      setCancellingId(null);
+    }
+  };
 
   const loadData = async () => {
     setIsLoading(true);
@@ -160,13 +179,14 @@ export default function LemburView({ onBack }) {
       const [h1, m1] = jamMulai.split(':').map(Number);
       const [h2, m2] = jamSelesai.split(':').map(Number);
       let totalMinutes = (h2 * 60 + m2) - (h1 * 60 + m1);
-      if (totalMinutes < 0) {
-        // Melintasi tengah malam (misal lembur 21:00 s/d 01:00)
+      // Selesai <= mulai -> lintas tengah malam (termasuk mulai ==
+      // selesai = 24 jam, sesuai aturan server) — bukan clamp '1.0'.
+      if (totalMinutes <= 0) {
         totalMinutes += 24 * 60;
       }
-      return totalMinutes > 0 ? (totalMinutes / 60).toFixed(1) : '1.0';
+      return (totalMinutes / 60).toFixed(1);
     } catch {
-      return '1.0';
+      return '0.0';
     }
   };
 
@@ -547,6 +567,19 @@ export default function LemburView({ onBack }) {
           </div>
         ) : (
           <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+            {cancelMessage.text && (
+              <div style={{
+                padding: '10px 14px',
+                borderRadius: '12px',
+                backgroundColor: cancelMessage.type === 'error' ? '#fef2f2' : '#f0fdf4',
+                border: `1px solid ${cancelMessage.type === 'error' ? '#fecaca' : '#bbf7d0'}`,
+                color: cancelMessage.type === 'error' ? '#b91c1c' : '#15803d',
+                fontSize: '12px',
+                fontWeight: '600'
+              }}>
+                {cancelMessage.text}
+              </div>
+            )}
             {list.map((item) => (
               <div
                 key={item.id}
@@ -583,22 +616,28 @@ export default function LemburView({ onBack }) {
                   "{item.keterangan_tugas}"
                 </p>
 
-                {item.approval_info?.is_bertingkat && (
-                  <div style={{
-                    marginTop: '2px',
-                    padding: '6px 8px',
-                    borderRadius: '8px',
-                    backgroundColor: '#fff7ed',
-                    border: '1px solid #fed7aa',
-                    fontSize: '10px'
-                  }}>
-                    <span style={{ fontWeight: '800', color: '#c2410c', display: 'block', marginBottom: '2px' }}>
-                      Alur Approval Bertingkat:
-                    </span>
-                    <span style={{ color: '#9a3412', fontWeight: '600' }}>
-                      {item.approval_info.status_label}
-                    </span>
-                  </div>
+                {/* Batalkan hanya untuk draft (state mentah di _raw):
+                    confirm/validate sudah masuk antre approval. */}
+                {item._raw?.state === 'draft' && (
+                  <button
+                    type="button"
+                    onClick={() => handleCancelLembur(item.id)}
+                    disabled={cancellingId === item.id}
+                    style={{
+                      marginTop: '4px',
+                      padding: '7px 12px',
+                      borderRadius: '8px',
+                      border: '1.5px solid #fecdd3',
+                      backgroundColor: '#fff1f2',
+                      color: '#be123c',
+                      fontSize: '11px',
+                      fontWeight: '700',
+                      cursor: 'pointer',
+                      alignSelf: 'flex-start'
+                    }}
+                  >
+                    {cancellingId === item.id ? 'Membatalkan...' : 'Batalkan Pengajuan'}
+                  </button>
                 )}
               </div>
             ))}

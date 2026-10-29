@@ -1,11 +1,11 @@
 import React, { useState, useEffect } from 'react';
 import {
   ArrowLeft, Megaphone, Bell, CheckCircle2, Clock, AlertCircle,
-  FileText, Calendar, Paperclip, ChevronRight, RefreshCw, Eye,
+  FileText, Calendar, ChevronRight, RefreshCw, Eye,
   Sparkles, Pin, Flame, ShieldAlert, Download, X, ExternalLink
 } from 'lucide-react';
 import api from '../../services/api';
-import DocumentPreviewModal from '../DocumentPreviewModal';
+
 
 export default function PengumumanView({ onBack }) {
   const [filter, setFilter] = useState('semua'); // 'semua' | 'belum_dibaca' | 'penting'
@@ -18,14 +18,6 @@ export default function PengumumanView({ onBack }) {
   // State Modal Detail
   const [selectedItem, setSelectedItem] = useState(null);
   const [isDetailLoading, setIsDetailLoading] = useState(false);
-
-  // State In-App Document Preview Modal
-  const [previewDoc, setPreviewDoc] = useState({
-    isOpen: false,
-    modul: 'pengumuman',
-    id: null,
-    title: ''
-  });
 
   const loadPengumuman = async (activeFilter = filter) => {
     setIsLoading(true);
@@ -78,16 +70,6 @@ export default function PengumumanView({ onBack }) {
     } finally {
       setIsDetailLoading(false);
     }
-  };
-
-  const handleOpenDocPreview = (e, item) => {
-    e.stopPropagation();
-    setPreviewDoc({
-      isOpen: true,
-      modul: 'pengumuman',
-      id: item.id,
-      title: item.lampiran_nama || 'Dokumen Pengumuman'
-    });
   };
 
   // Helper warna badge tipe
@@ -601,19 +583,6 @@ export default function PengumumanView({ onBack }) {
                         <span>•</span>
                         <span>{item.pembuat}</span>
                       </div>
-
-                      {item.has_lampiran && (
-                        <span style={{
-                          display: 'inline-flex',
-                          alignItems: 'center',
-                          gap: '3px',
-                          color: '#2563eb',
-                          fontWeight: '700'
-                        }}>
-                          <Paperclip size={11} />
-                          Lampiran
-                        </span>
-                      )}
                     </div>
                   </div>
                 </div>
@@ -812,81 +781,6 @@ export default function PengumumanView({ onBack }) {
                 {selectedItem.konten || 'Tidak ada isi pengumuman.'}
               </div>
 
-              {/* Kartu Dokumen Lampiran jika ada */}
-              {selectedItem.has_lampiran && (
-                <div style={{
-                  marginTop: '18px',
-                  padding: '12px',
-                  backgroundColor: '#f8fafc',
-                  borderRadius: '14px',
-                  border: '1px solid #e2e8f0'
-                }}>
-                  <div style={{
-                    display: 'flex',
-                    alignItems: 'center',
-                    justifyContent: 'space-between',
-                    marginBottom: '8px'
-                  }}>
-                    <span style={{ fontSize: '11px', fontWeight: '800', color: '#475569', display: 'flex', alignItems: 'center', gap: '4px' }}>
-                      <Paperclip size={12} />
-                      Dokumen Surat / Berkas
-                    </span>
-                  </div>
-
-                  <div style={{
-                    backgroundColor: '#ffffff',
-                    padding: '10px 12px',
-                    borderRadius: '10px',
-                    border: '1px solid #e2e8f0',
-                    display: 'flex',
-                    alignItems: 'center',
-                    justifyContent: 'space-between',
-                    gap: '10px'
-                  }}>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: '8px', minWidth: 0 }}>
-                      <FileText size={18} color="#2563eb" style={{ shrink: 0 }} />
-                      <div style={{ minWidth: 0 }}>
-                        <p style={{
-                          fontSize: '11px',
-                          fontWeight: '700',
-                          color: '#0f172a',
-                          margin: 0,
-                          overflow: 'hidden',
-                          textOverflow: 'ellipsis',
-                          whiteSpace: 'nowrap'
-                        }}>
-                          {selectedItem.lampiran_nama || 'Dokumen_Lampiran.pdf'}
-                        </p>
-                        <span style={{ fontSize: '9px', color: '#94a3b8' }}>
-                          Buka langsung di aplikasi
-                        </span>
-                      </div>
-                    </div>
-
-                    <button
-                      type="button"
-                      onClick={(e) => handleOpenDocPreview(e, selectedItem)}
-                      style={{
-                        padding: '6px 12px',
-                        backgroundColor: '#eff6ff',
-                        color: '#2563eb',
-                        border: '1px solid #bfdbfe',
-                        borderRadius: '8px',
-                        fontSize: '11px',
-                        fontWeight: '700',
-                        cursor: 'pointer',
-                        display: 'flex',
-                        alignItems: 'center',
-                        gap: '4px',
-                        flexShrink: 0
-                      }}
-                    >
-                      <Eye size={12} />
-                      Buka
-                    </button>
-                  </div>
-                </div>
-              )}
             </div>
 
             {/* Modal Footer */}
@@ -916,15 +810,6 @@ export default function PengumumanView({ onBack }) {
           </div>
         </div>
       )}
-
-      {/* In-App Preview Modal untuk Dokumen Lampiran Pengumuman */}
-      <DocumentPreviewModal
-        isOpen={previewDoc.isOpen}
-        onClose={() => setPreviewDoc({ ...previewDoc, isOpen: false })}
-        modul={previewDoc.modul}
-        id={previewDoc.id}
-        title={previewDoc.title}
-      />
     </div>
   );
 }

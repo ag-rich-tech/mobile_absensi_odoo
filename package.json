@@ -22,7 +22,8 @@
     "leaflet": "^1.9.4",
     "lucide-react": "^1.52.0",
     "react": "^19.2.8",
-    "react-dom": "^19.2.8"
+    "react-dom": "^19.2.8",
+    "@capacitor/app": "^7.0.2"
   },
   "devDependencies": {
     "@types/react": "^19.2.18",

@@ -148,9 +148,10 @@ export async function getKehadiranBawahanStatus() {
   try {
     const res = await odooCall('/subordinates/list');
     const subs = (res.data && res.data.employees) || [];
+    // Server TIDAK mengirim flag is_enabled (tidak ada setting semacam
+    // itu) — jangan hardcode true; view tidak lagi bercabang padanya.
     return {
       success: true,
-      is_enabled: true,
       is_atasan: subs.length > 0,
       total_bawahan: subs.length,
     };
@@ -197,13 +198,42 @@ export async function getKehadiranBawahanList(bulanParam) {
         try {
           const m = await odooCall('/subordinates/month', { employee_id: s.id, month, year });
           const st = m.data && m.data.statistik;
-          // Server 1.2.20 mengirim statistik nyata; pakai itu bila ada,
-          // fallback ke hitungan array (perilaku lama) bila tidak ada.
-          hadir = st ? (st.hadir || 0) : ((m.data && m.data.attendance) || []).length;
-          izin = ((m.data && m.data.leaves) || []).length;
+          const leaves = (m.data && m.data.leaves) || [];
+          const att = (m.data && m.data.attendance) || [];
+          // Izin & sakit dihitung PER-HARI (sama satuannya dengan
+          // kalender detail): tiap cuti dipotong ke bulan tampil, lalu
+          // dihitung harinya; sakit dipisah dari izin (dulu izin =
+          // jumlah RECORD sehingga 1 cuti sakit 3 hari tampil Iz=1
+          // sekaligus Sk=3). Dinas masuk kolom izin (daftar ini tak
+          // punya kolom dinas sendiri).
+          const monthStart = `${year}-${pad2(month)}-01`;
+          const monthEnd = `${year}-${pad2(month)}-${new Date(year, month, 0).getDate()}`;
+          let izinDays = 0;
+          let sakitDays = 0;
+          for (const l of leaves) {
+            const f = (l.date_from || '').slice(0, 10);
+            const t = (l.date_to || '').slice(0, 10);
+            if (!f || !t) continue;
+            const a = f < monthStart ? monthStart : f;
+            const b = t > monthEnd ? monthEnd : t;
+            if (b < a) continue;
+            const days = Math.round((new Date(`${b}T00:00:00`) - new Date(`${a}T00:00:00`)) / 86400000) + 1;
+            const tName = (l.type && l.type.name) || l.type_name || '';
+            if (/sakit/i.test(tName)) sakitDays += days;
+            else izinDays += days;
+          }
+          // Hadir fallback = hari distinct yang punya check-out (bukan
+          // attendance.length — satu hari bisa punya banyak baris).
+          const hadirDays = new Set(
+            att.filter((x) => x.check_out).map((x) => {
+              try { return fmtYMDWib(utcToWib(x.check_in)); } catch { return ''; }
+            }).filter(Boolean),
+          ).size;
+          hadir = st ? (st.hadir || 0) : hadirDays;
+          izin = izinDays;
           terlambat = st ? (st.terlambat || 0) : 0;
           tidakHadir = st ? (st.tidak_hadir || 0) : 0;
-          sakit = st ? (st.sakit || 0) : 0;
+          sakit = st ? (st.sakit || 0) : sakitDays;
         } catch {
           // ringkasan boleh kosong bila bulan itu gagal dimuat
         }
@@ -248,11 +278,23 @@ function normalizeOrgNode(node) {
   };
 }
 
+// Cache org chart per sesi login: kunci user+token sehingga logout
+// (token hilang) otomatis menginvalidasi — user berikutnya tidak pernah
+// melihat pohon user sebelumnya.
+let orgChartCache = null;
+export function clearOrgChartCache() { orgChartCache = null; }
+
 export async function getTeamOrgChart() {
   try {
+    const cacheKey = `${getStoredUser()?.id || ''}|${getToken() || ''}`;
+    if (orgChartCache && orgChartCache.key === cacheKey) {
+      return { success: true, tree: orgChartCache.tree, me_id: orgChartCache.me_id, cached: true };
+    }
     const res = await odooCall('/team/org-chart');
     const tree = ((res.data && res.data.tree) || []).map(normalizeOrgNode).filter(Boolean);
-    return { success: true, tree, me_id: (res.data && res.data.me_id) || null };
+    const me_id = (res.data && res.data.me_id) || null;
+    orgChartCache = { key: cacheKey, tree, me_id };
+    return { success: true, tree, me_id };
   } catch (err) {
     throwIfAuth(err);
     console.error('getTeamOrgChart error:', err);
@@ -328,11 +370,12 @@ export async function getKalenderBawahan(bawahanId, bulanParam) {
         jam_pulang: fmtHMWib(outD),
         shift: '',
         // Status masuk/pulang per tanggal TIDAK DIKETAHUI app-side
-        // (jadwal bawahan tak tersedia lewat API) — null, bukan hardcode
-        // 'tepat_waktu'/0 yang membuat semua hari tampak tepat waktu.
+        // (jadwal bawahan tak tersedia lewat API) — null, bukan vonis
+        // 'normal'/'tepat_waktu' palsu. View menampilkan 'Jadwal tidak
+        // tersedia' bila null.
         status_masuk: null,
         menit_terlambat: null,
-        status_pulang: outD ? 'normal' : null,
+        status_pulang: null,
         menit_pulang_cepat: null,
       };
     } else if (lv) {
@@ -511,7 +554,13 @@ export async function ajukanReimbursement(payload) {
     ...(jenis ? { product_id: jenis } : {}),
     ...(docBase64 ? { attachment: docBase64, filename: docName } : {}),
   });
-  return { success: true, message: res.message || 'Pengajuan klaim reimbursement berhasil dikirim.' };
+  return {
+    success: true,
+    message: res.message || 'Pengajuan klaim reimbursement berhasil dikirim.',
+    // Server melaporkan apakah lampiran benar tersimpan; view memberi
+    // peringatan bila dokumen dikirim tapi attachment_saved === false.
+    attachment_saved: (res.data && res.data.attachment_saved) ?? null,
+  };
 }
 
 export async function approveReimbursement(sheetId, action, reason) {
@@ -724,7 +773,9 @@ export async function ajukanDinas(payload) {
     tanggal_mulai: tglMulai,
     tanggal_selesai: tglSelesai,
     ...(anggaran != null ? { anggaran_biaya: anggaran } : {}),
-    ...(dokumen ? { dokumen, dokumen_nama: dokumenNama } : {}),
+    // Server membaca `filename` (dokumen_nama saja diabaikan) —
+    // kirim keduanya.
+    ...(dokumen ? { dokumen, filename: dokumenNama, dokumen_nama: dokumenNama } : {}),
   });
   return { success: true, message: res.message || 'Pengajuan dinas berhasil dikirim.' };
 }
@@ -838,6 +889,7 @@ export async function getPenugasan(opts = {}) {
     penugasan: items,
     tugas_berjalan: items.filter((i) => i.status === 'berjalan' || i.status === 'menunggu_review'),
     tugas_selesai: items.filter((i) => i.status === 'selesai'),
+    tugas_dibatalkan: items.filter((i) => i.status === 'dibatalkan'),
     tugas_tim: items,
     statistik: d.statistik || { total_semua: 0, total_berjalan: 0, total_selesai: 0 },
   };
@@ -924,25 +976,33 @@ export async function getDokumenPreview(a, b) {
 }
 
 export async function updateFotoProfil(formData) {
-  let fotoUrl = null;
   const file = formData instanceof FormData ? formData.get('foto_profil') : null;
-  if (file && file.size > 0) {
-    const b64 = await fileToBase64(file);
-    fotoUrl = `data:image/jpeg;base64,${b64}`;
-    // Kirim ke server (bukan hanya localStorage seperti dulu).
-    await odooCall('/employee/photo', { photo: b64 });
-    const user = getStoredUser();
-    if (user) {
-      user.foto_profil = fotoUrl;
-      setStoredUser(user);
-    }
+  if (!file) throw new Error('Tidak ada file foto yang dipilih.');
+  // File 0-byte -> error eksplisit, bukan sukses palsu.
+  if (file.size === 0) throw new Error('File foto kosong (0 byte). Pilih foto lain.');
+  const b64 = await fileToBase64(file);
+  // Kirim ke server (bukan hanya localStorage seperti dulu).
+  await odooCall('/employee/photo', { photo: b64 });
+  // Muat ulang foto dari server (path foto + token) — JANGAN simpan
+  // base64 data-URL di localStorage (membengkak + basi).
+  let foto = null;
+  try {
+    const prof = await odooCall('/employee/profile');
+    const emp = prof && prof.data && prof.data.employee;
+    if (emp && emp.photo) foto = photoUrl(emp.photo, getToken());
+  } catch {
+    // Profil gagal dimuat ulang: pakai foto lama (bukan base64 baru).
+    foto = getStoredUser()?.foto_profil || null;
+  }
+  const user = getStoredUser();
+  if (user && foto) {
+    user.foto_profil = foto;
+    setStoredUser(user);
   }
   return {
     success: true,
-    // View membaca `foto_profil`; adapter lama hanya mengembalikan
-    // `foto_url`, sehingga avatar tidak berubah saat simpan.
-    foto_url: fotoUrl,
-    foto_profil: fotoUrl,
+    foto_url: foto,
+    foto_profil: foto,
     message: 'Foto profil berhasil diperbarui.',
   };
 }

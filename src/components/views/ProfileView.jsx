@@ -5,7 +5,7 @@ import {
   ChevronRight, Camera, RefreshCw, Check, X,
   CalendarDays, Award, TrendingUp, Navigation
 } from 'lucide-react';
-import api, { getOrCreateDeviceId } from '../../services/api';
+import api, { getOrCreateDeviceId, isAuthError } from '../../services/api';
 
 export default function ProfileView({ user, onBack, onLogout, onOpenDenda, onOpenJadwal, onPhotoUpdated }) {
   const [showPasswordForm, setShowPasswordForm] = useState(false);
@@ -15,9 +15,10 @@ export default function ProfileView({ user, onBack, onLogout, onOpenDenda, onOpe
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [message, setMessage] = useState({ type: '', text: '' });
 
-  // State Skor KPI Periode Terbaru
+  // State Skor KPI Periode Terbaru (gagal muat = state error, bukan diam).
   const [kpiData, setKpiData] = useState(user?.kpi_terbaru || null);
   const [isLoadingKpi, setIsLoadingKpi] = useState(!user?.kpi_terbaru);
+  const [kpiError, setKpiError] = useState('');
 
   useEffect(() => {
     if (user?.kpi_terbaru) {
@@ -31,9 +32,19 @@ export default function ProfileView({ user, onBack, onLogout, onOpenDenda, onOpe
       .then(res => {
         if (isMounted && res.success) {
           setKpiData(res.data);
+        } else if (isMounted && !res.success) {
+          setKpiError(res.message || 'Gagal memuat evaluasi kinerja.');
         }
       })
-      .catch(() => {})
+      .catch((err) => {
+        if (isMounted) {
+          if (isAuthError(err)) {
+            window.dispatchEvent(new CustomEvent('auth-expired'));
+          } else {
+            setKpiError(err.message || 'Gagal memuat evaluasi kinerja.');
+          }
+        }
+      })
       .finally(() => {
         if (isMounted) setIsLoadingKpi(false);
       });
@@ -83,6 +94,8 @@ export default function ProfileView({ user, onBack, onLogout, onOpenDenda, onOpe
       const res = await api.updateFotoProfil(formData);
 
       if (res.success) {
+        // Revoke blob preview (sebelumnya hanya di-cancel yang revoke).
+        if (previewFoto) URL.revokeObjectURL(previewFoto);
         setFotoProfilUrl(res.foto_profil);
         setPreviewFoto(null);
         setFileFoto(null);
@@ -93,7 +106,11 @@ export default function ProfileView({ user, onBack, onLogout, onOpenDenda, onOpe
         setTimeout(() => setFotoMessage({ type: '', text: '' }), 3500);
       }
     } catch (err) {
-      setFotoMessage({ type: 'error', text: err.message || 'Gagal menyimpan foto profil.' });
+      if (isAuthError(err)) {
+        window.dispatchEvent(new CustomEvent('auth-expired'));
+      } else {
+        setFotoMessage({ type: 'error', text: err.message || 'Gagal menyimpan foto profil.' });
+      }
     } finally {
       setIsUploadingFoto(false);
     }
@@ -129,7 +146,11 @@ export default function ProfileView({ user, onBack, onLogout, onOpenDenda, onOpe
         setTimeout(() => setShowPasswordForm(false), 2000);
       }
     } catch (err) {
-      setMessage({ type: 'error', text: err.message || 'Gagal mengubah kata sandi.' });
+      if (isAuthError(err)) {
+        window.dispatchEvent(new CustomEvent('auth-expired'));
+      } else {
+        setMessage({ type: 'error', text: err.message || 'Gagal mengubah kata sandi.' });
+      }
     } finally {
       setIsSubmitting(false);
     }
@@ -419,6 +440,17 @@ export default function ProfileView({ user, onBack, onLogout, onOpenDenda, onOpe
             <div style={{ padding: '8px 0', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px', color: 'var(--text-muted)' }}>
               <RefreshCw size={14} className="animate-spin" />
               <span style={{ fontSize: '11px', fontWeight: '600' }}>Memuat evaluasi kinerja...</span>
+            </div>
+          ) : kpiError ? (
+            <div style={{ padding: '12px', textAlign: 'center', backgroundColor: '#fef2f2', border: '1px solid #fecaca', borderRadius: '10px' }}>
+              <p style={{ fontSize: '11px', color: '#b91c1c', margin: '0 0 8px', fontWeight: '600' }}>{kpiError}</p>
+              <button
+                type="button"
+                onClick={() => { setKpiError(''); setIsLoadingKpi(true); api.getKpiTerbaru().then((res) => { if (res.success) setKpiData(res.data); else setKpiError(res.message || 'Gagal memuat evaluasi kinerja.'); }).catch((err) => { if (isAuthError(err)) window.dispatchEvent(new CustomEvent('auth-expired')); else setKpiError(err.message || 'Gagal memuat evaluasi kinerja.'); }).finally(() => setIsLoadingKpi(false)); }}
+                style={{ padding: '6px 14px', borderRadius: '8px', backgroundColor: '#dc2626', border: 'none', color: '#ffffff', fontSize: '11px', fontWeight: '700', cursor: 'pointer' }}
+              >
+                Coba lagi
+              </button>
             </div>
           ) : kpiData ? (
             <div>
@@ -815,7 +847,7 @@ export default function ProfileView({ user, onBack, onLogout, onOpenDenda, onOpe
       {/* Tombol Logout */}
       <button
         type="button"
-        onClick={onLogout}
+        onClick={() => { if (window.confirm('Keluar dari aplikasi? Anda harus login lagi untuk memakai aplikasi.')) onLogout(); }}
         style={{
           width: '100%',
           height: '46px',

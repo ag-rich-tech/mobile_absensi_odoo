@@ -10,6 +10,12 @@ import AccountDeactivatedScreen from './components/AccountDeactivatedScreen';
 import { getToken, getStoredUser, setStoredUser, clearAuth } from './services/api';
 import api from './services/api';
 import { preloadAttendanceSounds } from './services/soundService';
+import { App as CapacitorApp } from '@capacitor/app';
+import { clearAllDrafts } from './services/draftService';
+import {
+  getDashboardNav, requestDashboardBackToHome,
+  setPendingDashboardNav, deepLinkToDashboardNav,
+} from './services/navState';
 
 function App() {
   const [user, setUser] = useState(() => {
@@ -40,17 +46,12 @@ function App() {
   });
 
   // C5 (restore descriptor, jalur dashboard): bila server MENGIRIM
-  // face_descriptor milik user login dan user tersimpan belum
-  // memilikinya, simpan ke localStorage. Dijaga ketat: hanya
-  // descriptor non-kosong (array berisi / string non-kosong), hanya
-  // bila tersimpan belum punya, dan hanya dari res.pegawai dashboard
-  // sesi login sendiri — tidak pernah descriptor orang lain.
-  // CATATAN: saat ini server SENGAJA tidak pernah mengirim
-  // face_descriptor dan api.js tidak memetakannya, sehingga hook ini
-  // no-op sampai (a) server mengirimkannya (keputusan agen server)
-  // dan (b) api.js memetakannya ke pegawai (agen app-1). Restore
-  // penuh di login/getMe tetap milik api.js — ini hanya jembatan
-  // jalur dashboard (getMe-equivalent app sesudah login).
+  // face_descriptor milik user login (sejak ag 1.2.23 server memang
+  // mengirimnya; api.js mem-parse string JSON-nya) dan user tersimpan
+  // belum memilikinya, simpan ke localStorage. Dijaga ketat: hanya
+  // descriptor non-kosong, hanya bila tersimpan belum punya, dan hanya
+  // dari res.pegawai dashboard sesi login sendiri — tidak pernah
+  // descriptor orang lain.
   const restoreFaceDescriptor = (pegawai) => {
     const desc = pegawai?.face_descriptor;
     const incomingValid = Array.isArray(desc) ? desc.length > 0 : Boolean(desc);
@@ -155,6 +156,7 @@ function App() {
     } catch {
       // Abaikan error jaringan saat logout
     }
+    clearAllDrafts();
     clearAuth();
     setUser(null);
     setCurrentScreen('login');
@@ -172,19 +174,25 @@ function App() {
   const screenRef = useRef(currentScreen);
   screenRef.current = currentScreen;
 
-  // Tombol Back Android (Capacitor App backButton, bila tersedia).
-  // Diakses lewat window.Capacitor — TANPA import statis @capacitor/app
-  // (paket itu tidak terpasang; import statis akan menggagalkan build).
-  // Subview (location_check / attendance_capture / face_enrollment)
-  // → kembali ke dashboard; login → welcome; dashboard/welcome →
-  // perilaku default Android (keluar aplikasi via exitApp, padanan
-  // back pada activity root). Di web (tanpa Capacitor) tidak aktif.
+  // Tombol Back Android (plugin @capacitor/app — wajib npm install +
+  // npx cap sync sebelum rebuild APK). Sadar subview DashboardPage
+  // (registry navState): subview -> kembali ke Beranda; Beranda ->
+  // exitApp. Layar alur presensi -> dashboard; login -> welcome.
+  // Deep link (appUrlOpen): segmen dikenal -> subview itu (atau
+  // Beranda bila belum login — pending dikonsumsi DashboardPage saat
+  // mount sesudah login); segmen tak dikenal -> Beranda.
   useEffect(() => {
-    const AppPlugin = window.Capacitor?.Plugins?.App;
-    if (!AppPlugin || typeof AppPlugin.addListener !== 'function') return undefined;
+    let backHandle = null;
+    let linkHandle = null;
     const onBackButton = () => {
       const screen = screenRef.current;
-      if (
+      if (screen === 'dashboard') {
+        if (getDashboardNav() !== 'home') {
+          requestDashboardBackToHome();
+        } else if (typeof CapacitorApp.exitApp === 'function') {
+          CapacitorApp.exitApp();
+        }
+      } else if (
         screen === 'location_check'
         || screen === 'attendance_capture'
         || screen === 'face_enrollment'
@@ -192,26 +200,30 @@ function App() {
         navigateToDashboard();
       } else if (screen === 'login') {
         setCurrentScreen('welcome');
-      } else if (typeof AppPlugin.exitApp === 'function') {
-        AppPlugin.exitApp();
+      } else if (typeof CapacitorApp.exitApp === 'function') {
+        CapacitorApp.exitApp();
       }
     };
-    // Capacitor 5+: addListener mengembalikan Promise<handle>;
-    // versi lama mengembalikan handle langsung. Tangani keduanya.
-    let handleOrPromise = null;
+    const onAppUrlOpen = ({ url }) => {
+      const nav = deepLinkToDashboardNav(url);
+      setPendingDashboardNav(nav);
+      navigateToDashboard();
+    };
     try {
-      handleOrPromise = AppPlugin.addListener('backButton', onBackButton);
+      const p1 = CapacitorApp.addListener('backButton', onBackButton);
+      if (p1 && typeof p1.then === 'function') {
+        p1.then((h) => { backHandle = h; }).catch(() => {});
+      } else { backHandle = p1; }
+      const p2 = CapacitorApp.addListener('appUrlOpen', onAppUrlOpen);
+      if (p2 && typeof p2.then === 'function') {
+        p2.then((h) => { linkHandle = h; }).catch(() => {});
+      } else { linkHandle = p2; }
     } catch {
-      return undefined;
+      // Bukan Android / plugin belum sync — abaikan, web tetap jalan.
     }
     return () => {
-      if (handleOrPromise && typeof handleOrPromise.then === 'function') {
-        handleOrPromise
-          .then((h) => { if (h && typeof h.remove === 'function') h.remove(); })
-          .catch(() => {});
-      } else if (handleOrPromise && typeof handleOrPromise.remove === 'function') {
-        handleOrPromise.remove();
-      }
+      if (backHandle && typeof backHandle.remove === 'function') backHandle.remove();
+      if (linkHandle && typeof linkHandle.remove === 'function') linkHandle.remove();
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);

@@ -5,13 +5,15 @@ import {
   HelpCircle, Camera, MapPin, RefreshCw, AlertTriangle, ShieldCheck,
   CheckCircle, MessageSquareWarning, Eye, Calendar, Info
 } from 'lucide-react';
-import api from '../../services/api';
+import api, { getStoredUser } from '../../services/api';
+import { loadDraft, saveDraft, clearDraft, DRAFT_KEYS } from '../../services/draftService';
 import DocumentPreviewModal from '../DocumentPreviewModal';
 
 const KATEGORI_OPTIONS = [
   { id: 'gagal_absen_masuk', label: 'Gagal Absen Masuk', desc: 'Kendala saat check-in kehadiran pagi' },
   { id: 'gagal_absen_pulang', label: 'Gagal Absen Pulang', desc: 'Kendala saat check-out kepulangan' },
   { id: 'gps_tidak_terdeteksi', label: 'GPS / Lokasi Error', desc: 'Sinyal GPS hilang atau titik melompat' },
+  { id: 'gps_tidak_akurat', label: 'GPS Tidak Akurat', desc: 'Titik lokasi meleset dari posisi sebenarnya' },
   { id: 'kamera_face_error', label: 'Kamera / Wajah Gagal', desc: 'Kamera gelap atau face recognition gagal' },
   { id: 'sistem_error', label: 'Gangguan Aplikasi / Server', desc: 'Aplikasi tertutup sendiri atau jaringan putus' },
   { id: 'lainnya', label: 'Kendala Lainnya', desc: 'Masalah lain seputar akun atau aplikasi' },
@@ -39,15 +41,23 @@ export default function MasalahView({ onBack }) {
   const [selectedItem, setSelectedItem] = useState(null);
   const [previewFoto, setPreviewFoto] = useState({ isOpen: false, id: null });
 
-  // Form State
-  const [kategori, setKategori] = useState('gagal_absen_masuk');
-  const [judul, setJudul] = useState('');
-  const [tanggalKejadian, setTanggalKejadian] = useState(new Date().toISOString().split('T')[0]);
-  const [jamKejadian, setJamKejadian] = useState(() => {
+  // Form State (draf persisten — foto tidak ikut, tidak bisa JSON).
+  const draftKey = getStoredUser()?.id ? DRAFT_KEYS.masalah(getStoredUser().id) : null;
+  const draft0 = draftKey ? loadDraft(draftKey, {}) : {};
+  const [kategori, setKategori] = useState(draft0.kategori || 'gagal_absen_masuk');
+  const [judul, setJudul] = useState(draft0.judul || '');
+  const [tanggalKejadian, setTanggalKejadian] = useState(draft0.tanggalKejadian || new Date().toISOString().split('T')[0]);
+  const [jamKejadian, setJamKejadian] = useState(draft0.jamKejadian || (() => {
     const d = new Date();
     return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
-  });
-  const [deskripsi, setDeskripsi] = useState('');
+  })());
+  const [deskripsi, setDeskripsi] = useState(draft0.deskripsi || '');
+
+  // Simpan draf tiap perubahan field.
+  useEffect(() => {
+    if (!draftKey) return;
+    saveDraft(draftKey, { kategori, judul, tanggalKejadian, jamKejadian, deskripsi });
+  }, [draftKey, kategori, judul, tanggalKejadian, jamKejadian, deskripsi]);
   const [fotoBukti, setFotoBukti] = useState(null);
   const [previewBukti, setPreviewBukti] = useState(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -123,6 +133,7 @@ export default function MasalahView({ onBack }) {
 
       if (res.success) {
         setAlertMsg({ type: 'success', text: res.message || 'Pengajuan kendala berhasil dikirim!' });
+        if (draftKey) clearDraft(draftKey);
         // Reset form
         setJudul('');
         setDeskripsi('');
@@ -1054,11 +1065,6 @@ export default function MasalahView({ onBack }) {
                   <div style={{ fontSize: '12px', color: '#1e293b', lineHeight: 1.5, marginTop: '4px', fontWeight: '500' }}>
                     {selectedItem.catatan_admin || 'Tidak ada catatan tertulis dari admin.'}
                   </div>
-                  {selectedItem.tanggal_diproses && (
-                    <div style={{ fontSize: '10px', color: '#94a3b8', marginTop: '8px' }}>
-                      Diproses pada: {selectedItem.tanggal_diproses} WIB
-                    </div>
-                  )}
                 </>
               )}
             </div>

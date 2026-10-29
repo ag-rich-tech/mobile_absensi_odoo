@@ -54,9 +54,41 @@ export default function ApprovalView({ onBack }) {
     }
   };
 
-  const handleLoadMore = () => {
+  // Muat lagi memakai count TERFILTER: halaman diambil berulang sampai
+  // daftar terfilter bertambah atau server habis (dulu satu halaman
+  // tanpa item terfilter pun dianggap selesai).
+  const handleLoadMore = async () => {
     if (!hasMore || isLoadingMore) return;
-    loadApprovals(activeTab, true);
+    setIsLoadingMore(true);
+    setErrorMsg('');
+    try {
+      const before = filteredItems.length;
+      let acc = [...items];
+      let offset = items.length;
+      let more = hasMore;
+      let guard = 0;
+      while (more && guard < 10) {
+        guard++;
+        const res = await api.getApprovals(activeTab, { limit: 50, offset });
+        if (!res.success) {
+          setErrorMsg(res.message || 'Gagal memuat halaman berikutnya.');
+          break;
+        }
+        const next = res.data || [];
+        offset += next.length;
+        acc = [...acc, ...next];
+        setTotalCount(typeof res.count === 'number' ? res.count : null);
+        setHasMore(!!res.has_more);
+        more = !!res.has_more;
+        if (acc.filter(matchFilter).length > before) break;
+        if (next.length === 0) break;
+      }
+      setItems(acc);
+    } catch (err) {
+      setErrorMsg(err.message || 'Terjadi gangguan jaringan saat memuat pengajuan.');
+    } finally {
+      setIsLoadingMore(false);
+    }
   };
 
   useEffect(() => {
@@ -133,12 +165,13 @@ export default function ApprovalView({ onBack }) {
 
   // Filter items berdasarkan modul
   // C16: filter dari `tipe` server (fallback modul lama).
-  const filteredItems = items.filter(item => {
+  const matchFilter = (item) => {
     const tipe = item.tipe || item.modul;
     if (filterModul === 'semua') return true;
     if (filterModul === 'izin_cuti') return tipe === 'izin' || tipe === 'cuti';
     return tipe === filterModul;
-  });
+  };
+  const filteredItems = items.filter(matchFilter);
 
   const getModulBadge = (modul) => {
     switch (modul) {
@@ -448,12 +481,16 @@ export default function ApprovalView({ onBack }) {
             </div>
             <div>
               <h4 style={{ fontSize: '14px', fontWeight: '800', color: '#1e293b', margin: 0 }}>
-                {activeTab === 'menunggu' ? 'Tidak Ada Pengajuan Menunggu' : 'Belum Ada Riwayat Aksi'}
+                {items.length > 0 && filteredItems.length === 0
+                  ? 'Tidak Ada Pengajuan untuk Filter Ini'
+                  : (activeTab === 'menunggu' ? 'Tidak Ada Pengajuan Menunggu' : 'Belum Ada Riwayat Aksi')}
               </h4>
               <p style={{ fontSize: '11px', color: '#64748b', margin: '4px 0 0', maxWidth: '280px', lineHeight: 1.4 }}>
-                {activeTab === 'menunggu' 
-                  ? 'Saat ini tidak ada pengajuan izin, cuti, lembur, dinas, atau reimbursement yang menugaskan Anda sebagai approver aktif.'
-                  : 'Pengajuan yang telah Anda setujui atau tolak akan tercatat rapi di halaman ini.'}
+                {items.length > 0 && filteredItems.length === 0
+                  ? 'Ubah filter modul di atas untuk melihat pengajuan lain.'
+                  : (activeTab === 'menunggu'
+                    ? 'Saat ini tidak ada pengajuan izin, cuti, lembur, dinas, atau reimbursement yang menugaskan Anda sebagai approver aktif.'
+                    : 'Pengajuan yang telah Anda setujui atau tolak akan tercatat rapi di halaman ini.')}
               </p>
             </div>
           </div>
@@ -649,8 +686,10 @@ export default function ApprovalView({ onBack }) {
                     </p>
                   </div>
 
-                  {/* Lampiran Dokumen */}
-                  {(detail.dokumen_ada || !!detail.dokumen_url) && (
+                  {/* Lampiran Dokumen — hanya modul yang dikenal route
+                      preview server (cuti/dinas/reimbursement/masalah);
+                      lembur tidak punya dokumen di server. */}
+                  {(detail.dokumen_ada || !!detail.dokumen_url) && ['cuti', 'izin', 'dinas', 'reimbursement', 'masalah'].includes(item.modul) && (
                     <div style={{ marginTop: '4px', paddingTop: '6px', borderTop: '1px dashed #e2e8f0' }}>
                       <button
                         type="button"
@@ -682,77 +721,11 @@ export default function ApprovalView({ onBack }) {
                   )}
                 </div>
 
-                {/* Timeline Alur Persetujuan Bertingkat */}
-                {item.alur_steps && item.alur_steps.length > 0 && (
-                  <div style={{ margin: '0 14px 12px' }}>
-                    <span style={{ fontSize: '10px', fontWeight: '800', color: '#94a3b8', textTransform: 'uppercase', letterSpacing: '0.4px', display: 'block', marginBottom: '6px' }}>
-                      Alur Persetujuan ({item.alur_steps.length} Tahapan):
-                    </span>
-                    <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
-                      {item.alur_steps.map((st, idx) => (
-                        <div 
-                          key={idx}
-                          style={{
-                            display: 'flex',
-                            alignItems: 'center',
-                            justifyContent: 'space-between',
-                            padding: '6px 10px',
-                            borderRadius: '8px',
-                            backgroundColor: st.is_current ? '#fff7ed' : '#f8fafc',
-                            border: st.is_current ? '1px solid #fed7aa' : '1px solid #f1f5f9',
-                            fontSize: '10px'
-                          }}
-                        >
-                          <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-                            <span style={{
-                              width: '16px',
-                              height: '16px',
-                              borderRadius: '4px',
-                              backgroundColor: st.status === 'disetujui' ? '#059669' : (st.status === 'ditolak' ? '#dc2626' : (st.is_current ? '#ea580c' : '#94a3b8')),
-                              color: '#ffffff',
-                              display: 'flex',
-                              alignItems: 'center',
-                              justifyContent: 'center',
-                              fontSize: '9px',
-                              fontWeight: '800'
-                            }}>
-                              {st.step_ke}
-                            </span>
-                            <span style={{ fontWeight: '700', color: '#334155' }}>
-                              {st.approver_nama} ({st.label})
-                            </span>
-                          </div>
-
-                          <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
-                            <span style={{
-                              fontWeight: '700',
-                              color: st.status === 'disetujui' ? '#059669' : (st.status === 'ditolak' ? '#dc2626' : (st.is_current ? '#ea580c' : '#94a3b8'))
-                            }}>
-                              {st.status === 'disetujui' ? 'Setuju' : (st.status === 'ditolak' ? 'Tolak' : (st.is_current ? 'Giliran Aktif' : 'Menunggu'))}
-                            </span>
-                          </div>
-                        </div>
-                      ))}
-                    </div>
-                  </div>
-                )}
-
-                {/* Catatan Tindakan (Pada Tab Riwayat) */}
-                {activeTab === 'riwayat' && item.catatan_saya && (
-                  <div style={{
-                    margin: '0 14px 12px',
-                    padding: '8px 10px',
-                    borderRadius: '8px',
-                    backgroundColor: '#f1f5f9',
-                    fontSize: '10px',
-                    color: '#475569'
-                  }}>
-                    <strong>Catatan Anda:</strong> "{item.catatan_saya}"
-                  </div>
-                )}
-
-                {/* Tombol Aksi Persetujuan (Hanya muncul jika is_current = true & status = menunggu) */}
-                {item.is_current && item.status === 'menunggu' && (
+                {/* Tombol aksi HANYA di tab Menunggu + status menunggu:
+                    item yang sudah diputus (tab Riwayat) tidak boleh
+                    menampilkan tombol aksi (is_current di mapper selalu
+                    true sehingga tidak bisa dipakai sebagai gerbang). */}
+                {activeTab === 'menunggu' && item.status === 'menunggu' && (
                   <div style={{
                     padding: '12px 14px',
                     borderTop: '1px solid #f1f5f9',

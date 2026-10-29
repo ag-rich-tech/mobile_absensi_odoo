@@ -207,6 +207,21 @@ export default function AttendanceCapturePage({
 
         setFaceDetected(true);
 
+        // Liveness: lacak transisi mata terbuka -> tertutup (kedipan)
+        // lewat checkBlink — pola yang sama seperti FaceEnrollmentPage.
+        // Kedipan yang pernah teramati menetap (ref) untuk sesi ini.
+        try {
+          const blinkInfo = checkBlink(detection.landmarks);
+          if (!blinkInfo.isClosed) {
+            eyeWasOpenRef.current = true;
+          } else if (eyeWasOpenRef.current && blinkInfo.isClosed && !hasBlinkedRef.current) {
+            hasBlinkedRef.current = true;
+            setBlinkDetected(true);
+          }
+        } catch {
+          // Deteksi kedipan gagal — jangan matikan verifikasi wajah.
+        }
+
         // Verifikasi kecocokan wajah (1:1 matching dengan masterDescriptor user)
         const masterDescriptor = user?.face_descriptor;
         if (masterDescriptor) {
@@ -272,12 +287,15 @@ export default function AttendanceCapturePage({
     ctx.fillRect(0, height - 36, width, 36);
     ctx.fillStyle = '#ffffff';
     ctx.font = 'bold 13px sans-serif';
-    ctx.fillText(`${user?.nama_lengkap || user?.nip} • ${timeString} WIB • GPS: ${locationData?.distance || 14}m`, 14, height - 14);
+    ctx.fillText(`${user?.nama_lengkap || user?.nip} • ${timeString} WIB • GPS: ${jarakText}`, 14, height - 14);
 
     const dataUrl = canvas.toDataURL('image/jpeg', 0.85);
     setCapturedPhoto(dataUrl);
     return dataUrl;
   };
+
+  // Jarak GPS apa adanya: null = tidak diketahui (bukan '14m' palsu).
+  const jarakText = locationData?.distance != null ? `${locationData.distance}m` : 'tidak diketahui';
 
   // Fallback upload foto dari kamera HP / file picker
   const handleFileSelect = (e) => {
@@ -286,6 +304,16 @@ export default function AttendanceCapturePage({
 
     const reader = new FileReader();
     reader.onload = (event) => {
+      // Foto baru = verifikasi lama gugur (wajah pada foto baru belum
+      // dicocokkan) — reset status match agar tidak lolos dengan
+      // verifikasi foto sebelumnya.
+      setFaceMatched(false);
+      setIsFaceVerified(false);
+      isVerifiedRef.current = false;
+      isAutoSubmittingRef.current = false;
+      hasBlinkedRef.current = false;
+      eyeWasOpenRef.current = false;
+      setBlinkDetected(false);
       setCapturedPhoto(event.target.result);
       setCameraError('');
     };
@@ -316,7 +344,7 @@ export default function AttendanceCapturePage({
     ctx.font = 'bold 15px sans-serif';
     ctx.fillText(`FOTO VERIFIKASI: ${user?.nama_lengkap || user?.nip}`, 24, 350);
     ctx.font = '12px monospace';
-    ctx.fillText(`${timeString} WIB • GPS ${locationData?.distance || 14}m`, 24, 374);
+    ctx.fillText(`${timeString} WIB • GPS ${jarakText}`, 24, 374);
 
     const dataUrl = canvas.toDataURL('image/jpeg', 0.85);
     setCapturedPhoto(dataUrl);
@@ -364,6 +392,16 @@ export default function AttendanceCapturePage({
       }
     }
 
+    // Liveness: bila wajah wajib dan verifikasi lewat kamera live,
+    // kedipan harus pernah teramati (anti foto diam). Jalur file-picker
+    // sudah tertahan gerbang faceMatched di atas, jadi gerbang ini
+    // hanya berlaku untuk verifikasi live.
+    if (hasFaceEnrolled && (faceMatched || isFaceVerified) && !hasBlinkedRef.current) {
+      setErrorMessage('Bukti liveness belum terpenuhi: silakan berkedip sekali di depan kamera, lalu tekan Absen Sekarang.');
+      setIsSubmitting(false);
+      return;
+    }
+
     // C6 (K4): belum PERNAH enroll + wajah wajib → BLOKIR. Jangan
     // kirim clock-in sama sekali (server backstop juga menolak, tapi
     // UI tidak boleh lolos diam-diam dengan foto saja seperti dulu).
@@ -374,11 +412,16 @@ export default function AttendanceCapturePage({
       return;
     }
 
+    // Tanpa koordinat GPS = gagal eksplisit (bukan fallback koordinat
+    // kantor hardcode yang membuat absen tercatat di titik palsu).
+    if (!locationData?.coords) {
+      setErrorMessage('Lokasi GPS tidak tersedia. Aktifkan GPS dan kembali ke halaman cek lokasi.');
+      setIsSubmitting(false);
+      return;
+    }
+
     try {
-      const coords = locationData?.coords || {
-        latitude: -6.143662253255497,
-        longitude: 106.6288537
-      };
+      const coords = locationData.coords;
 
       // Panggil endpoint REST API Laravel dengan data biometrik
       const res = await api.absen({
@@ -388,6 +431,9 @@ export default function AttendanceCapturePage({
         foto: photoData,
         face_matched: hasFaceEnrolled ? finalFaceVerified : true,
         face_similarity: hasFaceEnrolled ? faceSimilarity : null,
+        // Hasil deteksi GPS palsu yang sebenarnya dari LocationCheckPage
+        // (bukan hardcode false) — server mencatatnya di audit.
+        mock_detected: Boolean(locationData?.mock_detected ?? locationData?.isFakeGps),
       });
 
       if (res.success) {
@@ -894,7 +940,7 @@ export default function AttendanceCapturePage({
             zIndex: 4
           }}>
             <MapPin size={12} />
-            <span>{locationData?.distance || 14}m</span>
+            <span>{jarakText}</span>
           </div>
 
           {/* Tombol Ambil Ulang jika foto sudah diambil */}
@@ -905,6 +951,11 @@ export default function AttendanceCapturePage({
                 setCapturedPhoto(null);
                 isVerifiedRef.current = false;
                 isAutoSubmittingRef.current = false;
+                setFaceMatched(false);
+                setIsFaceVerified(false);
+                hasBlinkedRef.current = false;
+                eyeWasOpenRef.current = false;
+                setBlinkDetected(false);
                 startCamera();
               }}
               style={{

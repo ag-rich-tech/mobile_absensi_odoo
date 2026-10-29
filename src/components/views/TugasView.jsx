@@ -1,9 +1,10 @@
 import React, { useState, useEffect } from 'react';
 import { 
-  ChevronLeft, 
-  Briefcase, 
-  Clock, 
-  CheckCircle2, 
+  ChevronLeft,
+  Briefcase,
+  Clock,
+  CheckCircle2,
+  XCircle,
   AlertCircle, 
   RefreshCw, 
   ExternalLink, 
@@ -19,21 +20,36 @@ import {
   Download,
   Info
 } from 'lucide-react';
-import api from '../../services/api';
+import api, { getStoredUser } from '../../services/api';
+import { loadDraft, saveDraft, clearDraft, DRAFT_KEYS } from '../../services/draftService';
 
 export default function TugasView({ onBack }) {
-  const [activeTab, setActiveTab] = useState('berjalan'); // 'berjalan' | 'selesai' | 'tim'
+  const [activeTab, setActiveTab] = useState('berjalan'); // 'berjalan' | 'selesai' | 'dibatalkan' | 'tim'
   // C7: tab 'Tugas Tim' hanya bila scope=team tidak 403.
   const [showTeamTab, setShowTeamTab] = useState(true);
   const [tugasTim, setTugasTim] = useState([]);
   const [isLoading, setIsLoading] = useState(true);
-  const [statistik, setStatistik] = useState({ total_semua: 0, total_berjalan: 0, total_selesai: 0 });
   const [tugasBerjalan, setTugasBerjalan] = useState([]);
   const [tugasSelesai, setTugasSelesai] = useState([]);
+  const [tugasDibatalkan, setTugasDibatalkan] = useState([]);
   const [selectedTugas, setSelectedTugas] = useState(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [actionMessage, setActionMessage] = useState({ type: '', text: '' });
   const [catatanReview, setCatatanReview] = useState('');
+  const draftReviewKey = getStoredUser()?.id ? DRAFT_KEYS.tugas_review(getStoredUser().id) : null;
+
+  // Draf catatan review: muat saat detail dibuka, simpan tiap ketik,
+  // hapus saat submit sukses (di handleAjukanReview).
+  useEffect(() => {
+    if (!selectedTugas || !draftReviewKey) return;
+    const d = loadDraft(draftReviewKey, {});
+    if (d.catatan) setCatatanReview(d.catatan);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedTugas?.id]);
+  useEffect(() => {
+    if (!selectedTugas || !draftReviewKey) return;
+    saveDraft(draftReviewKey, { catatan: catatanReview });
+  }, [catatanReview, draftReviewKey, selectedTugas?.id]);
 
   const loadData = async () => {
     setIsLoading(true);
@@ -41,9 +57,11 @@ export default function TugasView({ onBack }) {
     try {
       const res = await api.getPenugasan();
       if (res.success) {
-        setStatistik(res.statistik || { total_semua: 0, total_berjalan: 0, total_selesai: 0 });
+        // Label/kartu dihitung dari panjang daftar nyata (bukan
+        // statistik server yang hanya menghitung status 'berjalan').
         setTugasBerjalan(res.tugas_berjalan || []);
         setTugasSelesai(res.tugas_selesai || []);
+        setTugasDibatalkan(res.tugas_dibatalkan || []);
       }
     } catch (err) {
       console.error('Gagal memuat data penugasan:', err);
@@ -79,6 +97,7 @@ export default function TugasView({ onBack }) {
 
       if (res.success) {
         alert(res.message || 'Tugas berhasil diajukan untuk evaluasi atasan!');
+        if (draftReviewKey) clearDraft(draftReviewKey);
         setCatatanReview('');
         setSelectedTugas(null);
         await loadData();
@@ -118,7 +137,7 @@ export default function TugasView({ onBack }) {
     };
   };
 
-  const currentList = activeTab === 'berjalan' ? tugasBerjalan : (activeTab === 'selesai' ? tugasSelesai : tugasTim);
+  const currentList = activeTab === 'berjalan' ? tugasBerjalan : (activeTab === 'selesai' ? tugasSelesai : (activeTab === 'dibatalkan' ? tugasDibatalkan : tugasTim));
 
   return (
     <div style={{
@@ -221,7 +240,7 @@ export default function TugasView({ onBack }) {
               Semua
             </span>
             <span style={{ fontSize: '18px', fontWeight: '900', color: '#0f172a', marginTop: '2px', display: 'block' }}>
-              {statistik.total_semua}
+              {tugasBerjalan.length + tugasSelesai.length + tugasDibatalkan.length}
             </span>
           </div>
 
@@ -241,7 +260,7 @@ export default function TugasView({ onBack }) {
               Berjalan
             </span>
             <span style={{ fontSize: '18px', fontWeight: '900', color: '#2563eb', marginTop: '2px', display: 'block' }}>
-              {statistik.total_berjalan}
+              {tugasBerjalan.length}
             </span>
           </div>
 
@@ -261,7 +280,7 @@ export default function TugasView({ onBack }) {
               Selesai
             </span>
             <span style={{ fontSize: '18px', fontWeight: '900', color: '#059669', marginTop: '2px', display: 'block' }}>
-              {statistik.total_selesai}
+              {tugasSelesai.length}
             </span>
           </div>
         </div>
@@ -272,7 +291,7 @@ export default function TugasView({ onBack }) {
           padding: '4px',
           borderRadius: '12px',
           display: 'grid',
-          gridTemplateColumns: showTeamTab ? '1fr 1fr 1fr' : '1fr 1fr',
+          gridTemplateColumns: showTeamTab ? '1fr 1fr 1fr 1fr' : '1fr 1fr 1fr',
           gap: '4px'
         }}>
           <button
@@ -296,7 +315,7 @@ export default function TugasView({ onBack }) {
             }}
           >
             <Clock size={15} color={activeTab === 'berjalan' ? '#2563eb' : '#64748b'} />
-            <span>Tugas Berjalan ({statistik.total_berjalan})</span>
+            <span>Tugas Berjalan ({tugasBerjalan.length})</span>
           </button>
 
           <button
@@ -320,7 +339,31 @@ export default function TugasView({ onBack }) {
             }}
           >
             <CheckCircle2 size={15} color={activeTab === 'selesai' ? '#10b981' : '#64748b'} />
-            <span>Tugas Selesai ({statistik.total_selesai})</span>
+            <span>Tugas Selesai ({tugasSelesai.length})</span>
+          </button>
+
+          <button
+            type="button"
+            onClick={() => setActiveTab('dibatalkan')}
+            style={{
+              padding: '9px 12px',
+              borderRadius: '9px',
+              border: 'none',
+              backgroundColor: activeTab === 'dibatalkan' ? '#ffffff' : 'transparent',
+              color: activeTab === 'dibatalkan' ? '#0f172a' : '#64748b',
+              fontSize: '12px',
+              fontWeight: '800',
+              cursor: 'pointer',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              gap: '6px',
+              boxShadow: activeTab === 'dibatalkan' ? '0 1px 3px rgba(0,0,0,0.1)' : 'none',
+              transition: 'all 0.2s ease'
+            }}
+          >
+            <XCircle size={15} color={activeTab === 'dibatalkan' ? '#dc2626' : '#64748b'} />
+            <span>Tugas Dibatalkan ({tugasDibatalkan.length})</span>
           </button>
 
           {showTeamTab && (
@@ -396,22 +439,24 @@ export default function TugasView({ onBack }) {
               width: '54px',
               height: '54px',
               borderRadius: '16px',
-              backgroundColor: activeTab === 'berjalan' ? '#eff6ff' : '#ecfdf5',
-              color: activeTab === 'berjalan' ? '#3b82f6' : '#10b981',
+              backgroundColor: activeTab === 'berjalan' ? '#eff6ff' : (activeTab === 'dibatalkan' ? '#fef2f2' : '#ecfdf5'),
+              color: activeTab === 'berjalan' ? '#3b82f6' : (activeTab === 'dibatalkan' ? '#dc2626' : '#10b981'),
               display: 'flex',
               alignItems: 'center',
               justifyContent: 'center',
               margin: '0 auto 12px auto'
             }}>
-              {activeTab === 'berjalan' ? <Briefcase size={26} /> : <CheckCircle2 size={26} />}
+              {activeTab === 'berjalan' ? <Briefcase size={26} /> : (activeTab === 'dibatalkan' ? <XCircle size={26} /> : <CheckCircle2 size={26} />)}
             </div>
             <h4 style={{ fontSize: '14px', fontWeight: '800', color: '#1e293b', margin: '0 0 4px 0' }}>
-              {activeTab === 'berjalan' ? 'Tidak Ada Tugas Berjalan' : 'Belum Ada Tugas Selesai'}
+              {activeTab === 'berjalan' ? 'Tidak Ada Tugas Berjalan' : (activeTab === 'dibatalkan' ? 'Tidak Ada Tugas Dibatalkan' : 'Belum Ada Tugas Selesai')}
             </h4>
             <p style={{ fontSize: '11px', color: '#64748b', margin: 0, maxWidth: '280px', marginInline: 'auto' }}>
-              {activeTab === 'berjalan' 
+              {activeTab === 'berjalan'
                 ? 'Semua penugasan dari atasan telah selesai atau belum ada tugas baru untuk Anda.'
-                : 'Daftar penugasan yang telah diselesaikan dan disetujui atasan akan muncul di sini.'}
+                : (activeTab === 'dibatalkan'
+                  ? 'Penugasan yang dibatalkan atasan akan muncul di sini.'
+                  : 'Daftar penugasan yang telah diselesaikan dan disetujui atasan akan muncul di sini.')}
             </p>
           </div>
         ) : (
@@ -922,8 +967,9 @@ export default function TugasView({ onBack }) {
                 </div>
               )}
 
-              {/* Form Ajukan Review ke Atasan (Hanya jika status berjalan / revisi) */}
-              {selectedTugas.status !== 'selesai' && selectedTugas.status !== 'menunggu_review' && (
+              {/* Form Ajukan Review HANYA untuk status berjalan
+                  (dibatalkan/selesai/menunggu_review tidak boleh). */}
+              {selectedTugas.status === 'berjalan' && (
                 <div style={{
                   padding: '14px',
                   borderRadius: '14px',

@@ -110,16 +110,10 @@ export default function IzinView({ onBack }) {
       return;
     }
 
-    const durasiHari = calculateDays();
-    // Gate kuota hanya berlaku untuk tipe requires_allocation BILA
-    // server mengirim sisa angka; bila null, jangan memblokir.
-    if (kuotaTerpilih && kuotaTerpilih.requires_allocation && sisaTerpilih != null && durasiHari > sisaTerpilih) {
-      setFormMessage({
-        type: 'error',
-        text: `Sisa kuota ${kuotaTerpilih.nama} Anda (${sisaTerpilih} hari) tidak mencukupi untuk pengajuan selama ${durasiHari} hari.`
-      });
-      return;
-    }
+    // Kuota TIDAK lagi memblokir submit di app: peringatan ditampilkan
+    // di indikator (di bawah), server yang menghitung hari kerja dan
+    // menegakkan kuota — pesan error 400 server ditampilkan bersih
+    // lewat catch di bawah (bukan ditelan).
 
     setIsSubmitting(true);
     setFormMessage({ type: '', text: '' });
@@ -254,7 +248,7 @@ export default function IzinView({ onBack }) {
       }}>
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px' }}>
           <span style={{ fontSize: '11px', fontWeight: '700', color: '#94a3b8', textTransform: 'uppercase', letterSpacing: '0.5px' }}>
-            Kuota Cuti Tahunan {kuota.tahun}
+            Kuota Cuti {kuota.tahun}
           </span>
           <span style={{ fontSize: '11px', fontWeight: '800', color: '#38bdf8', backgroundColor: 'rgba(56, 189, 248, 0.15)', padding: '2px 8px', borderRadius: '999px' }}>
             Sisa {kuota.sisa ?? '–'} Hari
@@ -390,10 +384,10 @@ export default function IzinView({ onBack }) {
             padding: '10px 12px',
             borderRadius: '10px',
             backgroundColor: kuotaTerpilih && kuotaTerpilih.requires_allocation && sisaTerpilih != null && calculateDays() > sisaTerpilih
-              ? '#fef2f2'
+              ? '#fffbeb'
               : '#f8fafc',
             border: kuotaTerpilih && kuotaTerpilih.requires_allocation && sisaTerpilih != null && calculateDays() > sisaTerpilih
-              ? '1px solid #fecaca'
+              ? '1px solid #fde68a'
               : '1px solid #e2e8f0',
             fontSize: '11px',
             display: 'flex',
@@ -438,7 +432,7 @@ export default function IzinView({ onBack }) {
                 fontWeight: '700',
                 lineHeight: 1.3
               }}>
-                ⚠️ Durasi pengajuan melebihi sisa kuota {kuotaTerpilih.nama} Anda ({sisaTerpilih} hari).
+                ⚠️ Perhatian: durasi pengajuan melebihi sisa kuota {kuotaTerpilih.nama} Anda ({sisaTerpilih} hari). Pengajuan tetap dikirim — server menghitung hari kerja dan memutuskan persetujuan.
               </p>
             )}
           </div>
@@ -712,29 +706,6 @@ export default function IzinView({ onBack }) {
                   </div>
                 )}
 
-                {item.catatan_approval && (
-                  <div style={{ fontSize: '10px', color: '#1e293b', backgroundColor: '#f1f5f9', padding: '6px 8px', borderRadius: '6px', marginTop: '2px' }}>
-                    <strong>Catatan HRD:</strong> {item.catatan_approval}
-                  </div>
-                )}
-
-                {item.approval_info?.is_bertingkat && (
-                  <div style={{
-                    marginTop: '2px',
-                    padding: '6px 8px',
-                    borderRadius: '8px',
-                    backgroundColor: '#fff7ed',
-                    border: '1px solid #fed7aa',
-                    fontSize: '10px'
-                  }}>
-                    <span style={{ fontWeight: '800', color: '#c2410c', display: 'block', marginBottom: '2px' }}>
-                      Alur Approval Bertingkat:
-                    </span>
-                    <span style={{ color: '#9a3412', fontWeight: '600' }}>
-                      {item.approval_info.status_label}
-                    </span>
-                  </div>
-                )}
               </div>
             ))}
           </div>

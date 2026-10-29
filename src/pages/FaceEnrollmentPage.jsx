@@ -3,7 +3,7 @@ import {
   ArrowLeft, Camera, RefreshCw, CheckCircle2, AlertCircle, 
   ShieldCheck, Sparkles, Eye, UserCheck 
 } from 'lucide-react';
-import api from '../services/api';
+import api, { parseFaceDescriptor } from '../services/api';
 import { 
   loadFaceModels, 
   detectSingleFaceWithDescriptor, 
@@ -161,7 +161,7 @@ export default function FaceEnrollmentPage({ user, onBack, onSuccess }) {
 
           if (!blinkInfo.isClosed) {
             eyeWasOpenRef.current = true;
-            setGuideText('Wajah pas! Silakan berkedip atau tekan tombol Simpan');
+            setGuideText('Wajah pas! Silakan berkedip untuk verifikasi liveness, lalu tekan Simpan.');
           } else if (eyeWasOpenRef.current && blinkInfo.isClosed) {
             // Kedipan mata valid terdeteksi (Transisi Terbuka -> Tertutup)
             hasBlinkedRef.current = true;
@@ -190,16 +190,16 @@ export default function FaceEnrollmentPage({ user, onBack, onSuccess }) {
     }
 
     // Validasi descriptor SEBELUM kirim: face-api = 128 angka.
-    // [] / string kosong / tipe lain JANGAN dikirim — server lama
-    // menerima [] dan menandai terdaftar palsu (flag true tanpa data).
+    // [] / string kosong / panjang bukan 128 / tipe lain JANGAN dikirim
+    // — server lama menerima [] dan menandai terdaftar palsu (flag true
+    // tanpa data). 128 adalah panjang sah satu-satunya dari face-api,
+    // jadi syarat ini tidak memblokir alur yang sah.
     const isValidDescriptor = (d) => {
+      if (typeof d === 'string') d = parseFaceDescriptor(d);
       if (Array.isArray(d) || ArrayBuffer.isView(d)) {
         const arr = Array.from(d);
-        return arr.length > 0
+        return arr.length === 128
           && arr.every((v) => typeof v === 'number' && Number.isFinite(v));
-      }
-      if (typeof d === 'string') {
-        return d.trim().length > 0;
       }
       return false;
     };
@@ -597,10 +597,18 @@ export default function FaceEnrollmentPage({ user, onBack, onSuccess }) {
           </div>
         )}
 
-        {/* TOMBOL MANUAL UTAMA: BISA KLIK KAPAN SAJA SAAT WAJAH TERDETEKSI */}
+        {/* TOMBOL MANUAL: mensyaratkan kedipan (liveness) — sama seperti
+            jalur auto-enroll. Tanpa kedipan, tombol menolak dengan pesan
+            jelas (bukan bypass verifikasi liveness). */}
         <button
           type="button"
-          onClick={() => handleCaptureAndEnroll()}
+          onClick={() => {
+            if (!hasBlinkedRef.current) {
+              setErrorMessage('Silakan berkedip sekali di depan kamera untuk membuktikan wajah asli, lalu tekan Simpan.');
+              return;
+            }
+            handleCaptureAndEnroll();
+          }}
           disabled={!canCapture || isSubmitting}
           style={{
             width: '100%',

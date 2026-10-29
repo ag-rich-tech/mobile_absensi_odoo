@@ -35,8 +35,12 @@ export default function LoginPage({ onBack, onLoginSuccess }) {
       });
 
       if (res.success && res.pegawai) {
-        // Double check status aktif pegawai
+        // Double check status aktif pegawai (mapper kini membaca flag
+        // server — bukan hardcode true — sehingga cabang ini hidup).
         if (res.pegawai.status_aktif === false || res.pegawai.status_aktif === 0) {
+          // Token yang baru dibuat ikut dicabut: jangan tinggal token
+          // valid untuk akun nonaktif di perangkat ini.
+          try { await api.logout(); } catch { /* abaikan */ }
           setIsAccountInactive(true);
           setErrorMessage('Akun pegawai Anda sedang dinonaktifkan oleh administrator.');
           return;

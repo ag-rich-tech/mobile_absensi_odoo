@@ -1,5 +1,3 @@
-import { useState, useEffect, useCallback, useRef } from 'react';
-
 // Draf form persisten (localStorage) — ganti rugi atas unmount tab yang
 // menghilangkan state form di memori (pindah tab di tengah mengisi form
 // lalu kembali = form kosong). Modul ini TIDAK dipakai view mana pun
@@ -48,44 +46,6 @@ export function clearDraft(key) {
   }
 }
 
-// Hook siap pakai — wiring per form cukup 2 baris:
-//
-//   1. Ganti useState form:
-//        const [form, setForm, resetDraft] =
-//          useFormDraft(`izin:${user.id}`, { jenis: '', tanggal: '', alasan: '' });
-//      (setForm dipakai persis seperti setter useState lama; tiap
-//      perubahan otomatis tersimpan ke localStorage.)
-//   2. Di handler sukses submit, sebelum/bersamaan reset form:
-//        resetDraft();
-//
-// Perilaku: saat mount, draf tersimpan (bila ada) menimpa nilai awal
-// per-field; field baru yang belum ada di draf memakai nilai awal.
-// Saat unmount (pindah tab), nilai terakhir sudah tersimpan, jadi
-// kembali ke form = draf pulih. Draf TIDAK dihapus saat unmount —
-// hanya saat submit berhasil (resetDraft) atau logout (clearAuth
-// tidak menyentuh kunci ini; lihat catatan integrator di app2-notes).
-export function useFormDraft(key, initialValues) {
-  const initialRef = useRef(initialValues);
-  const [values, setValues] = useState(() => {
-    const saved = loadDraft(key, null);
-    return saved && typeof saved === 'object'
-      ? { ...initialRef.current, ...saved }
-      : initialRef.current;
-  });
-
-  // Simpan tiap perubahan (form kecil; localStorage sinkron & cepat).
-  useEffect(() => {
-    saveDraft(key, values);
-  }, [key, values]);
-
-  const resetDraft = useCallback(() => {
-    clearDraft(key);
-    setValues(initialRef.current);
-  }, [key]);
-
-  return [values, setValues, resetDraft];
-}
-
 // Daftar kunci draf yang dipakai aplikasi (satu per form; integrator
 // menambahkan form baru di sini agar mudah dilacak & dibersihkan).
 export const DRAFT_KEYS = {
@@ -93,5 +53,22 @@ export const DRAFT_KEYS = {
   dinas: (userId) => `dinas:${userId}`,
   lembur: (userId) => `lembur:${userId}`,
   reimbursement: (userId) => `reimbursement:${userId}`,
-  tugas: (userId) => `tugas:${userId}`,
+  // Catatan review tugas (textarea detail tugas) + form masalah.
+  tugas_review: (userId) => `tugas_review:${userId}`,
+  masalah: (userId) => `masalah:${userId}`,
 };
+
+// Hapus SEMUA draf (dipanggil saat logout — draf tidak boleh menetap
+// tanpa batas / bocor ke user berikutnya di perangkat yang sama).
+export function clearAllDrafts() {
+  try {
+    const keys = [];
+    for (let i = 0; i < localStorage.length; i++) {
+      const k = localStorage.key(i);
+      if (k && k.startsWith(PREFIX)) keys.push(k);
+    }
+    for (const k of keys) localStorage.removeItem(k);
+  } catch {
+    // Abaikan.
+  }
+}

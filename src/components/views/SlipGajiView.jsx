@@ -30,31 +30,48 @@ export default function SlipGajiView({ onBack }) {
   const [previewSlip, setPreviewSlip] = useState({ isOpen: false, id: null });
   const [isLoadingList, setIsLoadingList] = useState(true);
   const [isLoadingDetail, setIsLoadingDetail] = useState(false);
+  const [isLoadingMore, setIsLoadingMore] = useState(false);
+  const [listError, setListError] = useState('');
+  const [slipTotal, setSlipTotal] = useState(null);
+  const SLIP_PAGE = 24;
 
-  // Format Helper Rupiah
-  const formatRupiah = (val) => {
-    return 'Rp ' + Number(val || 0).toLocaleString('id-ID');
+  // Format mata uang dari server (IDR -> 'Rp', lainnya kode apa adanya).
+  const formatRupiah = (val, cur) => {
+    const label = cur === 'IDR' ? 'Rp' : (cur || 'Rp');
+    return `${label} ${Number(val || 0).toLocaleString('id-ID')}`;
+  };
+
+  // Muat daftar slip gaji (limit/offset server) + state ERROR jaringan
+  // yang dibedakan dari kosong (tombol Coba lagi).
+  const fetchSlipList = async (append = false) => {
+    if (append) setIsLoadingMore(true);
+    else setIsLoadingList(true);
+    setListError('');
+    try {
+      const res = await api.getSlipGaji({ limit: SLIP_PAGE, offset: append ? slipList.length : 0 });
+      if (res.success && res.slip_gaji) {
+        setSlipList((prev) => (append ? [...prev, ...res.slip_gaji] : res.slip_gaji));
+        setSlipTotal(typeof res.total === 'number' ? res.total : null);
+      } else if (!append) {
+        setSlipList([]);
+      }
+    } catch (err) {
+      console.error('Gagal mengambil daftar slip gaji:', err);
+      setListError(err.message || 'Gagal memuat daftar slip gaji.');
+      if (!append) setSlipList([]);
+    } finally {
+      setIsLoadingList(false);
+      setIsLoadingMore(false);
+    }
   };
 
   // Muat daftar slip gaji saat inisialisasi
   useEffect(() => {
-    const fetchSlipList = async () => {
-      setIsLoadingList(true);
-      try {
-        const res = await api.getSlipGaji();
-        if (res.success && res.slip_gaji) {
-          setSlipList(res.slip_gaji);
-        } else {
-          setSlipList([]);
-        }
-      } catch (err) {
-        console.error('Gagal mengambil daftar slip gaji:', err);
-      } finally {
-        setIsLoadingList(false);
-      }
-    };
-    fetchSlipList();
+    fetchSlipList(false);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+  // Muat lagi hanya bila server mengirim total dan belum semua dimuat.
+  const hasMoreSlips = slipTotal != null && slipList.length < slipTotal;
 
   // Muat detail saat pengguna mengklik salah satu card periode
   const handleSelectSlip = async (slipId) => {
@@ -207,50 +224,23 @@ export default function SlipGajiView({ onBack }) {
                     fontSize: '10px',
                     fontWeight: '800',
                     textTransform: 'uppercase',
-                    backgroundColor: slipDetail.status_pembayaran === 'dibayar' ? 'rgba(16, 185, 129, 0.2)' : 'rgba(59, 130, 246, 0.2)',
-                    color: slipDetail.status_pembayaran === 'dibayar' ? '#34d399' : '#60a5fa',
-                    border: `1px solid ${slipDetail.status_pembayaran === 'dibayar' ? 'rgba(16, 185, 129, 0.3)' : 'rgba(59, 130, 246, 0.3)'}`
+                    backgroundColor: 'rgba(59, 130, 246, 0.2)',
+                    color: '#60a5fa',
+                    border: '1px solid rgba(59, 130, 246, 0.3)'
                   }}
                 >
-                  {slipDetail.status_pembayaran === 'dibayar' ? 'Dibayar' : (slipDetail.state_label || '-')}
+                  {slipDetail.state_label || '-'}
                 </span>
               </div>
 
               <div style={{ fontSize: '28px', fontWeight: '900', color: '#34d399', letterSpacing: '-0.5px', marginBottom: '16px' }}>
-                {formatRupiah(slipDetail.gaji_bersih)}
+                {formatRupiah(slipDetail.gaji_bersih, slipDetail.currency)}
               </div>
 
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', paddingTop: '12px', borderTop: '1px solid rgba(255,255,255,0.1)', fontSize: '11px', color: '#94a3b8' }}>
                 <span style={{ fontFamily: 'monospace', fontWeight: '700', color: '#cbd5e1' }}>{slipDetail.nomor_slip}</span>
-                {slipDetail.metode_pembayaran ? (<span>{slipDetail.metode_pembayaran}</span>) : null}
               </div>
             </div>
-
-            {/* Statistik Kehadiran, Lembur & Denda — hanya bila server mengirim (S3) */}
-            {(slipDetail.total_kehadiran != null || slipDetail.total_jam_lembur != null || slipDetail.total_menit_terlambat != null) && (
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '10px' }}>
-              <div style={{ background: '#ffffff', borderRadius: '16px', padding: '12px', textAlign: 'center', border: '1px solid #e2e8f0', boxShadow: '0 2px 6px rgba(0,0,0,0.02)' }}>
-                <span style={{ fontSize: '10px', fontWeight: '700', color: '#64748b', textTransform: 'uppercase' }}>Hadir</span>
-                <div style={{ fontSize: '16px', fontWeight: '800', color: '#0f172a', marginTop: '2px' }}>
-                  {slipDetail.total_kehadiran} <span style={{ fontSize: '10px', fontWeight: '600', color: '#94a3b8' }}>Hari</span>
-                </div>
-              </div>
-
-              <div style={{ background: '#fffbeb', borderRadius: '16px', padding: '12px', textAlign: 'center', border: '1px solid #fef3c7', boxShadow: '0 2px 6px rgba(217, 119, 6, 0.05)' }}>
-                <span style={{ fontSize: '10px', fontWeight: '700', color: '#b45309', textTransform: 'uppercase' }}>Lembur</span>
-                <div style={{ fontSize: '16px', fontWeight: '800', color: '#92400e', marginTop: '2px' }}>
-                  {slipDetail.total_jam_lembur} <span style={{ fontSize: '10px', fontWeight: '600', color: '#b45309' }}>Jam</span>
-                </div>
-              </div>
-
-              <div style={{ background: '#fff1f2', borderRadius: '16px', padding: '12px', textAlign: 'center', border: '1px solid #fee2e2', boxShadow: '0 2px 6px rgba(225, 29, 72, 0.05)' }}>
-                <span style={{ fontSize: '10px', fontWeight: '700', color: '#be123c', textTransform: 'uppercase' }}>Terlambat</span>
-                <div style={{ fontSize: '16px', fontWeight: '800', color: '#9f1239', marginTop: '2px' }}>
-                  {formatDurasiMenit(slipDetail.total_menit_terlambat)}
-                </div>
-              </div>
-            </div>
-            )}
 
             {/* Rincian Komponen Penerimaan & Tunjangan */}
             <div style={{ background: '#ffffff', borderRadius: '18px', border: '1px solid #e2e8f0', overflow: 'hidden', boxShadow: '0 2px 8px rgba(0,0,0,0.02)' }}>
@@ -271,7 +261,7 @@ export default function SlipGajiView({ onBack }) {
                   <div>
                     <span style={{ fontSize: '13px', fontWeight: '800', color: '#0f172a' }}>Penerimaan (Tunjangan)</span>
                     <span style={{ fontSize: '11px', color: '#059669', fontWeight: '700', marginLeft: '6px' }}>
-                      +{formatRupiah(Number(slipDetail.gaji_pokok) + Number(slipDetail.total_tunjangan))}
+                      +{formatRupiah(Number(slipDetail.gaji_pokok) + Number(slipDetail.total_tunjangan), slipDetail.currency)}
                     </span>
                   </div>
                 </div>
@@ -284,7 +274,7 @@ export default function SlipGajiView({ onBack }) {
                     <span style={{ color: '#0f172a', fontWeight: '800' }}>Gaji Pokok Dasar</span>
                     <span style={{ display: 'block', fontSize: '10px', color: '#94a3b8' }}>Gaji pokok dasar bulanan</span>
                   </div>
-                  <span style={{ fontWeight: '800', color: '#0f172a' }}>{formatRupiah(slipDetail.gaji_pokok)}</span>
+                  <span style={{ fontWeight: '800', color: '#0f172a' }}>{formatRupiah(slipDetail.gaji_pokok, slipDetail.currency)}</span>
                 </div>
 
                 {/* Daftar Tunjangan */}
@@ -303,7 +293,7 @@ export default function SlipGajiView({ onBack }) {
                         <span style={{ fontSize: '10px', color: '#94a3b8' }}>{t.keterangan}</span>
                       )}
                     </div>
-                    <span style={{ fontWeight: '700', color: '#059669' }}>+{formatRupiah(t.nominal)}</span>
+                    <span style={{ fontWeight: '700', color: '#059669' }}>+{formatRupiah(t.nominal, slipDetail.currency)}</span>
                   </div>
                 ))}
               </div>
@@ -328,7 +318,7 @@ export default function SlipGajiView({ onBack }) {
                   <div>
                     <span style={{ fontSize: '13px', fontWeight: '800', color: '#0f172a' }}>Potongan Gaji</span>
                     <span style={{ fontSize: '11px', color: '#e11d48', fontWeight: '700', marginLeft: '6px' }}>
-                      -{formatRupiah(slipDetail.total_potongan)}
+                      -{formatRupiah(slipDetail.total_potongan, slipDetail.currency)}
                     </span>
                   </div>
                 </div>
@@ -351,7 +341,7 @@ export default function SlipGajiView({ onBack }) {
                           <span style={{ fontSize: '10px', color: '#94a3b8' }}>{p.keterangan}</span>
                         )}
                       </div>
-                      <span style={{ fontWeight: '700', color: '#e11d48' }}>-{formatRupiah(p.nominal)}</span>
+                      <span style={{ fontWeight: '700', color: '#e11d48' }}>-{formatRupiah(p.nominal, slipDetail.currency)}</span>
                     </div>
                   ))
                 ) : (
@@ -462,6 +452,21 @@ export default function SlipGajiView({ onBack }) {
           <div style={{ display: 'inline-block', width: '32px', height: '32px', border: '3px solid #e2e8f0', borderTopColor: '#0284c7', borderRadius: '50%', animation: 'spin 1s linear infinite' }} />
           <p style={{ fontSize: '12px', marginTop: '12px', fontWeight: '600' }}>Memuat daftar riwayat slip gaji...</p>
         </div>
+      ) : listError ? (
+        <div style={{ padding: '60px 20px', textAlign: 'center', background: '#fef2f2', borderRadius: '22px', border: '1px solid #fecaca' }}>
+          <div style={{ width: '60px', height: '60px', borderRadius: '18px', background: '#fee2e2', color: '#b91c1c', display: 'flex', alignItems: 'center', justifyContent: 'center', margin: '0 auto 16px' }}>
+            <AlertTriangle size={30} />
+          </div>
+          <h3 style={{ fontSize: '15px', fontWeight: '800', color: '#991b1b', margin: '0 0 6px' }}>Gagal Memuat Slip Gaji</h3>
+          <p style={{ fontSize: '12px', color: '#b91c1c', margin: '0 0 14px', lineHeight: 1.5 }}>{listError}</p>
+          <button
+            type="button"
+            onClick={() => fetchSlipList(false)}
+            style={{ padding: '9px 20px', borderRadius: '10px', backgroundColor: '#dc2626', border: 'none', color: '#ffffff', fontSize: '12px', fontWeight: '700', cursor: 'pointer' }}
+          >
+            Coba lagi
+          </button>
+        </div>
       ) : slipList.length === 0 ? (
         <div style={{ padding: '60px 20px', textAlign: 'center', background: '#f8fafc', borderRadius: '22px', border: '1px dashed #cbd5e1' }}>
           <div style={{ width: '60px', height: '60px', borderRadius: '18px', background: '#e2e8f0', color: '#64748b', display: 'flex', alignItems: 'center', justifyContent: 'center', margin: '0 auto 16px' }}>
@@ -480,7 +485,7 @@ export default function SlipGajiView({ onBack }) {
               <Sparkles size={16} />
             </div>
             <p style={{ fontSize: '11px', color: '#0369a1', margin: 0, fontWeight: '600', lineHeight: 1.4 }}>
-              Ditemukan <strong>{slipList.length} periode slip gaji</strong>. Klik salah satu card di bawah untuk melihat rincian detail penerimaan dan potongan.
+              Ditemukan <strong>{slipTotal != null ? slipTotal : slipList.length} periode slip gaji</strong>. Klik salah satu card di bawah untuk melihat rincian detail penerimaan dan potongan.
             </p>
           </div>
 
@@ -534,12 +539,12 @@ export default function SlipGajiView({ onBack }) {
                     fontSize: '10px',
                     fontWeight: '800',
                     textTransform: 'uppercase',
-                    backgroundColor: item.status_pembayaran === 'dibayar' ? '#ecfdf5' : '#eff6ff',
-                    color: item.status_pembayaran === 'dibayar' ? '#059669' : '#2563eb',
-                    border: `1px solid ${item.status_pembayaran === 'dibayar' ? '#a7f3d0' : '#bfdbfe'}`
+                    backgroundColor: '#eff6ff',
+                    color: '#2563eb',
+                    border: '1px solid #bfdbfe'
                   }}
                 >
-                  {item.status_pembayaran === 'dibayar' ? 'Dibayar' : (item.state_label || '-')}
+                  {item.state_label || '-'}
                 </span>
               </div>
 
@@ -549,18 +554,12 @@ export default function SlipGajiView({ onBack }) {
                   Gaji Bersih Diterima
                 </span>
                 <div style={{ fontSize: '22px', fontWeight: '900', color: '#059669', letterSpacing: '-0.5px', marginTop: '2px' }}>
-                  {formatRupiah(item.gaji_bersih)}
+                  {formatRupiah(item.gaji_bersih, item.currency)}
                 </div>
 
                 {/* Sub info ringkas */}
                 <div style={{ display: 'flex', gap: '12px', marginTop: '8px', paddingTop: '8px', borderTop: '1px dashed #e2e8f0', fontSize: '11px', color: '#64748b' }}>
-                  <span>Gaji Pokok: <strong style={{ color: '#0f172a' }}>{formatRupiah(item.gaji_pokok)}</strong></span>
-                  {item.total_upah_lembur > 0 && (
-                    <span style={{ color: '#b45309' }}>Lembur: <strong>+{formatRupiah(item.total_upah_lembur)}</strong></span>
-                  )}
-                  {item.total_denda_keterlambatan > 0 && (
-                    <span style={{ color: '#be123c' }}>Denda: <strong>-{formatRupiah(item.total_denda_keterlambatan)}</strong></span>
-                  )}
+                  <span>Gaji Pokok: <strong style={{ color: '#0f172a' }}>{formatRupiah(item.gaji_pokok, item.currency)}</strong></span>
                 </div>
               </div>
 
@@ -578,6 +577,26 @@ export default function SlipGajiView({ onBack }) {
               </div>
             </div>
           ))}
+
+          {hasMoreSlips && (
+            <button
+              type="button"
+              onClick={() => fetchSlipList(true)}
+              disabled={isLoadingMore}
+              style={{
+                padding: '11px',
+                borderRadius: '12px',
+                border: '1.5px solid #bae6fd',
+                backgroundColor: '#f0f9ff',
+                color: '#0369a1',
+                fontSize: '12px',
+                fontWeight: '800',
+                cursor: 'pointer'
+              }}
+            >
+              {isLoadingMore ? 'Memuat...' : `Muat lagi (${slipList.length} dari ${slipTotal})`}
+            </button>
+          )}
         </div>
       )}
     </div>

@@ -46,7 +46,18 @@ const BG_DISTANCE_FILTER_M = 100;
 
 // Throttle bersama foreground + background: stempel kiriman terakhir yang
 // berhasil. Dipakai kedua jalur supaya total kiriman <= 1/jam.
-let lastSentAtMs = 0;
+// PERSISTEN (localStorage): throttle memori saja hilang tiap remount
+// dashboard (dashboardKey) sehingga batas 1/jam gugur.
+const THROTTLE_KEY = 'ag-tracking-last-ping';
+function readLastSent() {
+  try {
+    const v = Number(localStorage.getItem(THROTTLE_KEY));
+    return Number.isFinite(v) ? v : 0;
+  } catch {
+    return 0;
+  }
+}
+let lastSentAtMs = readLastSent();
 
 // ID watcher background yang sedang aktif (null bila tidak jalan).
 let watcherId = null;
@@ -56,6 +67,7 @@ let running = false;
 // harus langsung lolos (tidak tertahan throttle sesi sebelumnya).
 export function resetTrackingPingThrottle() {
   lastSentAtMs = 0;
+  try { localStorage.removeItem(THROTTLE_KEY); } catch { /* abaikan */ }
 }
 
 export function shouldSendTrackingPing(now = Date.now()) {
@@ -64,6 +76,7 @@ export function shouldSendTrackingPing(now = Date.now()) {
 
 export function markTrackingPingSent(now = Date.now()) {
   lastSentAtMs = now;
+  try { localStorage.setItem(THROTTLE_KEY, String(now)); } catch { /* abaikan */ }
 }
 
 export function isBackgroundTrackingRunning() {

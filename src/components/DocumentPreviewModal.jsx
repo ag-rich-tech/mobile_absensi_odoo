@@ -1,7 +1,7 @@
-import React, { useState, useEffect } from 'react';
-import { 
-  X, FileText, Image as ImageIcon, Download, ZoomIn, ZoomOut, 
-  RotateCw, RefreshCw, AlertCircle, ExternalLink, ShieldCheck 
+import React, { useState, useEffect, useRef } from 'react';
+import {
+  X, FileText, Image as ImageIcon, Download, ZoomIn, ZoomOut,
+  RotateCw, RefreshCw, AlertCircle
 } from 'lucide-react';
 import api from '../services/api';
 
@@ -18,6 +18,10 @@ export default function DocumentPreviewModal({ isOpen, onClose, modul, id, title
   // dimuat). Skema blob: dirender viewer PDF bawaan Chrome. Gambar
   // tidak diubah (tag img menangani data-URL dengan benar).
   const [pdfBlobUrl, setPdfBlobUrl] = useState(null);
+  // Guard generasi: respons fetch yang tiba sesudah modal ditutup atau
+  // dokumen diganti DIABAIKAN (tidak menimpa dokumen baru / tidak
+  // membocorkan blob yang tak ter-revoke).
+  const loadGenRef = useRef(0);
 
   // Revoke URL blob lama setiap kali berganti / saat unmount.
   useEffect(() => {
@@ -48,7 +52,9 @@ export default function DocumentPreviewModal({ isOpen, onClose, modul, id, title
     if (isOpen && modul && id) {
       loadDocument();
     } else {
-      // Reset state saat modal ditutup
+      // Reset state saat modal ditutup — naikkan generasi agar fetch
+      // yang masih berjalan tidak lagi menulis state / blob.
+      loadGenRef.current++;
       setDocData(null);
       setPdfBlobUrl(null);
       setErrorMessage('');
@@ -58,11 +64,13 @@ export default function DocumentPreviewModal({ isOpen, onClose, modul, id, title
   }, [isOpen, modul, id]);
 
   const loadDocument = async () => {
+    const gen = ++loadGenRef.current;
     setIsLoading(true);
     setErrorMessage('');
     setPdfBlobUrl(null);
     try {
       const res = await api.getDokumenPreview(modul, id);
+      if (gen !== loadGenRef.current) return; // sudah ditutup / diganti
       if (res && res.success) {
         setDocData(res);
         if (res.is_pdf) setPdfBlobUrl(dataUrlToBlobUrl(res.data_url));
@@ -70,10 +78,11 @@ export default function DocumentPreviewModal({ isOpen, onClose, modul, id, title
         setErrorMessage(res?.message || 'Dokumen tidak dapat dimuat dari server.');
       }
     } catch (err) {
+      if (gen !== loadGenRef.current) return;
       console.error('Gagal mengambil preview dokumen:', err);
       setErrorMessage(err.message || 'Terjadi gangguan hak akses atau jaringan saat memuat berkas.');
     } finally {
-      setIsLoading(false);
+      if (gen === loadGenRef.current) setIsLoading(false);
     }
   };
 

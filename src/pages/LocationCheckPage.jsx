@@ -79,12 +79,18 @@ export default function LocationCheckPage({
   // Target validasi absensi: lokasi terpilih (bukan lagi selalu
   // lokasi_kantor). Tanpa GPS / tanpa kandidat, pakai lokasi_kantor
   // (perilaku lama) agar peta tetap punya target awal.
+  // Ada lokasi server bila daftar kandidat terisi ATAU lokasi kantor
+  // konteks punya koordinat. Tanpa keduanya, fallback di bawah HANYA
+  // target render peta — jarak dinyatakan tidak diketahui dan gerbang
+  // masuk tertutup (fail-closed), bukan lolos lewat titik hardcode.
+  const officeFromServer = candidateLocations.length > 0
+    || (currentOfficeLocation?.latitude != null && currentOfficeLocation?.longitude != null);
   const officeCoords = useMemo(() => {
     const fallback = {
       id: currentOfficeLocation?.id,
       latitude: currentOfficeLocation?.latitude != null ? Number(currentOfficeLocation.latitude) : -6.143662253255497,
       longitude: currentOfficeLocation?.longitude != null ? Number(currentOfficeLocation.longitude) : 106.6288537,
-      nama: currentOfficeLocation?.nama_lokasi || 'Kantor Pusat Tangerang',
+      nama: currentOfficeLocation?.nama_lokasi || (officeFromServer ? 'Kantor Pusat Tangerang' : 'Lokasi kantor belum tersedia dari server'),
       radius: currentOfficeLocation?.radius_meter != null ? Number(currentOfficeLocation.radius_meter) : 100
     };
     if (!userCoords || !candidateLocations.length) return fallback;
@@ -226,8 +232,14 @@ export default function LocationCheckPage({
     );
   }, []);
 
-  // Kalkulasi jarak otomatis setiap kali userCoords ATAU titik kantor server (officeCoords) berubah
+  // Kalkulasi jarak otomatis setiap kali userCoords ATAU titik kantor server (officeCoords) berubah.
+  // Tanpa lokasi server, jarak = tidak diketahui (null) — gerbang masuk
+  // tertutup; titik fallback hardcode tidak pernah dipakai sebagai gerbang.
   useEffect(() => {
+    if (!officeFromServer) {
+      setDistance(null);
+      return;
+    }
     if (userCoords && officeCoords.latitude && officeCoords.longitude) {
       const dist = calculateDistance(
         userCoords.latitude,
@@ -237,7 +249,7 @@ export default function LocationCheckPage({
       );
       setDistance(dist);
     }
-  }, [userCoords, officeCoords.latitude, officeCoords.longitude]);
+  }, [userCoords, officeCoords.latitude, officeCoords.longitude, officeFromServer]);
 
   // Sinkronisasi Titik Lokasi & Deteksi GPS HANYA 1 KALI SAJA saat halaman dibuka
   useEffect(() => {
@@ -267,9 +279,14 @@ export default function LocationCheckPage({
   // dan direkam untuk pulang.
   const isPulang = !isMasuk;
   const gateOk = isPulang || isInside;
-  const canProceed = gateOk && !isFakeGps;
+  // Proceed terkunci selama pengecekan Fake GPS masih berjalan
+  // (tombol bisa ditekan saat cek belum selesai = lolos tanpa verifikasi).
+  const canProceed = gateOk && !isFakeGps && !isCheckingFakeGps;
 
   const handleProceedClick = () => {
+    // Kunci selama pengecekan Fake GPS masih berjalan (jangan lolos
+    // tanpa verifikasi) — pelengkap canProceed di tombol.
+    if (isCheckingFakeGps) return;
     if (isFakeGps) {
       setShowFakeGpsModal(true);
       return;
@@ -284,8 +301,12 @@ export default function LocationCheckPage({
       },
       distance: distance || 0,
       officeLocation: officeCoords,
-      isFakeGps: false,
-      antiFraudVerified: true
+      // Hasil deteksi yang sebenarnya (bukan hardcode false): proceed
+      // hanya bisa dipanggil saat isFakeGps false (lihat penjaga di
+      // atas), tapi nilai asli tetap diteruskan untuk audit server.
+      isFakeGps,
+      mock_detected: isFakeGps,
+      antiFraudVerified: !isFakeGps,
     });
   };
 
@@ -840,6 +861,7 @@ export default function LocationCheckPage({
             <button
               type="button"
               onClick={handleProceedClick}
+              disabled={!canProceed}
               style={{
                 flex: 1,
                 height: '50px',

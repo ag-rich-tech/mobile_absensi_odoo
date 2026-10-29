@@ -13,18 +13,39 @@ export default function JadwalView({ onBack }) {
   const [loadError, setLoadError] = useState('');
   const [isTukarShiftOpen, setIsTukarShiftOpen] = useState(false);
   const [pendingTukarCount, setPendingTukarCount] = useState(0);
-  // Bulan yang ditampilkan dari jendela 30 hari ('YYYY-MM'); null =
-  // bulan pertama jendela (bulan berjalan).
-  const [activeMonth, setActiveMonth] = useState(null);
+  // Bulan yang ditampilkan ('YYYY-MM') — BUKAN lagi jendela 30 hari:
+  // prev/next mengambil bulan yang dituju dari server (cache per bulan).
+  const currentMonth = (() => {
+    try {
+      const d = new Date(getServerDate().getTime() + 7 * 3600 * 1000);
+      return d.toISOString().slice(0, 7);
+    } catch {
+      const d = new Date();
+      return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+    }
+  })();
+  const [activeMonth, setActiveMonth] = useState(currentMonth);
+  const monthCacheRef = React.useRef({});
 
-  const fetchJadwal = async () => {
+  const fetchJadwal = async (ym, { force = false } = {}) => {
+    const target = (typeof ym === 'string' && ym) ? ym : activeMonthRef.current;
+    // Cache per bulan: kembali ke bulan yang sudah dimuat tanpa network
+    // (kecuali force — tombol refresh / sesudah submit swap).
+    if (!force && monthCacheRef.current[target]) {
+      setData(monthCacheRef.current[target]);
+      setLoadError('');
+      return;
+    }
     setIsLoading(true);
     setLoadError('');
     try {
-      const res = await api.getJadwal();
+      const [y, m] = target.split('-').map(Number);
+      const days = new Date(y, m, 0).getDate();
+      const res = await api.getJadwal({ start: `${target}-01`, days });
       if (res.success) {
         setLoadError('');
         setData(res);
+        monthCacheRef.current[target] = res;
         // Badge jumlah permintaan swap: adapter mengembalikan `count`
         // (bukan `pending_count`); hitung tidak bergantung pada roster.
         api.getTukarShiftCount()
@@ -48,9 +69,25 @@ export default function JadwalView({ onBack }) {
     }
   };
 
+  const activeMonthRef = React.useRef(activeMonth);
+  activeMonthRef.current = activeMonth;
+
   useEffect(() => {
-    fetchJadwal();
+    fetchJadwal(currentMonth);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  // Pindah bulan: set state + fetch bulan tujuan (cache bila sudah ada).
+  const goToMonth = (ym) => {
+    setActiveMonth(ym);
+    activeMonthRef.current = ym;
+    fetchJadwal(ym);
+  };
+  const shiftMonth = (delta) => {
+    const [y, m] = activeMonth.split('-').map(Number);
+    const d = new Date(y, m - 1 + delta, 1);
+    goToMonth(`${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`);
+  };
 
   const shift = data?.shift_aktif;
   const isRoster = Boolean(data?.is_roster);
@@ -85,18 +122,10 @@ export default function JadwalView({ onBack }) {
     }
   })();
 
-  // Navigasi bulan di dalam jendela 30 hari yang sudah dimuat.
-  // getJadwal kini menerima {start, days}, tapi view ini belum fetch
-  // bulan lain — navigasi memfilter jendela ini (tombol nonaktif di
-  // ujung jendela).
-  const monthsInWindow = [...new Set(rosterList
-    .map((r) => (r.tanggal || '').slice(0, 7)).filter(Boolean))].sort();
-  const shownMonth = activeMonth && monthsInWindow.includes(activeMonth)
-    ? activeMonth : (monthsInWindow[0] || null);
-  const shownMonthIdx = shownMonth ? monthsInWindow.indexOf(shownMonth) : -1;
-  const visibleRoster = shownMonth
-    ? rosterList.filter((r) => (r.tanggal || '').startsWith(shownMonth))
-    : rosterList;
+  // Roster yang tampil = roster bulan aktif (sudah di-fetch per bulan,
+  // bukan filter jendela 30 hari).
+  const shownMonth = activeMonth;
+  const visibleRoster = rosterList;
   const monthLabel = (ym) => {
     if (!ym) return '';
     const [y, m] = ym.split('-');
@@ -157,7 +186,7 @@ export default function JadwalView({ onBack }) {
       </p>
       <button
         type="button"
-        onClick={fetchJadwal}
+        onClick={() => fetchJadwal(undefined, { force: true })}
         style={{
           padding: '9px 20px',
           borderRadius: '10px',
@@ -200,7 +229,7 @@ export default function JadwalView({ onBack }) {
           <span style={{ fontSize: '12px', fontWeight: '700', color: '#be123c' }}>{loadError}</span>
           <button
             type="button"
-            onClick={fetchJadwal}
+            onClick={() => fetchJadwal(undefined, { force: true })}
             style={{ padding: '6px 12px', borderRadius: '8px', backgroundColor: '#e11d48', border: 'none', color: '#ffffff', fontSize: '11px', fontWeight: '700', cursor: 'pointer', flexShrink: 0 }}
           >
             Coba Lagi
@@ -461,43 +490,42 @@ export default function JadwalView({ onBack }) {
                 </button>
               </div>
 
-              {/* Navigasi bulan di dalam jendela yang dimuat */}
-              {monthsInWindow.length > 1 && (
-                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '10px' }}>
-                  <button
-                    type="button"
-                    onClick={() => shownMonthIdx > 0 && setActiveMonth(monthsInWindow[shownMonthIdx - 1])}
-                    disabled={shownMonthIdx <= 0}
-                    style={{
-                      width: '30px', height: '30px', borderRadius: '8px',
-                      backgroundColor: 'var(--bg-slate)', border: '1px solid var(--border-light)',
-                      display: 'flex', alignItems: 'center', justifyContent: 'center',
-                      color: 'var(--text-main)', cursor: shownMonthIdx <= 0 ? 'not-allowed' : 'pointer',
-                      opacity: shownMonthIdx <= 0 ? 0.4 : 1
-                    }}
-                  >
-                    <ChevronLeft size={16} />
-                  </button>
-                  <span style={{ fontSize: '12px', fontWeight: '800', color: 'var(--text-main)' }}>
-                    {monthLabel(shownMonth)} ({visibleRoster.length} hari)
-                  </span>
-                  <button
-                    type="button"
-                    onClick={() => shownMonthIdx >= 0 && shownMonthIdx < monthsInWindow.length - 1 && setActiveMonth(monthsInWindow[shownMonthIdx + 1])}
-                    disabled={shownMonthIdx < 0 || shownMonthIdx >= monthsInWindow.length - 1}
-                    style={{
-                      width: '30px', height: '30px', borderRadius: '8px',
-                      backgroundColor: 'var(--bg-slate)', border: '1px solid var(--border-light)',
-                      display: 'flex', alignItems: 'center', justifyContent: 'center',
-                      color: 'var(--text-main)',
-                      cursor: (shownMonthIdx < 0 || shownMonthIdx >= monthsInWindow.length - 1) ? 'not-allowed' : 'pointer',
-                      opacity: (shownMonthIdx < 0 || shownMonthIdx >= monthsInWindow.length - 1) ? 0.4 : 1
-                    }}
-                  >
-                    <ChevronRight size={16} />
-                  </button>
-                </div>
-              )}
+              {/* Navigasi bulan: prev/next mengambil bulan yang dituju
+                  dari server (cache per bulan) — bukan filter jendela. */}
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '10px' }}>
+                <button
+                  type="button"
+                  onClick={() => shiftMonth(-1)}
+                  disabled={isLoading}
+                  style={{
+                    width: '30px', height: '30px', borderRadius: '8px',
+                    backgroundColor: 'var(--bg-slate)', border: '1px solid var(--border-light)',
+                    display: 'flex', alignItems: 'center', justifyContent: 'center',
+                    color: 'var(--text-main)', cursor: isLoading ? 'not-allowed' : 'pointer',
+                    opacity: isLoading ? 0.4 : 1
+                  }}
+                >
+                  <ChevronLeft size={16} />
+                </button>
+                <span style={{ fontSize: '12px', fontWeight: '800', color: 'var(--text-main)' }}>
+                  {monthLabel(shownMonth)} ({visibleRoster.length} hari)
+                </span>
+                <button
+                  type="button"
+                  onClick={() => shiftMonth(1)}
+                  disabled={isLoading}
+                  style={{
+                    width: '30px', height: '30px', borderRadius: '8px',
+                    backgroundColor: 'var(--bg-slate)', border: '1px solid var(--border-light)',
+                    display: 'flex', alignItems: 'center', justifyContent: 'center',
+                    color: 'var(--text-main)',
+                    cursor: isLoading ? 'not-allowed' : 'pointer',
+                    opacity: isLoading ? 0.4 : 1
+                  }}
+                >
+                  <ChevronRight size={16} />
+                </button>
+              </div>
 
               {rosterList.length === 0 ? (
                 <div style={{ padding: '24px 16px', textAlign: 'center', color: 'var(--text-muted)', fontSize: '12px', backgroundColor: 'var(--bg-slate)', borderRadius: '8px' }}>
@@ -658,7 +686,7 @@ export default function JadwalView({ onBack }) {
         isOpen={isTukarShiftOpen}
         onClose={() => setIsTukarShiftOpen(false)}
         onSuccess={() => {
-          fetchJadwal();
+          fetchJadwal(undefined, { force: true });
         }}
       />
     </div>

@@ -137,6 +137,24 @@ export default function TukarShiftModal({ isOpen, onClose, onSuccess }) {
       return;
     }
 
+    // Peringatan (bukan blokir): tanggal lampau & Libur<->Libur.
+    const shiftPengajuAwal = (jadwalPengaju || []).find((s) => String(s.id) === String(selectedJadwalPengajuId));
+    const shiftRekanAwal = (jadwalRekan || []).find((s) => String(s.id) === String(selectedJadwalRekanId));
+    const warnings = [];
+    const todayStr = new Date().toISOString().slice(0, 10);
+    if (shiftPengajuAwal?.tanggal && shiftPengajuAwal.tanggal < todayStr) {
+      warnings.push(`Shift Anda (${shiftPengajuAwal.tanggal}) sudah lewat.`);
+    }
+    if (shiftRekanAwal?.tanggal && shiftRekanAwal.tanggal < todayStr) {
+      warnings.push(`Shift rekan (${shiftRekanAwal.tanggal}) sudah lewat.`);
+    }
+    if (shiftPengajuAwal?.is_hari_libur && shiftRekanAwal?.is_hari_libur) {
+      warnings.push('Kedua shift adalah hari libur (Libur <-> Libur) — penukaran tidak mengubah apa pun.');
+    }
+    if (warnings.length > 0 && !window.confirm(`Perhatian:\n- ${warnings.join('\n- ')}\n\nTetap kirim pengajuan ini?`)) {
+      return;
+    }
+
     setIsSubmitting(true);
     setFeedback({ type: '', message: '' });
 
@@ -1059,7 +1077,7 @@ export default function TukarShiftModal({ isOpen, onClose, onSuccess }) {
             </h4>
             <p style={{ margin: '0 0 14px 0', fontSize: '12px', color: 'var(--text-muted)', lineHeight: '1.4' }}>
               {responModal.aksi === 'setuju'
-                ? `Permintaan dicatat dan menunggu persetujuan. Jadwal baru berlaku setelah disetujui HRD/manager.`
+                ? `Menyetujui permintaan ini HANYA mencatat persetujuan Anda — jadwal kerja Anda dan rekan TIDAK berubah otomatis. Penukaran jadwal dilakukan manual oleh admin bila diperlukan.`
                 : `Berikan catatan (opsional) mengapa Anda menolak permintaan tukar shift ini.`}
             </p>
 

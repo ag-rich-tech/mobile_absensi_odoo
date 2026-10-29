@@ -320,7 +320,7 @@ export default function RiwayatView({ onBack }) {
                           padding: '2px 8px',
                           borderRadius: '999px'
                         }}>
-                          Cepat {item.menit_pulang_cepat}m
+                          Cepat {formatDurasiMenit(item.menit_pulang_cepat)}
                         </span>
                       )}
                     </div>
@@ -539,7 +539,7 @@ export default function RiwayatView({ onBack }) {
               <div style={{ display: 'flex', justifyContent: 'space-between' }}>
                 <span style={{ color: 'var(--text-muted)' }}>Status Pulang:</span>
                 <strong style={{ color: selectedDetail.status_pulang === 'pulang_cepat' ? '#2563eb' : 'var(--text-main)' }}>
-                  {selectedDetail.status_pulang === 'pulang_cepat' ? `Pulang Cepat (${selectedDetail.menit_pulang_cepat}m)` : 'Normal'}
+                  {selectedDetail.status_pulang === 'pulang_cepat' ? `Pulang Cepat (${formatDurasiMenit(selectedDetail.menit_pulang_cepat)})` : 'Normal'}
                 </strong>
               </div>
               <div style={{ display: 'flex', justifyContent: 'space-between' }}>

@@ -153,7 +153,13 @@ export default function ReimbursementView({ onBack }) {
       const res = await api.ajukanReimbursement(formData);
 
       if (res.success) {
-        setToastMessage({ type: 'success', text: res.message || 'Pengajuan klaim berhasil dikirim.' });
+        // Dokumen dikirim tapi server melaporkan lampiran TIDAK
+        // tersimpan -> peringatan eksplisit (bukan sukses penuh).
+        if (dokumenFile && res.attachment_saved === false) {
+          setFormError('Pengajuan terkirim, tetapi lampiran bukti nota GAGAL tersimpan di server. Silakan hubungi admin / kirim ulang dengan lampiran.');
+        } else {
+          setToastMessage({ type: 'success', text: res.message || 'Pengajuan klaim berhasil dikirim.' });
+        }
         if (draftKey) clearDraft(draftKey);
         setTimeout(() => setToastMessage({ type: '', text: '' }), 4000);
 
@@ -440,8 +446,6 @@ export default function ReimbursementView({ onBack }) {
             </div>
           ) : (
             list.map(item => {
-              const approval = item.approval || {};
-              const isBertingkat = approval.is_bertingkat;
 
               return (
                 <div
@@ -495,7 +499,7 @@ export default function ReimbursementView({ onBack }) {
                         ? 'Telah Dicairkan'
                         : (item.status === 'disetujui'
                           ? 'Disetujui'
-                          : (item.status === 'ditolak' ? 'Ditolak' : (isBertingkat ? `Step ${approval.step_current}/${approval.step_total}` : 'Menunggu Admin')))}
+                          : (item.status === 'ditolak' ? 'Ditolak' : 'Menunggu Admin'))}
                     </span>
                   </div>
 
@@ -568,58 +572,6 @@ export default function ReimbursementView({ onBack }) {
                       </div>
                     )}
 
-                    {/* Timeline Progres Approval Bertingkat jika ada */}
-                    {isBertingkat && approval.steps && approval.steps.length > 0 && (
-                      <div style={{
-                        marginTop: '6px',
-                        paddingTop: '8px',
-                        borderTop: '1px solid #f1f5f9',
-                        display: 'flex',
-                        flexDirection: 'column',
-                        gap: '6px'
-                      }}>
-                        <span style={{ fontSize: '10px', fontWeight: '800', color: '#64748b', textTransform: 'uppercase' }}>
-                          Progres Persetujuan Bertingkat:
-                        </span>
-                        {approval.steps.map(s => {
-                          const isDone = s.status === 'disetujui';
-                          const isReject = s.status === 'ditolak';
-                          const isCurr = s.is_current;
-
-                          return (
-                            <div key={s.step_ke} style={{
-                              display: 'flex',
-                              alignItems: 'center',
-                              justifyContent: 'space-between',
-                              fontSize: '11px',
-                              padding: '4px 6px',
-                              borderRadius: '6px',
-                              backgroundColor: isCurr ? '#fff7ed' : '#f8fafc',
-                              border: isCurr ? '1px solid #fed7aa' : '1px solid transparent'
-                            }}>
-                              <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-                                <span style={{
-                                  width: '8px',
-                                  height: '8px',
-                                  borderRadius: '50%',
-                                  backgroundColor: isDone ? '#10b981' : (isReject ? '#ef4444' : (isCurr ? '#f97316' : '#cbd5e1'))
-                                }} />
-                                <span style={{ fontWeight: '600', color: '#334155' }}>
-                                  Step {s.step_ke}: {s.label}
-                                </span>
-                              </div>
-                              <span style={{
-                                fontSize: '10px',
-                                fontWeight: '700',
-                                color: isDone ? '#059669' : (isReject ? '#dc2626' : (isCurr ? '#ea580c' : '#94a3b8'))
-                              }}>
-                                {isDone ? 'Disetujui' : (isReject ? 'Ditolak' : (isCurr ? 'Menunggu' : 'Antrean'))}
-                              </span>
-                            </div>
-                          );
-                        })}
-                      </div>
-                    )}
                   </div>
                 </div>
               );

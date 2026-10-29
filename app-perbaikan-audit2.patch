@@ -1,0 +1,3771 @@
+diff --git a/package-lock.json b/package-lock.json
+index 2ccd5f8..feba171 100644
+--- a/package-lock.json
++++ b/package-lock.json
+@@ -10,6 +10,7 @@
+       "dependencies": {
+         "@capacitor-community/background-geolocation": "^1.2.27",
+         "@capacitor/android": "^8.5.2",
++        "@capacitor/app": "^7.0.2",
+         "@capacitor/camera": "^8.2.6",
+         "@capacitor/cli": "^8.5.2",
+         "@capacitor/core": "^8.5.2",
+@@ -48,6 +49,15 @@
+         "@capacitor/core": "^8.5.0"
+       }
+     },
++    "node_modules/@capacitor/app": {
++      "version": "7.1.2",
++      "resolved": "https://registry.npmjs.org/@capacitor/app/-/app-7.1.2.tgz",
++      "integrity": "sha512-d4I/oF/PRu4megL7/IGKYfe5j7yzSON1FRFgq6kH+m5kH6g7V+wyjHRLauCzGNjdRx4S+nWOumINds0qcRBtKg==",
++      "license": "MIT",
++      "peerDependencies": {
++        "@capacitor/core": ">=7.0.0"
++      }
++    },
+     "node_modules/@capacitor/camera": {
+       "version": "8.2.6",
+       "resolved": "https://registry.npmjs.org/@capacitor/camera/-/camera-8.2.6.tgz",
+diff --git a/package.json b/package.json
+index c141c63..980d752 100644
+--- a/package.json
++++ b/package.json
+@@ -22,7 +22,8 @@
+     "leaflet": "^1.9.4",
+     "lucide-react": "^1.52.0",
+     "react": "^19.2.8",
+-    "react-dom": "^19.2.8"
++    "react-dom": "^19.2.8",
++    "@capacitor/app": "^7.0.2"
+   },
+   "devDependencies": {
+     "@types/react": "^19.2.18",
+diff --git a/src/App.jsx b/src/App.jsx
+index f43963e..f614a2d 100644
+--- a/src/App.jsx
++++ b/src/App.jsx
+@@ -10,6 +10,12 @@ import AccountDeactivatedScreen from './components/AccountDeactivatedScreen';
+ import { getToken, getStoredUser, setStoredUser, clearAuth } from './services/api';
+ import api from './services/api';
+ import { preloadAttendanceSounds } from './services/soundService';
++import { App as CapacitorApp } from '@capacitor/app';
++import { clearAllDrafts } from './services/draftService';
++import {
++  getDashboardNav, requestDashboardBackToHome,
++  setPendingDashboardNav, deepLinkToDashboardNav,
++} from './services/navState';
+ 
+ function App() {
+   const [user, setUser] = useState(() => {
+@@ -40,17 +46,12 @@ function App() {
+   });
+ 
+   // C5 (restore descriptor, jalur dashboard): bila server MENGIRIM
+-  // face_descriptor milik user login dan user tersimpan belum
+-  // memilikinya, simpan ke localStorage. Dijaga ketat: hanya
+-  // descriptor non-kosong (array berisi / string non-kosong), hanya
+-  // bila tersimpan belum punya, dan hanya dari res.pegawai dashboard
+-  // sesi login sendiri — tidak pernah descriptor orang lain.
+-  // CATATAN: saat ini server SENGAJA tidak pernah mengirim
+-  // face_descriptor dan api.js tidak memetakannya, sehingga hook ini
+-  // no-op sampai (a) server mengirimkannya (keputusan agen server)
+-  // dan (b) api.js memetakannya ke pegawai (agen app-1). Restore
+-  // penuh di login/getMe tetap milik api.js — ini hanya jembatan
+-  // jalur dashboard (getMe-equivalent app sesudah login).
++  // face_descriptor milik user login (sejak ag 1.2.23 server memang
++  // mengirimnya; api.js mem-parse string JSON-nya) dan user tersimpan
++  // belum memilikinya, simpan ke localStorage. Dijaga ketat: hanya
++  // descriptor non-kosong, hanya bila tersimpan belum punya, dan hanya
++  // dari res.pegawai dashboard sesi login sendiri — tidak pernah
++  // descriptor orang lain.
+   const restoreFaceDescriptor = (pegawai) => {
+     const desc = pegawai?.face_descriptor;
+     const incomingValid = Array.isArray(desc) ? desc.length > 0 : Boolean(desc);
+@@ -155,6 +156,7 @@ function App() {
+     } catch {
+       // Abaikan error jaringan saat logout
+     }
++    clearAllDrafts();
+     clearAuth();
+     setUser(null);
+     setCurrentScreen('login');
+@@ -172,19 +174,25 @@ function App() {
+   const screenRef = useRef(currentScreen);
+   screenRef.current = currentScreen;
+ 
+-  // Tombol Back Android (Capacitor App backButton, bila tersedia).
+-  // Diakses lewat window.Capacitor — TANPA import statis @capacitor/app
+-  // (paket itu tidak terpasang; import statis akan menggagalkan build).
+-  // Subview (location_check / attendance_capture / face_enrollment)
+-  // → kembali ke dashboard; login → welcome; dashboard/welcome →
+-  // perilaku default Android (keluar aplikasi via exitApp, padanan
+-  // back pada activity root). Di web (tanpa Capacitor) tidak aktif.
++  // Tombol Back Android (plugin @capacitor/app — wajib npm install +
++  // npx cap sync sebelum rebuild APK). Sadar subview DashboardPage
++  // (registry navState): subview -> kembali ke Beranda; Beranda ->
++  // exitApp. Layar alur presensi -> dashboard; login -> welcome.
++  // Deep link (appUrlOpen): segmen dikenal -> subview itu (atau
++  // Beranda bila belum login — pending dikonsumsi DashboardPage saat
++  // mount sesudah login); segmen tak dikenal -> Beranda.
+   useEffect(() => {
+-    const AppPlugin = window.Capacitor?.Plugins?.App;
+-    if (!AppPlugin || typeof AppPlugin.addListener !== 'function') return undefined;
++    let backHandle = null;
++    let linkHandle = null;
+     const onBackButton = () => {
+       const screen = screenRef.current;
+-      if (
++      if (screen === 'dashboard') {
++        if (getDashboardNav() !== 'home') {
++          requestDashboardBackToHome();
++        } else if (typeof CapacitorApp.exitApp === 'function') {
++          CapacitorApp.exitApp();
++        }
++      } else if (
+         screen === 'location_check'
+         || screen === 'attendance_capture'
+         || screen === 'face_enrollment'
+@@ -192,26 +200,30 @@ function App() {
+         navigateToDashboard();
+       } else if (screen === 'login') {
+         setCurrentScreen('welcome');
+-      } else if (typeof AppPlugin.exitApp === 'function') {
+-        AppPlugin.exitApp();
++      } else if (typeof CapacitorApp.exitApp === 'function') {
++        CapacitorApp.exitApp();
+       }
+     };
+-    // Capacitor 5+: addListener mengembalikan Promise<handle>;
+-    // versi lama mengembalikan handle langsung. Tangani keduanya.
+-    let handleOrPromise = null;
++    const onAppUrlOpen = ({ url }) => {
++      const nav = deepLinkToDashboardNav(url);
++      setPendingDashboardNav(nav);
++      navigateToDashboard();
++    };
+     try {
+-      handleOrPromise = AppPlugin.addListener('backButton', onBackButton);
++      const p1 = CapacitorApp.addListener('backButton', onBackButton);
++      if (p1 && typeof p1.then === 'function') {
++        p1.then((h) => { backHandle = h; }).catch(() => {});
++      } else { backHandle = p1; }
++      const p2 = CapacitorApp.addListener('appUrlOpen', onAppUrlOpen);
++      if (p2 && typeof p2.then === 'function') {
++        p2.then((h) => { linkHandle = h; }).catch(() => {});
++      } else { linkHandle = p2; }
+     } catch {
+-      return undefined;
++      // Bukan Android / plugin belum sync — abaikan, web tetap jalan.
+     }
+     return () => {
+-      if (handleOrPromise && typeof handleOrPromise.then === 'function') {
+-        handleOrPromise
+-          .then((h) => { if (h && typeof h.remove === 'function') h.remove(); })
+-          .catch(() => {});
+-      } else if (handleOrPromise && typeof handleOrPromise.remove === 'function') {
+-        handleOrPromise.remove();
+-      }
++      if (backHandle && typeof backHandle.remove === 'function') backHandle.remove();
++      if (linkHandle && typeof linkHandle.remove === 'function') linkHandle.remove();
+     };
+     // eslint-disable-next-line react-hooks/exhaustive-deps
+   }, []);
+diff --git a/src/components/AttendanceModal.jsx b/src/components/AttendanceModal.jsx
+deleted file mode 100644
+index d172d5b..0000000
+--- a/src/components/AttendanceModal.jsx
++++ /dev/null
+@@ -1,583 +0,0 @@
+-import React, { useState, useEffect, useRef } from 'react';
+-import { X, Camera, MapPin, CheckCircle, AlertCircle, RefreshCw, ShieldCheck, Sparkles, Navigation } from 'lucide-react';
+-import api from '../services/api';
+-import { playAttendanceSound } from '../services/soundService';
+-
+-export default function AttendanceModal({ type = 'masuk', user, lokasiKantor, onClose, onSuccess }) {
+-  const [step, setStep] = useState('capture'); // 'capture' | 'processing' | 'success' | 'error'
+-  const [statusMessage, setStatusMessage] = useState('');
+-  const [resultData, setResultData] = useState(null);
+-  const [coords, setCoords] = useState({
+-    latitude: lokasiKantor?.latitude || -6.143662253255497,
+-    longitude: lokasiKantor?.longitude || 106.6288537,
+-    accuracy: 10,
+-    isRealGps: false,
+-  });
+-  const [isGpsLoading, setIsGpsLoading] = useState(true);
+-  const [capturedPhoto, setCapturedPhoto] = useState(null);
+-  const [cameraActive, setCameraActive] = useState(false);
+-  const [cameraError, setCameraError] = useState(false);
+-
+-  const videoRef = useRef(null);
+-  const streamRef = useRef(null);
+-
+-  const isMasuk = type === 'masuk';
+-
+-  // 1. Dapatkan Lokasi GPS Perangkat
+-  useEffect(() => {
+-    let isMounted = true;
+-
+-    if ('geolocation' in navigator) {
+-      navigator.geolocation.getCurrentPosition(
+-        (pos) => {
+-          if (isMounted) {
+-            setCoords({
+-              latitude: pos.coords.latitude,
+-              longitude: pos.coords.longitude,
+-              accuracy: Math.round(pos.coords.accuracy || 10),
+-              isRealGps: true,
+-            });
+-            setIsGpsLoading(false);
+-          }
+-        },
+-        (err) => {
+-          console.warn('Geolocation error / permission denied, using office coords:', err.message);
+-          if (isMounted) {
+-            // Fallback ke koordinat kantor agar pengetesan tetap berjalan lancar jika GPS desktop ditolak
+-            setCoords({
+-              latitude: lokasiKantor?.latitude || -6.143662253255497,
+-              longitude: lokasiKantor?.longitude || 106.6288537,
+-              accuracy: 15,
+-              isRealGps: false,
+-            });
+-            setIsGpsLoading(false);
+-          }
+-        },
+-        { enableHighAccuracy: true, timeout: 8000 }
+-      );
+-    } else {
+-      setIsGpsLoading(false);
+-    }
+-
+-    return () => {
+-      isMounted = false;
+-    };
+-  }, [lokasiKantor]);
+-
+-  // 2. Inisialisasi Kamera Selfie
+-  useEffect(() => {
+-    let currentStream = null;
+-
+-    const startCamera = async () => {
+-      if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+-        setCameraError(true);
+-        return;
+-      }
+-
+-      let stream = null;
+-      try {
+-        stream = await navigator.mediaDevices.getUserMedia({
+-          video: { facingMode: 'user', width: { ideal: 640 }, height: { ideal: 480 } },
+-          audio: false
+-        });
+-      } catch (err1) {
+-        try {
+-          stream = await navigator.mediaDevices.getUserMedia({
+-            video: true,
+-            audio: false
+-          });
+-        } catch (err2) {
+-          console.warn('Camera error or blocked:', err2.message);
+-          setCameraError(true);
+-          return;
+-        }
+-      }
+-
+-      if (stream) {
+-        currentStream = stream;
+-        streamRef.current = stream;
+-        if (videoRef.current) {
+-          videoRef.current.srcObject = stream;
+-          videoRef.current.onloadedmetadata = () => {
+-            videoRef.current.play().then(() => {
+-              setCameraActive(true);
+-            }).catch(() => {
+-              setCameraActive(true);
+-            });
+-          };
+-        }
+-      }
+-    };
+-
+-    startCamera();
+-
+-    return () => {
+-      if (currentStream) {
+-        currentStream.getTracks().forEach(track => track.stop());
+-      }
+-    };
+-  }, []);
+-
+-  // 3. Ambil Snapshot Foto
+-  const takeSnapshot = () => {
+-    const canvas = document.createElement('canvas');
+-    canvas.width = 360;
+-    canvas.height = 360;
+-    const ctx = canvas.getContext('2d');
+-
+-    if (cameraActive && videoRef.current) {
+-      // Ambil frame dari video
+-      ctx.drawImage(videoRef.current, 0, 0, 360, 360);
+-    } else {
+-      // Buat simulasi selfie foto biometrik dengan canvas jika webcam tidak ada
+-      ctx.fillStyle = '#1e293b';
+-      ctx.fillRect(0, 0, 360, 360);
+-
+-      // Lingkaran wajah
+-      ctx.fillStyle = '#f97316';
+-      ctx.beginPath();
+-      ctx.arc(180, 150, 70, 0, Math.PI * 2);
+-      ctx.fill();
+-
+-      // Badan
+-      ctx.fillStyle = '#ea580c';
+-      ctx.beginPath();
+-      ctx.arc(180, 320, 110, 0, Math.PI * 2);
+-      ctx.fill();
+-
+-      // Timestamp watermark
+-      ctx.fillStyle = '#ffffff';
+-      ctx.font = 'bold 14px sans-serif';
+-      ctx.fillText(`VERIFIED SELFIE - ${user?.nip || 'PEGAWAI'}`, 30, 330);
+-      ctx.font = '12px monospace';
+-      ctx.fillText(new Date().toLocaleString('id-ID'), 30, 348);
+-    }
+-
+-    const dataUrl = canvas.toDataURL('image/jpeg', 0.85);
+-    setCapturedPhoto(dataUrl);
+-    return dataUrl;
+-  };
+-
+-  // 4. Submit Absensi ke REST API Laravel
+-  const handleSubmitAttendance = async () => {
+-    const photoData = capturedPhoto || takeSnapshot();
+-
+-    setStep('processing');
+-    setStatusMessage('Mengirim verifikasi biometrik & validasi geofencing ke server...');
+-
+-    try {
+-      const res = await api.absen({
+-        tipe: type,
+-        latitude: coords.latitude,
+-        longitude: coords.longitude,
+-        foto: photoData,
+-      });
+-
+-      if (res.success) {
+-        playAttendanceSound(type);
+-        setResultData(res.data);
+-        setStatusMessage(res.message);
+-        setStep('success');
+-
+-        // Berikan waktu user membaca notifikasi sukses lalu panggil onSuccess
+-        setTimeout(() => {
+-          onSuccess(res.data);
+-        }, 2000);
+-      } else {
+-        setStep('error');
+-        setStatusMessage(res.message || 'Presensi gagal.');
+-      }
+-    } catch (err) {
+-      setStep('error');
+-      setStatusMessage(err.message || 'Gagal terhubung ke server.');
+-    }
+-  };
+-
+-  return (
+-    <div style={{
+-      position: 'absolute',
+-      inset: 0,
+-      backgroundColor: 'rgba(15, 23, 42, 0.75)',
+-      backdropFilter: 'blur(8px)',
+-      WebkitBackdropFilter: 'blur(8px)',
+-      zIndex: 100,
+-      display: 'flex',
+-      flexDirection: 'column',
+-      justifyContent: 'flex-end',
+-      animation: 'fadeIn 0.25s ease-out'
+-    }}>
+-      <div style={{
+-        backgroundColor: '#ffffff',
+-        borderTopLeftRadius: '32px',
+-        borderTopRightRadius: '32px',
+-        padding: '24px 20px',
+-        maxHeight: '92%',
+-        overflowY: 'auto',
+-        display: 'flex',
+-        flexDirection: 'column',
+-        boxShadow: '0 -20px 40px rgba(0, 0, 0, 0.15)',
+-        width: '100%',
+-        maxWidth: '560px',
+-        margin: '0 auto'
+-      }}>
+-        {/* Header Modal */}
+-        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '16px' }}>
+-          <div>
+-            <span style={{
+-              fontSize: '11px',
+-              fontWeight: '800',
+-              textTransform: 'uppercase',
+-              letterSpacing: '0.5px',
+-              color: isMasuk ? 'var(--primary-600)' : '#2563eb',
+-              backgroundColor: isMasuk ? 'var(--primary-50)' : '#eff6ff',
+-              padding: '4px 10px',
+-              borderRadius: 'var(--radius-full)'
+-            }}>
+-              {isMasuk ? 'Presensi Masuk' : 'Presensi Pulang'}
+-            </span>
+-            <h3 style={{ fontSize: '18px', fontWeight: '800', color: 'var(--text-main)', marginTop: '6px' }}>
+-              Verifikasi Biometrik & GPS
+-            </h3>
+-          </div>
+-
+-          <button
+-            type="button"
+-            onClick={onClose}
+-            style={{
+-              width: '36px',
+-              height: '36px',
+-              borderRadius: '50%',
+-              backgroundColor: 'var(--bg-slate)',
+-              border: 'none',
+-              display: 'flex',
+-              alignItems: 'center',
+-              justifyContent: 'center',
+-              color: 'var(--text-muted)',
+-              cursor: 'pointer'
+-            }}
+-          >
+-            <X size={18} />
+-          </button>
+-        </div>
+-
+-        {/* Step: Capture Foto & Cek Lokasi */}
+-        {step === 'capture' && (
+-          <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
+-            {/* Viewfinder Kamera Selfie */}
+-            <div style={{
+-              width: '100%',
+-              height: '240px',
+-              borderRadius: '24px',
+-              backgroundColor: '#0f172a',
+-              position: 'relative',
+-              overflow: 'hidden',
+-              display: 'flex',
+-              alignItems: 'center',
+-              justifyContent: 'center',
+-              boxShadow: 'inset 0 0 40px rgba(0,0,0,0.5)'
+-            }}>
+-              <video
+-                ref={videoRef}
+-                autoPlay
+-                playsInline
+-                muted
+-                style={{
+-                  width: '100%',
+-                  height: '100%',
+-                  objectFit: 'cover',
+-                  transform: 'scaleX(-1)',
+-                  display: capturedPhoto ? 'none' : 'block',
+-                  opacity: cameraActive ? 1 : 0,
+-                  transition: 'opacity 0.25s ease'
+-                }}
+-              />
+-
+-              {capturedPhoto && (
+-                <img
+-                  src={capturedPhoto}
+-                  alt="Captured Selfie"
+-                  style={{ width: '100%', height: '100%', objectFit: 'cover', position: 'absolute', inset: 0 }}
+-                />
+-              )}
+-
+-              {!cameraActive && !capturedPhoto && (
+-                <div style={{ textAlign: 'center', padding: '20px', zIndex: 2 }}>
+-                  <div style={{
+-                    width: '64px',
+-                    height: '64px',
+-                    borderRadius: '50%',
+-                    backgroundColor: 'rgba(249, 115, 22, 0.2)',
+-                    display: 'flex',
+-                    alignItems: 'center',
+-                    justifyContent: 'center',
+-                    margin: '0 auto 12px auto'
+-                  }}>
+-                    <Camera size={32} style={{ color: 'var(--primary-500)' }} />
+-                  </div>
+-                  <p style={{ color: '#ffffff', fontSize: '13px', fontWeight: '700' }}>
+-                    Mengaktifkan Kamera...
+-                  </p>
+-                  <p style={{ color: '#94a3b8', fontSize: '11px', marginTop: '4px' }}>
+-                    {cameraError ? 'Kamera tidak aktif, menggunakan snapshot simulasi' : 'Posisikan wajah Anda di tengah layar'}
+-                  </p>
+-                </div>
+-              )}
+-
+-              {/* Face Guide Oval Overlay */}
+-              <div style={{
+-                position: 'absolute',
+-                width: '160px',
+-                height: '200px',
+-                borderRadius: '50%',
+-                border: '2px dashed rgba(249, 115, 22, 0.7)',
+-                pointerEvents: 'none',
+-                boxShadow: '0 0 0 9999px rgba(15, 23, 42, 0.35)'
+-              }}></div>
+-
+-              {/* Status Badge Live GPS */}
+-              <div style={{
+-                position: 'absolute',
+-                top: '12px',
+-                left: '12px',
+-                backgroundColor: 'rgba(0, 0, 0, 0.65)',
+-                backdropFilter: 'blur(4px)',
+-                padding: '4px 10px',
+-                borderRadius: 'var(--radius-full)',
+-                display: 'flex',
+-                alignItems: 'center',
+-                gap: '6px',
+-                color: '#ffffff',
+-                fontSize: '11px',
+-                fontWeight: '600'
+-              }}>
+-                <span style={{ width: '8px', height: '8px', borderRadius: '50%', backgroundColor: coords.isRealGps ? '#22c55e' : '#f59e0b' }}></span>
+-                <span>{coords.isRealGps ? 'GPS Riil Akurat' : 'Geofence Kantor'}</span>
+-              </div>
+-            </div>
+-
+-            {/* Info Kantor & Radius */}
+-            <div style={{
+-              padding: '12px 14px',
+-              backgroundColor: 'var(--bg-slate)',
+-              borderRadius: 'var(--radius-md)',
+-              border: '1px solid var(--border-light)',
+-              display: 'flex',
+-              alignItems: 'center',
+-              justifyContent: 'space-between'
+-            }}>
+-              <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+-                <div style={{
+-                  width: '36px',
+-                  height: '36px',
+-                  borderRadius: '10px',
+-                  backgroundColor: 'var(--primary-100)',
+-                  display: 'flex',
+-                  alignItems: 'center',
+-                  justifyContent: 'center',
+-                  color: 'var(--primary-600)'
+-                }}>
+-                  <MapPin size={18} />
+-                </div>
+-                <div>
+-                  <h4 style={{ fontSize: '13px', fontWeight: '800', color: 'var(--text-main)' }}>
+-                    {lokasiKantor?.nama_lokasi || 'Kantor Pusat Tangerang'}
+-                  </h4>
+-                  <p style={{ fontSize: '11px', color: 'var(--text-muted)' }}>
+-                    Maks. Radius: {lokasiKantor?.radius_meter || 100} meter
+-                  </p>
+-                </div>
+-              </div>
+-
+-              <div style={{ textAlign: 'right' }}>
+-                <span style={{
+-                  fontSize: '11px',
+-                  fontWeight: '700',
+-                  color: 'var(--success)',
+-                  backgroundColor: 'var(--success-bg)',
+-                  padding: '3px 8px',
+-                  borderRadius: 'var(--radius-full)'
+-                }}>
+-                  Terverifikasi
+-                </span>
+-              </div>
+-            </div>
+-
+-            {/* Action Buttons */}
+-            <div style={{ display: 'flex', gap: '10px', marginTop: '4px' }}>
+-              <button
+-                type="button"
+-                onClick={takeSnapshot}
+-                style={{
+-                  flex: 1,
+-                  height: '48px',
+-                  borderRadius: 'var(--radius-md)',
+-                  backgroundColor: '#ffffff',
+-                  border: '1.5px solid var(--border-light)',
+-                  color: 'var(--text-main)',
+-                  fontSize: '13px',
+-                  fontWeight: '700',
+-                  display: 'flex',
+-                  alignItems: 'center',
+-                  justifyContent: 'center',
+-                  gap: '6px',
+-                  cursor: 'pointer'
+-                }}
+-              >
+-                <Camera size={16} />
+-                <span>Foto Ulang</span>
+-              </button>
+-
+-              <button
+-                type="button"
+-                onClick={handleSubmitAttendance}
+-                style={{
+-                  flex: 2,
+-                  height: '48px',
+-                  borderRadius: 'var(--radius-md)',
+-                  background: isMasuk ? 'var(--primary-gradient)' : 'linear-gradient(135deg, #2563eb, #1d4ed8)',
+-                  border: 'none',
+-                  color: '#ffffff',
+-                  fontSize: '14px',
+-                  fontWeight: '800',
+-                  display: 'flex',
+-                  alignItems: 'center',
+-                  justifyContent: 'center',
+-                  gap: '8px',
+-                  boxShadow: isMasuk ? 'var(--shadow-primary)' : '0 4px 12px rgba(37, 99, 235, 0.3)',
+-                  cursor: 'pointer'
+-                }}
+-              >
+-                <ShieldCheck size={18} strokeWidth={2.5} />
+-                <span>Kirim Presensi Riil</span>
+-              </button>
+-            </div>
+-          </div>
+-        )}
+-
+-        {/* Step: Processing */}
+-        {step === 'processing' && (
+-          <div style={{ padding: '40px 20px', textAlign: 'center' }}>
+-            <div style={{
+-              width: '64px',
+-              height: '64px',
+-              borderRadius: '50%',
+-              backgroundColor: 'var(--primary-50)',
+-              color: 'var(--primary-600)',
+-              display: 'flex',
+-              alignItems: 'center',
+-              justifyContent: 'center',
+-              margin: '0 auto 16px auto',
+-              animation: 'spin 1.5s linear infinite'
+-            }}>
+-              <RefreshCw size={28} />
+-            </div>
+-            <h4 style={{ fontSize: '16px', fontWeight: '800', color: 'var(--text-main)' }}>
+-              Memvalidasi Presensi ke Database...
+-            </h4>
+-            <p style={{ fontSize: '12px', color: 'var(--text-muted)', marginTop: '6px', maxWidth: '280px', margin: '6px auto 0 auto' }}>
+-              {statusMessage}
+-            </p>
+-          </div>
+-        )}
+-
+-        {/* Step: Success */}
+-        {step === 'success' && (
+-          <div style={{ padding: '30px 20px', textAlign: 'center' }}>
+-            <div style={{
+-              width: '64px',
+-              height: '64px',
+-              borderRadius: '50%',
+-              backgroundColor: 'var(--success-bg)',
+-              color: 'var(--success)',
+-              display: 'flex',
+-              alignItems: 'center',
+-              justifyContent: 'center',
+-              margin: '0 auto 16px auto'
+-            }}>
+-              <CheckCircle size={32} />
+-            </div>
+-            <h4 style={{ fontSize: '18px', fontWeight: '800', color: 'var(--text-main)' }}>
+-              Presensi Berhasil Dicatat!
+-            </h4>
+-            <p style={{ fontSize: '13px', color: 'var(--text-muted)', marginTop: '6px' }}>
+-              {statusMessage}
+-            </p>
+-
+-            {resultData && (
+-              <div style={{
+-                marginTop: '16px',
+-                padding: '12px',
+-                backgroundColor: 'var(--bg-slate)',
+-                borderRadius: 'var(--radius-sm)',
+-                fontSize: '12px',
+-                fontWeight: '600',
+-                color: 'var(--text-main)',
+-                display: 'flex',
+-                justifyContent: 'space-around'
+-              }}>
+-                <div>
+-                  <span style={{ color: 'var(--text-light)', display: 'block', fontSize: '10px' }}>Waktu Server</span>
+-                  <span>{resultData.jam_masuk || resultData.jam_pulang} WIB</span>
+-                </div>
+-                <div>
+-                  <span style={{ color: 'var(--text-light)', display: 'block', fontSize: '10px' }}>Jarak Radius</span>
+-                  <span>{resultData.jarak_meter} Meter</span>
+-                </div>
+-                <div>
+-                  <span style={{ color: 'var(--text-light)', display: 'block', fontSize: '10px' }}>Status</span>
+-                  <span style={{ color: resultData.status_masuk === 'terlambat' ? 'var(--danger)' : 'var(--success)' }}>
+-                    {resultData.status_masuk || resultData.status_pulang}
+-                  </span>
+-                </div>
+-              </div>
+-            )}
+-          </div>
+-        )}
+-
+-        {/* Step: Error */}
+-        {step === 'error' && (
+-          <div style={{ padding: '30px 20px', textAlign: 'center' }}>
+-            <div style={{
+-              width: '64px',
+-              height: '64px',
+-              borderRadius: '50%',
+-              backgroundColor: 'var(--danger-bg)',
+-              color: 'var(--danger)',
+-              display: 'flex',
+-              alignItems: 'center',
+-              justifyContent: 'center',
+-              margin: '0 auto 16px auto'
+-            }}>
+-              <AlertCircle size={32} />
+-            </div>
+-            <h4 style={{ fontSize: '17px', fontWeight: '800', color: 'var(--danger)' }}>
+-              Presensi Ditolak
+-            </h4>
+-            <p style={{ fontSize: '13px', color: 'var(--text-muted)', marginTop: '8px', lineHeight: '1.4' }}>
+-              {statusMessage}
+-            </p>
+-
+-            <button
+-              type="button"
+-              onClick={() => setStep('capture')}
+-              style={{
+-                marginTop: '20px',
+-                width: '100%',
+-                height: '46px',
+-                borderRadius: 'var(--radius-md)',
+-                backgroundColor: 'var(--bg-slate)',
+-                border: '1.5px solid var(--border-light)',
+-                color: 'var(--text-main)',
+-                fontSize: '13px',
+-                fontWeight: '700',
+-                cursor: 'pointer'
+-              }}
+-            >
+-              Coba Ulangi
+-            </button>
+-          </div>
+-        )}
+-      </div>
+-    </div>
+-  );
+-}
+diff --git a/src/components/DocumentPreviewModal.jsx b/src/components/DocumentPreviewModal.jsx
+index 26f0cdd..18945cd 100644
+--- a/src/components/DocumentPreviewModal.jsx
++++ b/src/components/DocumentPreviewModal.jsx
+@@ -1,7 +1,7 @@
+-import React, { useState, useEffect } from 'react';
+-import { 
+-  X, FileText, Image as ImageIcon, Download, ZoomIn, ZoomOut, 
+-  RotateCw, RefreshCw, AlertCircle, ExternalLink, ShieldCheck 
++import React, { useState, useEffect, useRef } from 'react';
++import {
++  X, FileText, Image as ImageIcon, Download, ZoomIn, ZoomOut,
++  RotateCw, RefreshCw, AlertCircle
+ } from 'lucide-react';
+ import api from '../services/api';
+ 
+@@ -18,6 +18,10 @@ export default function DocumentPreviewModal({ isOpen, onClose, modul, id, title
+   // dimuat). Skema blob: dirender viewer PDF bawaan Chrome. Gambar
+   // tidak diubah (tag img menangani data-URL dengan benar).
+   const [pdfBlobUrl, setPdfBlobUrl] = useState(null);
++  // Guard generasi: respons fetch yang tiba sesudah modal ditutup atau
++  // dokumen diganti DIABAIKAN (tidak menimpa dokumen baru / tidak
++  // membocorkan blob yang tak ter-revoke).
++  const loadGenRef = useRef(0);
+ 
+   // Revoke URL blob lama setiap kali berganti / saat unmount.
+   useEffect(() => {
+@@ -48,7 +52,9 @@ export default function DocumentPreviewModal({ isOpen, onClose, modul, id, title
+     if (isOpen && modul && id) {
+       loadDocument();
+     } else {
+-      // Reset state saat modal ditutup
++      // Reset state saat modal ditutup — naikkan generasi agar fetch
++      // yang masih berjalan tidak lagi menulis state / blob.
++      loadGenRef.current++;
+       setDocData(null);
+       setPdfBlobUrl(null);
+       setErrorMessage('');
+@@ -58,11 +64,13 @@ export default function DocumentPreviewModal({ isOpen, onClose, modul, id, title
+   }, [isOpen, modul, id]);
+ 
+   const loadDocument = async () => {
++    const gen = ++loadGenRef.current;
+     setIsLoading(true);
+     setErrorMessage('');
+     setPdfBlobUrl(null);
+     try {
+       const res = await api.getDokumenPreview(modul, id);
++      if (gen !== loadGenRef.current) return; // sudah ditutup / diganti
+       if (res && res.success) {
+         setDocData(res);
+         if (res.is_pdf) setPdfBlobUrl(dataUrlToBlobUrl(res.data_url));
+@@ -70,10 +78,11 @@ export default function DocumentPreviewModal({ isOpen, onClose, modul, id, title
+         setErrorMessage(res?.message || 'Dokumen tidak dapat dimuat dari server.');
+       }
+     } catch (err) {
++      if (gen !== loadGenRef.current) return;
+       console.error('Gagal mengambil preview dokumen:', err);
+       setErrorMessage(err.message || 'Terjadi gangguan hak akses atau jaringan saat memuat berkas.');
+     } finally {
+-      setIsLoading(false);
++      if (gen === loadGenRef.current) setIsLoading(false);
+     }
+   };
+ 
+diff --git a/src/components/views/ApprovalView.jsx b/src/components/views/ApprovalView.jsx
+index 1968dc5..17e4711 100644
+--- a/src/components/views/ApprovalView.jsx
++++ b/src/components/views/ApprovalView.jsx
+@@ -54,9 +54,41 @@ export default function ApprovalView({ onBack }) {
+     }
+   };
+ 
+-  const handleLoadMore = () => {
++  // Muat lagi memakai count TERFILTER: halaman diambil berulang sampai
++  // daftar terfilter bertambah atau server habis (dulu satu halaman
++  // tanpa item terfilter pun dianggap selesai).
++  const handleLoadMore = async () => {
+     if (!hasMore || isLoadingMore) return;
+-    loadApprovals(activeTab, true);
++    setIsLoadingMore(true);
++    setErrorMsg('');
++    try {
++      const before = filteredItems.length;
++      let acc = [...items];
++      let offset = items.length;
++      let more = hasMore;
++      let guard = 0;
++      while (more && guard < 10) {
++        guard++;
++        const res = await api.getApprovals(activeTab, { limit: 50, offset });
++        if (!res.success) {
++          setErrorMsg(res.message || 'Gagal memuat halaman berikutnya.');
++          break;
++        }
++        const next = res.data || [];
++        offset += next.length;
++        acc = [...acc, ...next];
++        setTotalCount(typeof res.count === 'number' ? res.count : null);
++        setHasMore(!!res.has_more);
++        more = !!res.has_more;
++        if (acc.filter(matchFilter).length > before) break;
++        if (next.length === 0) break;
++      }
++      setItems(acc);
++    } catch (err) {
++      setErrorMsg(err.message || 'Terjadi gangguan jaringan saat memuat pengajuan.');
++    } finally {
++      setIsLoadingMore(false);
++    }
+   };
+ 
+   useEffect(() => {
+@@ -133,12 +165,13 @@ export default function ApprovalView({ onBack }) {
+ 
+   // Filter items berdasarkan modul
+   // C16: filter dari `tipe` server (fallback modul lama).
+-  const filteredItems = items.filter(item => {
++  const matchFilter = (item) => {
+     const tipe = item.tipe || item.modul;
+     if (filterModul === 'semua') return true;
+     if (filterModul === 'izin_cuti') return tipe === 'izin' || tipe === 'cuti';
+     return tipe === filterModul;
+-  });
++  };
++  const filteredItems = items.filter(matchFilter);
+ 
+   const getModulBadge = (modul) => {
+     switch (modul) {
+@@ -448,12 +481,16 @@ export default function ApprovalView({ onBack }) {
+             </div>
+             <div>
+               <h4 style={{ fontSize: '14px', fontWeight: '800', color: '#1e293b', margin: 0 }}>
+-                {activeTab === 'menunggu' ? 'Tidak Ada Pengajuan Menunggu' : 'Belum Ada Riwayat Aksi'}
++                {items.length > 0 && filteredItems.length === 0
++                  ? 'Tidak Ada Pengajuan untuk Filter Ini'
++                  : (activeTab === 'menunggu' ? 'Tidak Ada Pengajuan Menunggu' : 'Belum Ada Riwayat Aksi')}
+               </h4>
+               <p style={{ fontSize: '11px', color: '#64748b', margin: '4px 0 0', maxWidth: '280px', lineHeight: 1.4 }}>
+-                {activeTab === 'menunggu' 
+-                  ? 'Saat ini tidak ada pengajuan izin, cuti, lembur, dinas, atau reimbursement yang menugaskan Anda sebagai approver aktif.'
+-                  : 'Pengajuan yang telah Anda setujui atau tolak akan tercatat rapi di halaman ini.'}
++                {items.length > 0 && filteredItems.length === 0
++                  ? 'Ubah filter modul di atas untuk melihat pengajuan lain.'
++                  : (activeTab === 'menunggu'
++                    ? 'Saat ini tidak ada pengajuan izin, cuti, lembur, dinas, atau reimbursement yang menugaskan Anda sebagai approver aktif.'
++                    : 'Pengajuan yang telah Anda setujui atau tolak akan tercatat rapi di halaman ini.')}
+               </p>
+             </div>
+           </div>
+@@ -649,8 +686,10 @@ export default function ApprovalView({ onBack }) {
+                     </p>
+                   </div>
+ 
+-                  {/* Lampiran Dokumen */}
+-                  {(detail.dokumen_ada || !!detail.dokumen_url) && (
++                  {/* Lampiran Dokumen — hanya modul yang dikenal route
++                      preview server (cuti/dinas/reimbursement/masalah);
++                      lembur tidak punya dokumen di server. */}
++                  {(detail.dokumen_ada || !!detail.dokumen_url) && ['cuti', 'izin', 'dinas', 'reimbursement', 'masalah'].includes(item.modul) && (
+                     <div style={{ marginTop: '4px', paddingTop: '6px', borderTop: '1px dashed #e2e8f0' }}>
+                       <button
+                         type="button"
+@@ -682,77 +721,11 @@ export default function ApprovalView({ onBack }) {
+                   )}
+                 </div>
+ 
+-                {/* Timeline Alur Persetujuan Bertingkat */}
+-                {item.alur_steps && item.alur_steps.length > 0 && (
+-                  <div style={{ margin: '0 14px 12px' }}>
+-                    <span style={{ fontSize: '10px', fontWeight: '800', color: '#94a3b8', textTransform: 'uppercase', letterSpacing: '0.4px', display: 'block', marginBottom: '6px' }}>
+-                      Alur Persetujuan ({item.alur_steps.length} Tahapan):
+-                    </span>
+-                    <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+-                      {item.alur_steps.map((st, idx) => (
+-                        <div 
+-                          key={idx}
+-                          style={{
+-                            display: 'flex',
+-                            alignItems: 'center',
+-                            justifyContent: 'space-between',
+-                            padding: '6px 10px',
+-                            borderRadius: '8px',
+-                            backgroundColor: st.is_current ? '#fff7ed' : '#f8fafc',
+-                            border: st.is_current ? '1px solid #fed7aa' : '1px solid #f1f5f9',
+-                            fontSize: '10px'
+-                          }}
+-                        >
+-                          <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+-                            <span style={{
+-                              width: '16px',
+-                              height: '16px',
+-                              borderRadius: '4px',
+-                              backgroundColor: st.status === 'disetujui' ? '#059669' : (st.status === 'ditolak' ? '#dc2626' : (st.is_current ? '#ea580c' : '#94a3b8')),
+-                              color: '#ffffff',
+-                              display: 'flex',
+-                              alignItems: 'center',
+-                              justifyContent: 'center',
+-                              fontSize: '9px',
+-                              fontWeight: '800'
+-                            }}>
+-                              {st.step_ke}
+-                            </span>
+-                            <span style={{ fontWeight: '700', color: '#334155' }}>
+-                              {st.approver_nama} ({st.label})
+-                            </span>
+-                          </div>
+-
+-                          <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
+-                            <span style={{
+-                              fontWeight: '700',
+-                              color: st.status === 'disetujui' ? '#059669' : (st.status === 'ditolak' ? '#dc2626' : (st.is_current ? '#ea580c' : '#94a3b8'))
+-                            }}>
+-                              {st.status === 'disetujui' ? 'Setuju' : (st.status === 'ditolak' ? 'Tolak' : (st.is_current ? 'Giliran Aktif' : 'Menunggu'))}
+-                            </span>
+-                          </div>
+-                        </div>
+-                      ))}
+-                    </div>
+-                  </div>
+-                )}
+-
+-                {/* Catatan Tindakan (Pada Tab Riwayat) */}
+-                {activeTab === 'riwayat' && item.catatan_saya && (
+-                  <div style={{
+-                    margin: '0 14px 12px',
+-                    padding: '8px 10px',
+-                    borderRadius: '8px',
+-                    backgroundColor: '#f1f5f9',
+-                    fontSize: '10px',
+-                    color: '#475569'
+-                  }}>
+-                    <strong>Catatan Anda:</strong> "{item.catatan_saya}"
+-                  </div>
+-                )}
+-
+-                {/* Tombol Aksi Persetujuan (Hanya muncul jika is_current = true & status = menunggu) */}
+-                {item.is_current && item.status === 'menunggu' && (
++                {/* Tombol aksi HANYA di tab Menunggu + status menunggu:
++                    item yang sudah diputus (tab Riwayat) tidak boleh
++                    menampilkan tombol aksi (is_current di mapper selalu
++                    true sehingga tidak bisa dipakai sebagai gerbang). */}
++                {activeTab === 'menunggu' && item.status === 'menunggu' && (
+                   <div style={{
+                     padding: '12px 14px',
+                     borderTop: '1px solid #f1f5f9',
+diff --git a/src/components/views/DinasView.jsx b/src/components/views/DinasView.jsx
+index cc4029d..2d845ca 100644
+--- a/src/components/views/DinasView.jsx
++++ b/src/components/views/DinasView.jsx
+@@ -567,55 +567,11 @@ export default function DinasView({ onBack }) {
+                       }}
+                     >
+                       <Eye size={13} />
+-                      <span>Buka Surat Tugas: {item.nama_dokumen || 'Lihat Dokumen'}</span>
++                      <span>Buka Surat Tugas: Lihat Dokumen</span>
+                     </button>
+                   </div>
+                 )}
+ 
+-                {item.approval_info?.is_bertingkat && (
+-                  <div style={{
+-                    marginTop: '2px',
+-                    padding: '6px 8px',
+-                    borderRadius: '8px',
+-                    backgroundColor: '#fff7ed',
+-                    border: '1px solid #fed7aa',
+-                    fontSize: '10px'
+-                  }}>
+-                    <span style={{ fontWeight: '800', color: '#c2410c', display: 'block', marginBottom: '2px' }}>
+-                      Alur Approval Bertingkat:
+-                    </span>
+-                    <span style={{ color: '#9a3412', fontWeight: '600' }}>
+-                      {item.approval_info.status_label}
+-                    </span>
+-                  </div>
+-                )}
+-
+-                {/* C9: batalkan dinas sendiri yang masih menunggu */}
+-                {(item.status === 'menunggu' || item.status === 'confirm') && (
+-                  <div style={{ margin: '0 14px 12px' }}>
+-                    <button
+-                      type="button"
+-                      disabled={cancellingId === item.id}
+-                      onClick={() => handleBatal(item)}
+-                      style={{
+-                        display: 'inline-flex',
+-                        alignItems: 'center',
+-                        gap: '6px',
+-                        fontSize: '11px',
+-                        fontWeight: '700',
+-                        color: '#dc2626',
+-                        backgroundColor: '#fef2f2',
+-                        padding: '6px 12px',
+-                        borderRadius: '8px',
+-                        border: '1px solid #fecdd3',
+-                        cursor: 'pointer'
+-                      }}
+-                    >
+-                      <X size={13} />
+-                      <span>{cancellingId === item.id ? 'Membatalkan...' : 'Batalkan Pengajuan'}</span>
+-                    </button>
+-                  </div>
+-                )}
+               </div>
+             ))}
+           </div>
+diff --git a/src/components/views/IzinView.jsx b/src/components/views/IzinView.jsx
+index b2a4d90..57f6d6b 100644
+--- a/src/components/views/IzinView.jsx
++++ b/src/components/views/IzinView.jsx
+@@ -110,16 +110,10 @@ export default function IzinView({ onBack }) {
+       return;
+     }
+ 
+-    const durasiHari = calculateDays();
+-    // Gate kuota hanya berlaku untuk tipe requires_allocation BILA
+-    // server mengirim sisa angka; bila null, jangan memblokir.
+-    if (kuotaTerpilih && kuotaTerpilih.requires_allocation && sisaTerpilih != null && durasiHari > sisaTerpilih) {
+-      setFormMessage({
+-        type: 'error',
+-        text: `Sisa kuota ${kuotaTerpilih.nama} Anda (${sisaTerpilih} hari) tidak mencukupi untuk pengajuan selama ${durasiHari} hari.`
+-      });
+-      return;
+-    }
++    // Kuota TIDAK lagi memblokir submit di app: peringatan ditampilkan
++    // di indikator (di bawah), server yang menghitung hari kerja dan
++    // menegakkan kuota — pesan error 400 server ditampilkan bersih
++    // lewat catch di bawah (bukan ditelan).
+ 
+     setIsSubmitting(true);
+     setFormMessage({ type: '', text: '' });
+@@ -254,7 +248,7 @@ export default function IzinView({ onBack }) {
+       }}>
+         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px' }}>
+           <span style={{ fontSize: '11px', fontWeight: '700', color: '#94a3b8', textTransform: 'uppercase', letterSpacing: '0.5px' }}>
+-            Kuota Cuti Tahunan {kuota.tahun}
++            Kuota Cuti {kuota.tahun}
+           </span>
+           <span style={{ fontSize: '11px', fontWeight: '800', color: '#38bdf8', backgroundColor: 'rgba(56, 189, 248, 0.15)', padding: '2px 8px', borderRadius: '999px' }}>
+             Sisa {kuota.sisa ?? '–'} Hari
+@@ -390,10 +384,10 @@ export default function IzinView({ onBack }) {
+             padding: '10px 12px',
+             borderRadius: '10px',
+             backgroundColor: kuotaTerpilih && kuotaTerpilih.requires_allocation && sisaTerpilih != null && calculateDays() > sisaTerpilih
+-              ? '#fef2f2'
++              ? '#fffbeb'
+               : '#f8fafc',
+             border: kuotaTerpilih && kuotaTerpilih.requires_allocation && sisaTerpilih != null && calculateDays() > sisaTerpilih
+-              ? '1px solid #fecaca'
++              ? '1px solid #fde68a'
+               : '1px solid #e2e8f0',
+             fontSize: '11px',
+             display: 'flex',
+@@ -438,7 +432,7 @@ export default function IzinView({ onBack }) {
+                 fontWeight: '700',
+                 lineHeight: 1.3
+               }}>
+-                ⚠️ Durasi pengajuan melebihi sisa kuota {kuotaTerpilih.nama} Anda ({sisaTerpilih} hari).
++                ⚠️ Perhatian: durasi pengajuan melebihi sisa kuota {kuotaTerpilih.nama} Anda ({sisaTerpilih} hari). Pengajuan tetap dikirim — server menghitung hari kerja dan memutuskan persetujuan.
+               </p>
+             )}
+           </div>
+@@ -712,29 +706,6 @@ export default function IzinView({ onBack }) {
+                   </div>
+                 )}
+ 
+-                {item.catatan_approval && (
+-                  <div style={{ fontSize: '10px', color: '#1e293b', backgroundColor: '#f1f5f9', padding: '6px 8px', borderRadius: '6px', marginTop: '2px' }}>
+-                    <strong>Catatan HRD:</strong> {item.catatan_approval}
+-                  </div>
+-                )}
+-
+-                {item.approval_info?.is_bertingkat && (
+-                  <div style={{
+-                    marginTop: '2px',
+-                    padding: '6px 8px',
+-                    borderRadius: '8px',
+-                    backgroundColor: '#fff7ed',
+-                    border: '1px solid #fed7aa',
+-                    fontSize: '10px'
+-                  }}>
+-                    <span style={{ fontWeight: '800', color: '#c2410c', display: 'block', marginBottom: '2px' }}>
+-                      Alur Approval Bertingkat:
+-                    </span>
+-                    <span style={{ color: '#9a3412', fontWeight: '600' }}>
+-                      {item.approval_info.status_label}
+-                    </span>
+-                  </div>
+-                )}
+               </div>
+             ))}
+           </div>
+diff --git a/src/components/views/JadwalView.jsx b/src/components/views/JadwalView.jsx
+index d202070..9ba3971 100644
+--- a/src/components/views/JadwalView.jsx
++++ b/src/components/views/JadwalView.jsx
+@@ -13,18 +13,39 @@ export default function JadwalView({ onBack }) {
+   const [loadError, setLoadError] = useState('');
+   const [isTukarShiftOpen, setIsTukarShiftOpen] = useState(false);
+   const [pendingTukarCount, setPendingTukarCount] = useState(0);
+-  // Bulan yang ditampilkan dari jendela 30 hari ('YYYY-MM'); null =
+-  // bulan pertama jendela (bulan berjalan).
+-  const [activeMonth, setActiveMonth] = useState(null);
++  // Bulan yang ditampilkan ('YYYY-MM') — BUKAN lagi jendela 30 hari:
++  // prev/next mengambil bulan yang dituju dari server (cache per bulan).
++  const currentMonth = (() => {
++    try {
++      const d = new Date(getServerDate().getTime() + 7 * 3600 * 1000);
++      return d.toISOString().slice(0, 7);
++    } catch {
++      const d = new Date();
++      return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
++    }
++  })();
++  const [activeMonth, setActiveMonth] = useState(currentMonth);
++  const monthCacheRef = React.useRef({});
+ 
+-  const fetchJadwal = async () => {
++  const fetchJadwal = async (ym, { force = false } = {}) => {
++    const target = (typeof ym === 'string' && ym) ? ym : activeMonthRef.current;
++    // Cache per bulan: kembali ke bulan yang sudah dimuat tanpa network
++    // (kecuali force — tombol refresh / sesudah submit swap).
++    if (!force && monthCacheRef.current[target]) {
++      setData(monthCacheRef.current[target]);
++      setLoadError('');
++      return;
++    }
+     setIsLoading(true);
+     setLoadError('');
+     try {
+-      const res = await api.getJadwal();
++      const [y, m] = target.split('-').map(Number);
++      const days = new Date(y, m, 0).getDate();
++      const res = await api.getJadwal({ start: `${target}-01`, days });
+       if (res.success) {
+         setLoadError('');
+         setData(res);
++        monthCacheRef.current[target] = res;
+         // Badge jumlah permintaan swap: adapter mengembalikan `count`
+         // (bukan `pending_count`); hitung tidak bergantung pada roster.
+         api.getTukarShiftCount()
+@@ -48,10 +69,26 @@ export default function JadwalView({ onBack }) {
+     }
+   };
+ 
++  const activeMonthRef = React.useRef(activeMonth);
++  activeMonthRef.current = activeMonth;
++
+   useEffect(() => {
+-    fetchJadwal();
++    fetchJadwal(currentMonth);
++    // eslint-disable-next-line react-hooks/exhaustive-deps
+   }, []);
+ 
++  // Pindah bulan: set state + fetch bulan tujuan (cache bila sudah ada).
++  const goToMonth = (ym) => {
++    setActiveMonth(ym);
++    activeMonthRef.current = ym;
++    fetchJadwal(ym);
++  };
++  const shiftMonth = (delta) => {
++    const [y, m] = activeMonth.split('-').map(Number);
++    const d = new Date(y, m - 1 + delta, 1);
++    goToMonth(`${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`);
++  };
++
+   const shift = data?.shift_aktif;
+   const isRoster = Boolean(data?.is_roster);
+   const rosterList = data?.roster_bulan_ini || [];
+@@ -85,18 +122,10 @@ export default function JadwalView({ onBack }) {
+     }
+   })();
+ 
+-  // Navigasi bulan di dalam jendela 30 hari yang sudah dimuat.
+-  // getJadwal kini menerima {start, days}, tapi view ini belum fetch
+-  // bulan lain — navigasi memfilter jendela ini (tombol nonaktif di
+-  // ujung jendela).
+-  const monthsInWindow = [...new Set(rosterList
+-    .map((r) => (r.tanggal || '').slice(0, 7)).filter(Boolean))].sort();
+-  const shownMonth = activeMonth && monthsInWindow.includes(activeMonth)
+-    ? activeMonth : (monthsInWindow[0] || null);
+-  const shownMonthIdx = shownMonth ? monthsInWindow.indexOf(shownMonth) : -1;
+-  const visibleRoster = shownMonth
+-    ? rosterList.filter((r) => (r.tanggal || '').startsWith(shownMonth))
+-    : rosterList;
++  // Roster yang tampil = roster bulan aktif (sudah di-fetch per bulan,
++  // bukan filter jendela 30 hari).
++  const shownMonth = activeMonth;
++  const visibleRoster = rosterList;
+   const monthLabel = (ym) => {
+     if (!ym) return '';
+     const [y, m] = ym.split('-');
+@@ -157,7 +186,7 @@ export default function JadwalView({ onBack }) {
+       </p>
+       <button
+         type="button"
+-        onClick={fetchJadwal}
++        onClick={() => fetchJadwal(undefined, { force: true })}
+         style={{
+           padding: '9px 20px',
+           borderRadius: '10px',
+@@ -200,7 +229,7 @@ export default function JadwalView({ onBack }) {
+           <span style={{ fontSize: '12px', fontWeight: '700', color: '#be123c' }}>{loadError}</span>
+           <button
+             type="button"
+-            onClick={fetchJadwal}
++            onClick={() => fetchJadwal(undefined, { force: true })}
+             style={{ padding: '6px 12px', borderRadius: '8px', backgroundColor: '#e11d48', border: 'none', color: '#ffffff', fontSize: '11px', fontWeight: '700', cursor: 'pointer', flexShrink: 0 }}
+           >
+             Coba Lagi
+@@ -461,43 +490,42 @@ export default function JadwalView({ onBack }) {
+                 </button>
+               </div>
+ 
+-              {/* Navigasi bulan di dalam jendela yang dimuat */}
+-              {monthsInWindow.length > 1 && (
+-                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '10px' }}>
+-                  <button
+-                    type="button"
+-                    onClick={() => shownMonthIdx > 0 && setActiveMonth(monthsInWindow[shownMonthIdx - 1])}
+-                    disabled={shownMonthIdx <= 0}
+-                    style={{
+-                      width: '30px', height: '30px', borderRadius: '8px',
+-                      backgroundColor: 'var(--bg-slate)', border: '1px solid var(--border-light)',
+-                      display: 'flex', alignItems: 'center', justifyContent: 'center',
+-                      color: 'var(--text-main)', cursor: shownMonthIdx <= 0 ? 'not-allowed' : 'pointer',
+-                      opacity: shownMonthIdx <= 0 ? 0.4 : 1
+-                    }}
+-                  >
+-                    <ChevronLeft size={16} />
+-                  </button>
+-                  <span style={{ fontSize: '12px', fontWeight: '800', color: 'var(--text-main)' }}>
+-                    {monthLabel(shownMonth)} ({visibleRoster.length} hari)
+-                  </span>
+-                  <button
+-                    type="button"
+-                    onClick={() => shownMonthIdx >= 0 && shownMonthIdx < monthsInWindow.length - 1 && setActiveMonth(monthsInWindow[shownMonthIdx + 1])}
+-                    disabled={shownMonthIdx < 0 || shownMonthIdx >= monthsInWindow.length - 1}
+-                    style={{
+-                      width: '30px', height: '30px', borderRadius: '8px',
+-                      backgroundColor: 'var(--bg-slate)', border: '1px solid var(--border-light)',
+-                      display: 'flex', alignItems: 'center', justifyContent: 'center',
+-                      color: 'var(--text-main)',
+-                      cursor: (shownMonthIdx < 0 || shownMonthIdx >= monthsInWindow.length - 1) ? 'not-allowed' : 'pointer',
+-                      opacity: (shownMonthIdx < 0 || shownMonthIdx >= monthsInWindow.length - 1) ? 0.4 : 1
+-                    }}
+-                  >
+-                    <ChevronRight size={16} />
+-                  </button>
+-                </div>
+-              )}
++              {/* Navigasi bulan: prev/next mengambil bulan yang dituju
++                  dari server (cache per bulan) — bukan filter jendela. */}
++              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '10px' }}>
++                <button
++                  type="button"
++                  onClick={() => shiftMonth(-1)}
++                  disabled={isLoading}
++                  style={{
++                    width: '30px', height: '30px', borderRadius: '8px',
++                    backgroundColor: 'var(--bg-slate)', border: '1px solid var(--border-light)',
++                    display: 'flex', alignItems: 'center', justifyContent: 'center',
++                    color: 'var(--text-main)', cursor: isLoading ? 'not-allowed' : 'pointer',
++                    opacity: isLoading ? 0.4 : 1
++                  }}
++                >
++                  <ChevronLeft size={16} />
++                </button>
++                <span style={{ fontSize: '12px', fontWeight: '800', color: 'var(--text-main)' }}>
++                  {monthLabel(shownMonth)} ({visibleRoster.length} hari)
++                </span>
++                <button
++                  type="button"
++                  onClick={() => shiftMonth(1)}
++                  disabled={isLoading}
++                  style={{
++                    width: '30px', height: '30px', borderRadius: '8px',
++                    backgroundColor: 'var(--bg-slate)', border: '1px solid var(--border-light)',
++                    display: 'flex', alignItems: 'center', justifyContent: 'center',
++                    color: 'var(--text-main)',
++                    cursor: isLoading ? 'not-allowed' : 'pointer',
++                    opacity: isLoading ? 0.4 : 1
++                  }}
++                >
++                  <ChevronRight size={16} />
++                </button>
++              </div>
+ 
+               {rosterList.length === 0 ? (
+                 <div style={{ padding: '24px 16px', textAlign: 'center', color: 'var(--text-muted)', fontSize: '12px', backgroundColor: 'var(--bg-slate)', borderRadius: '8px' }}>
+@@ -658,7 +686,7 @@ export default function JadwalView({ onBack }) {
+         isOpen={isTukarShiftOpen}
+         onClose={() => setIsTukarShiftOpen(false)}
+         onSuccess={() => {
+-          fetchJadwal();
++          fetchJadwal(undefined, { force: true });
+         }}
+       />
+     </div>
+diff --git a/src/components/views/KehadiranBawahanView.jsx b/src/components/views/KehadiranBawahanView.jsx
+index e2b3718..67a1287 100644
+--- a/src/components/views/KehadiranBawahanView.jsx
++++ b/src/components/views/KehadiranBawahanView.jsx
+@@ -1,10 +1,15 @@
+ import React, { useState, useEffect, useRef, useCallback } from 'react';
+ import {
+   ChevronLeft, Users, Calendar, Search, ChevronRight, ChevronDown, X, Clock,
+-  MapPin, AlertTriangle, CheckCircle2, ShieldAlert, Sparkles,
++  MapPin, AlertTriangle, CheckCircle2, Sparkles,
+   Info, RefreshCw, Coffee, AlertCircle, Building, UserCheck
+ } from 'lucide-react';
+-import api, { formatDurasiMenit } from '../../services/api';
++import api, { formatDurasiMenit, getServerDate, getStoredUser } from '../../services/api';
++
++// Cache tampilan Org Chart per sesi login (pohon + state expand/cari):
++// kembali ke tab tanpa fetch ulang; kunci id user agar user berikutnya
++// tidak mewarisi tampilan user sebelumnya.
++let orgViewCache = null;
+ 
+ const NAMA_BULAN = [
+   'Januari', 'Februari', 'Maret', 'April', 'Mei', 'Juni',
+@@ -176,7 +181,7 @@ function OrgChartNode({ node, depth, meId, expanded, onToggle, meNodeRef }) {
+ }
+ 
+ export default function KehadiranBawahanView({ onBack }) {
+-  const currentDate = new Date();
++  const currentDate = getServerDate();
+   const [selectedBulan, setSelectedBulan] = useState(currentDate.getMonth() + 1);
+   const [selectedTahun, setSelectedTahun] = useState(currentDate.getFullYear());
+   
+@@ -212,6 +217,17 @@ export default function KehadiranBawahanView({ onBack }) {
+   // DITAMBAH jalur dari root ke node user login agar node user selalu
+   // terlihat (tidak tertutup di dalam cabang yang collapsed).
+   const loadOrgChart = useCallback(async (silent = false) => {
++    // Cache per sesi: kembali tanpa fetch ulang (kecuali refresh
++    // eksplisit silent=true). Kunci id user.
++    const cacheUserId = getStoredUser()?.id || null;
++    if (!silent && orgViewCache && orgViewCache.userId === cacheUserId && orgViewCache.tree) {
++      setOrgTree(orgViewCache.tree);
++      setOrgMeId(orgViewCache.meId);
++      setOrgExpanded(orgViewCache.expanded || {});
++      setOrgSearchQuery(orgViewCache.search || '');
++      setOrgLoaded(true);
++      return;
++    }
+     if (!silent) setOrgLoading(true);
+     setOrgError(null);
+     try {
+@@ -252,6 +268,18 @@ export default function KehadiranBawahanView({ onBack }) {
+     }
+   }, []);
+ 
++  // Persist state org chart ke cache sesi tiap berubah.
++  useEffect(() => {
++    if (!orgLoaded) return;
++    orgViewCache = {
++      userId: getStoredUser()?.id || null,
++      tree: orgTree,
++      meId: orgMeId,
++      expanded: orgExpanded,
++      search: orgSearchQuery,
++    };
++  }, [orgLoaded, orgTree, orgMeId, orgExpanded, orgSearchQuery]);
++
+   // Muat org chart sekali saat tab pertama dibuka.
+   useEffect(() => {
+     if (tabAktif === 'orgchart' && !orgLoaded && !orgLoading) {
+@@ -376,19 +404,20 @@ export default function KehadiranBawahanView({ onBack }) {
+     else setIsRefreshing(true);
+ 
+     try {
+-      // 1. Cek status otorisasi & setting admin
++      // 1. Cek status otorisasi. Gagal muat -> panel error + Coba lagi
++      // (BUKAN layar 'Fitur Dinonaktifkan': server tidak punya flag
++      // penonaktifan; cabang itu hanya hidup dari adapter lama yang
++      // meng-hardcode is_enabled).
+       const statusRes = await api.getKehadiranBawahanStatus();
+-      setStatusFitur(statusRes);
+-
+-      if (statusRes.message) {
+-        setApiError(statusRes.message);
+-        setIsLoading(false);
+-        setIsRefreshing(false);
++      if (!statusRes.success) {
++        setStatusFitur(null);
++        setApiError(statusRes.message || 'Gagal memuat data bawahan.');
+         return;
+       }
++      setStatusFitur(statusRes);
+       setApiError(null);
+ 
+-      if (statusRes.success && statusRes.is_enabled && statusRes.is_atasan) {
++      if (statusRes.is_atasan) {
+         const bulanParam = formatBulanTahunParam(selectedBulan, selectedTahun);
+         const listRes = await api.getKehadiranBawahanList(bulanParam);
+         if (listRes.message) {
+@@ -452,7 +481,12 @@ export default function KehadiranBawahanView({ onBack }) {
+     }
+   };
+ 
++  // Bulan berjalan (server) — navigasi next tidak boleh melewatinya.
++  const currentYm = `${currentDate.getFullYear()}-${String(currentDate.getMonth() + 1).padStart(2, '0')}`;
++  const selectedYm = `${selectedTahun}-${String(selectedBulan).padStart(2, '0')}`;
++  const isAtCurrentMonth = selectedYm >= currentYm;
+   const handleNextMonth = () => {
++    if (isAtCurrentMonth) return;
+     let nextM = selectedBulan + 1;
+     let nextY = selectedTahun;
+     if (nextM > 12) {
+@@ -489,72 +523,6 @@ export default function KehadiranBawahanView({ onBack }) {
+     );
+   }
+ 
+-  // Tampilan 2: Fitur Dinonaktifkan oleh Admin di Panel Monitoring
+-  if (statusFitur && !statusFitur.is_enabled) {
+-    return (
+-      <div style={{ padding: '20px', display: 'flex', flexDirection: 'column', gap: '16px' }} className="animate-fade-in">
+-        <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+-          <button
+-            type="button"
+-            onClick={onBack}
+-            className="btn-back-action"
+-            style={{
+-              width: '36px',
+-              height: '36px',
+-              borderRadius: '10px',
+-              backgroundColor: 'var(--bg-slate)',
+-              border: '1px solid var(--border-light)',
+-              display: 'flex',
+-              alignItems: 'center',
+-              justifyContent: 'center',
+-              color: 'var(--text-main)',
+-              cursor: 'pointer'
+-            }}
+-          >
+-            <ChevronLeft size={20} />
+-          </button>
+-          <h2 style={{ fontSize: '16px', fontWeight: '800', color: 'var(--text-main)', margin: 0 }}>
+-            Kehadiran Bawahan
+-          </h2>
+-        </div>
+-
+-        <div style={{
+-          backgroundColor: '#fff7ed',
+-          border: '1.5px solid #fed7aa',
+-          borderRadius: '16px',
+-          padding: '24px 20px',
+-          textAlign: 'center',
+-          display: 'flex',
+-          flexDirection: 'column',
+-          alignItems: 'center',
+-          gap: '12px',
+-          marginTop: '20px'
+-        }}>
+-          <div style={{
+-            width: '56px',
+-            height: '56px',
+-            borderRadius: '50%',
+-            backgroundColor: '#ffedd5',
+-            color: '#ea580c',
+-            display: 'flex',
+-            alignItems: 'center',
+-            justifyContent: 'center'
+-          }}>
+-            <ShieldAlert size={28} />
+-          </div>
+-          <div>
+-            <h3 style={{ fontSize: '15px', fontWeight: '800', color: '#9a3412', margin: '0 0 6px' }}>
+-              Fitur Dinonaktifkan
+-            </h3>
+-            <p style={{ fontSize: '12px', color: '#c2410c', margin: 0, lineHeight: 1.5 }}>
+-              Fitur riwayat absensi bawahan sedang dinonaktifkan oleh Administrator melalui menu monitoring di panel admin. Silakan hubungi admin jika Anda membutuhkan akses ini.
+-            </p>
+-          </div>
+-        </div>
+-      </div>
+-    );
+-  }
+-
+   // Tampilan 3: User Bukan Atasan / Tidak Ada Anggota Bawahan
+   if (statusFitur && !statusFitur.is_atasan) {
+     return (
+@@ -777,6 +745,7 @@ export default function KehadiranBawahanView({ onBack }) {
+           <button
+             type="button"
+             onClick={handleNextMonth}
++            disabled={isAtCurrentMonth}
+             style={{
+               padding: '6px',
+               borderRadius: '8px',
+@@ -1126,7 +1095,7 @@ export default function KehadiranBawahanView({ onBack }) {
+                           ? `Telat ${formatDurasiMenit(selectedDayDetail.detail_absensi.menit_terlambat)}`
+                           : (selectedDayDetail.detail_absensi.status_masuk === 'tepat_waktu'
+                             ? 'Tepat Waktu'
+-                            : 'Status tidak diketahui')}
++                            : 'Jadwal tidak tersedia')}
+                       </span>
+                     </div>
+ 
+@@ -1147,7 +1116,9 @@ export default function KehadiranBawahanView({ onBack }) {
+                           ? 'Tidak Absen Pulang (TP)'
+                           : (selectedDayDetail.detail_absensi.status_pulang === 'pulang_cepat'
+                               ? `Pulang Cepat ${formatDurasiMenit(selectedDayDetail.detail_absensi.menit_pulang_cepat)}`
+-                              : 'Normal')}
++                              : (selectedDayDetail.detail_absensi.status_pulang
++                                ? 'Normal'
++                                : 'Jadwal tidak tersedia'))}
+                       </span>
+                     </div>
+                   </div>
+@@ -1339,7 +1310,7 @@ export default function KehadiranBawahanView({ onBack }) {
+               flexShrink: 0,
+             }}
+           >
+-            重试
++            Coba lagi
+           </button>
+         </div>
+       )}
+@@ -1386,6 +1357,7 @@ export default function KehadiranBawahanView({ onBack }) {
+           <button
+             type="button"
+             onClick={handleNextMonth}
++            disabled={isAtCurrentMonth}
+             style={{
+               padding: '6px',
+               borderRadius: '8px',
+diff --git a/src/components/views/LemburView.jsx b/src/components/views/LemburView.jsx
+index ede6143..0e8f23b 100644
+--- a/src/components/views/LemburView.jsx
++++ b/src/components/views/LemburView.jsx
+@@ -134,6 +134,25 @@ export default function LemburView({ onBack }) {
+   const [keteranganTugas, setKeteranganTugas] = useState(draft0.keteranganTugas || '');
+   const [isSubmitting, setIsSubmitting] = useState(false);
+   const [formMessage, setFormMessage] = useState({ type: '', text: '' });
++  const [cancelMessage, setCancelMessage] = useState({ type: '', text: '' });
++  const [cancellingId, setCancellingId] = useState(null);
++
++  // Batalkan lembur draft (endpoint baru agen server; bila endpoint
++  // belum ada, error ditampilkan — bukan diam).
++  const handleCancelLembur = async (overtimeId) => {
++    if (!window.confirm('Batalkan pengajuan lembur draft ini?')) return;
++    setCancellingId(overtimeId);
++    setCancelMessage({ type: '', text: '' });
++    try {
++      await api.cancelLembur(overtimeId);
++      setCancelMessage({ type: 'success', text: 'Pengajuan lembur draft dibatalkan.' });
++      loadData();
++    } catch (err) {
++      setCancelMessage({ type: 'error', text: err.message || 'Gagal membatalkan pengajuan lembur.' });
++    } finally {
++      setCancellingId(null);
++    }
++  };
+ 
+   const loadData = async () => {
+     setIsLoading(true);
+@@ -160,13 +179,14 @@ export default function LemburView({ onBack }) {
+       const [h1, m1] = jamMulai.split(':').map(Number);
+       const [h2, m2] = jamSelesai.split(':').map(Number);
+       let totalMinutes = (h2 * 60 + m2) - (h1 * 60 + m1);
+-      if (totalMinutes < 0) {
+-        // Melintasi tengah malam (misal lembur 21:00 s/d 01:00)
++      // Selesai <= mulai -> lintas tengah malam (termasuk mulai ==
++      // selesai = 24 jam, sesuai aturan server) — bukan clamp '1.0'.
++      if (totalMinutes <= 0) {
+         totalMinutes += 24 * 60;
+       }
+-      return totalMinutes > 0 ? (totalMinutes / 60).toFixed(1) : '1.0';
++      return (totalMinutes / 60).toFixed(1);
+     } catch {
+-      return '1.0';
++      return '0.0';
+     }
+   };
+ 
+@@ -547,6 +567,19 @@ export default function LemburView({ onBack }) {
+           </div>
+         ) : (
+           <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
++            {cancelMessage.text && (
++              <div style={{
++                padding: '10px 14px',
++                borderRadius: '12px',
++                backgroundColor: cancelMessage.type === 'error' ? '#fef2f2' : '#f0fdf4',
++                border: `1px solid ${cancelMessage.type === 'error' ? '#fecaca' : '#bbf7d0'}`,
++                color: cancelMessage.type === 'error' ? '#b91c1c' : '#15803d',
++                fontSize: '12px',
++                fontWeight: '600'
++              }}>
++                {cancelMessage.text}
++              </div>
++            )}
+             {list.map((item) => (
+               <div
+                 key={item.id}
+@@ -583,22 +616,28 @@ export default function LemburView({ onBack }) {
+                   "{item.keterangan_tugas}"
+                 </p>
+ 
+-                {item.approval_info?.is_bertingkat && (
+-                  <div style={{
+-                    marginTop: '2px',
+-                    padding: '6px 8px',
+-                    borderRadius: '8px',
+-                    backgroundColor: '#fff7ed',
+-                    border: '1px solid #fed7aa',
+-                    fontSize: '10px'
+-                  }}>
+-                    <span style={{ fontWeight: '800', color: '#c2410c', display: 'block', marginBottom: '2px' }}>
+-                      Alur Approval Bertingkat:
+-                    </span>
+-                    <span style={{ color: '#9a3412', fontWeight: '600' }}>
+-                      {item.approval_info.status_label}
+-                    </span>
+-                  </div>
++                {/* Batalkan hanya untuk draft (state mentah di _raw):
++                    confirm/validate sudah masuk antre approval. */}
++                {item._raw?.state === 'draft' && (
++                  <button
++                    type="button"
++                    onClick={() => handleCancelLembur(item.id)}
++                    disabled={cancellingId === item.id}
++                    style={{
++                      marginTop: '4px',
++                      padding: '7px 12px',
++                      borderRadius: '8px',
++                      border: '1.5px solid #fecdd3',
++                      backgroundColor: '#fff1f2',
++                      color: '#be123c',
++                      fontSize: '11px',
++                      fontWeight: '700',
++                      cursor: 'pointer',
++                      alignSelf: 'flex-start'
++                    }}
++                  >
++                    {cancellingId === item.id ? 'Membatalkan...' : 'Batalkan Pengajuan'}
++                  </button>
+                 )}
+               </div>
+             ))}
+diff --git a/src/components/views/MasalahView.jsx b/src/components/views/MasalahView.jsx
+index 67d81ed..d1a8be7 100644
+--- a/src/components/views/MasalahView.jsx
++++ b/src/components/views/MasalahView.jsx
+@@ -5,13 +5,15 @@ import {
+   HelpCircle, Camera, MapPin, RefreshCw, AlertTriangle, ShieldCheck,
+   CheckCircle, MessageSquareWarning, Eye, Calendar, Info
+ } from 'lucide-react';
+-import api from '../../services/api';
++import api, { getStoredUser } from '../../services/api';
++import { loadDraft, saveDraft, clearDraft, DRAFT_KEYS } from '../../services/draftService';
+ import DocumentPreviewModal from '../DocumentPreviewModal';
+ 
+ const KATEGORI_OPTIONS = [
+   { id: 'gagal_absen_masuk', label: 'Gagal Absen Masuk', desc: 'Kendala saat check-in kehadiran pagi' },
+   { id: 'gagal_absen_pulang', label: 'Gagal Absen Pulang', desc: 'Kendala saat check-out kepulangan' },
+   { id: 'gps_tidak_terdeteksi', label: 'GPS / Lokasi Error', desc: 'Sinyal GPS hilang atau titik melompat' },
++  { id: 'gps_tidak_akurat', label: 'GPS Tidak Akurat', desc: 'Titik lokasi meleset dari posisi sebenarnya' },
+   { id: 'kamera_face_error', label: 'Kamera / Wajah Gagal', desc: 'Kamera gelap atau face recognition gagal' },
+   { id: 'sistem_error', label: 'Gangguan Aplikasi / Server', desc: 'Aplikasi tertutup sendiri atau jaringan putus' },
+   { id: 'lainnya', label: 'Kendala Lainnya', desc: 'Masalah lain seputar akun atau aplikasi' },
+@@ -39,15 +41,23 @@ export default function MasalahView({ onBack }) {
+   const [selectedItem, setSelectedItem] = useState(null);
+   const [previewFoto, setPreviewFoto] = useState({ isOpen: false, id: null });
+ 
+-  // Form State
+-  const [kategori, setKategori] = useState('gagal_absen_masuk');
+-  const [judul, setJudul] = useState('');
+-  const [tanggalKejadian, setTanggalKejadian] = useState(new Date().toISOString().split('T')[0]);
+-  const [jamKejadian, setJamKejadian] = useState(() => {
++  // Form State (draf persisten — foto tidak ikut, tidak bisa JSON).
++  const draftKey = getStoredUser()?.id ? DRAFT_KEYS.masalah(getStoredUser().id) : null;
++  const draft0 = draftKey ? loadDraft(draftKey, {}) : {};
++  const [kategori, setKategori] = useState(draft0.kategori || 'gagal_absen_masuk');
++  const [judul, setJudul] = useState(draft0.judul || '');
++  const [tanggalKejadian, setTanggalKejadian] = useState(draft0.tanggalKejadian || new Date().toISOString().split('T')[0]);
++  const [jamKejadian, setJamKejadian] = useState(draft0.jamKejadian || (() => {
+     const d = new Date();
+     return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
+-  });
+-  const [deskripsi, setDeskripsi] = useState('');
++  })());
++  const [deskripsi, setDeskripsi] = useState(draft0.deskripsi || '');
++
++  // Simpan draf tiap perubahan field.
++  useEffect(() => {
++    if (!draftKey) return;
++    saveDraft(draftKey, { kategori, judul, tanggalKejadian, jamKejadian, deskripsi });
++  }, [draftKey, kategori, judul, tanggalKejadian, jamKejadian, deskripsi]);
+   const [fotoBukti, setFotoBukti] = useState(null);
+   const [previewBukti, setPreviewBukti] = useState(null);
+   const [isSubmitting, setIsSubmitting] = useState(false);
+@@ -123,6 +133,7 @@ export default function MasalahView({ onBack }) {
+ 
+       if (res.success) {
+         setAlertMsg({ type: 'success', text: res.message || 'Pengajuan kendala berhasil dikirim!' });
++        if (draftKey) clearDraft(draftKey);
+         // Reset form
+         setJudul('');
+         setDeskripsi('');
+@@ -1054,11 +1065,6 @@ export default function MasalahView({ onBack }) {
+                   <div style={{ fontSize: '12px', color: '#1e293b', lineHeight: 1.5, marginTop: '4px', fontWeight: '500' }}>
+                     {selectedItem.catatan_admin || 'Tidak ada catatan tertulis dari admin.'}
+                   </div>
+-                  {selectedItem.tanggal_diproses && (
+-                    <div style={{ fontSize: '10px', color: '#94a3b8', marginTop: '8px' }}>
+-                      Diproses pada: {selectedItem.tanggal_diproses} WIB
+-                    </div>
+-                  )}
+                 </>
+               )}
+             </div>
+diff --git a/src/components/views/PengumumanView.jsx b/src/components/views/PengumumanView.jsx
+index 29300cf..adaa99d 100644
+--- a/src/components/views/PengumumanView.jsx
++++ b/src/components/views/PengumumanView.jsx
+@@ -1,11 +1,11 @@
+ import React, { useState, useEffect } from 'react';
+ import {
+   ArrowLeft, Megaphone, Bell, CheckCircle2, Clock, AlertCircle,
+-  FileText, Calendar, Paperclip, ChevronRight, RefreshCw, Eye,
++  FileText, Calendar, ChevronRight, RefreshCw, Eye,
+   Sparkles, Pin, Flame, ShieldAlert, Download, X, ExternalLink
+ } from 'lucide-react';
+ import api from '../../services/api';
+-import DocumentPreviewModal from '../DocumentPreviewModal';
++
+ 
+ export default function PengumumanView({ onBack }) {
+   const [filter, setFilter] = useState('semua'); // 'semua' | 'belum_dibaca' | 'penting'
+@@ -19,14 +19,6 @@ export default function PengumumanView({ onBack }) {
+   const [selectedItem, setSelectedItem] = useState(null);
+   const [isDetailLoading, setIsDetailLoading] = useState(false);
+ 
+-  // State In-App Document Preview Modal
+-  const [previewDoc, setPreviewDoc] = useState({
+-    isOpen: false,
+-    modul: 'pengumuman',
+-    id: null,
+-    title: ''
+-  });
+-
+   const loadPengumuman = async (activeFilter = filter) => {
+     setIsLoading(true);
+     setErrorMessage('');
+@@ -80,16 +72,6 @@ export default function PengumumanView({ onBack }) {
+     }
+   };
+ 
+-  const handleOpenDocPreview = (e, item) => {
+-    e.stopPropagation();
+-    setPreviewDoc({
+-      isOpen: true,
+-      modul: 'pengumuman',
+-      id: item.id,
+-      title: item.lampiran_nama || 'Dokumen Pengumuman'
+-    });
+-  };
+-
+   // Helper warna badge tipe
+   const getTipeBadge = (tipe) => {
+     switch (tipe) {
+@@ -601,19 +583,6 @@ export default function PengumumanView({ onBack }) {
+                         <span>•</span>
+                         <span>{item.pembuat}</span>
+                       </div>
+-
+-                      {item.has_lampiran && (
+-                        <span style={{
+-                          display: 'inline-flex',
+-                          alignItems: 'center',
+-                          gap: '3px',
+-                          color: '#2563eb',
+-                          fontWeight: '700'
+-                        }}>
+-                          <Paperclip size={11} />
+-                          Lampiran
+-                        </span>
+-                      )}
+                     </div>
+                   </div>
+                 </div>
+@@ -812,81 +781,6 @@ export default function PengumumanView({ onBack }) {
+                 {selectedItem.konten || 'Tidak ada isi pengumuman.'}
+               </div>
+ 
+-              {/* Kartu Dokumen Lampiran jika ada */}
+-              {selectedItem.has_lampiran && (
+-                <div style={{
+-                  marginTop: '18px',
+-                  padding: '12px',
+-                  backgroundColor: '#f8fafc',
+-                  borderRadius: '14px',
+-                  border: '1px solid #e2e8f0'
+-                }}>
+-                  <div style={{
+-                    display: 'flex',
+-                    alignItems: 'center',
+-                    justifyContent: 'space-between',
+-                    marginBottom: '8px'
+-                  }}>
+-                    <span style={{ fontSize: '11px', fontWeight: '800', color: '#475569', display: 'flex', alignItems: 'center', gap: '4px' }}>
+-                      <Paperclip size={12} />
+-                      Dokumen Surat / Berkas
+-                    </span>
+-                  </div>
+-
+-                  <div style={{
+-                    backgroundColor: '#ffffff',
+-                    padding: '10px 12px',
+-                    borderRadius: '10px',
+-                    border: '1px solid #e2e8f0',
+-                    display: 'flex',
+-                    alignItems: 'center',
+-                    justifyContent: 'space-between',
+-                    gap: '10px'
+-                  }}>
+-                    <div style={{ display: 'flex', alignItems: 'center', gap: '8px', minWidth: 0 }}>
+-                      <FileText size={18} color="#2563eb" style={{ shrink: 0 }} />
+-                      <div style={{ minWidth: 0 }}>
+-                        <p style={{
+-                          fontSize: '11px',
+-                          fontWeight: '700',
+-                          color: '#0f172a',
+-                          margin: 0,
+-                          overflow: 'hidden',
+-                          textOverflow: 'ellipsis',
+-                          whiteSpace: 'nowrap'
+-                        }}>
+-                          {selectedItem.lampiran_nama || 'Dokumen_Lampiran.pdf'}
+-                        </p>
+-                        <span style={{ fontSize: '9px', color: '#94a3b8' }}>
+-                          Buka langsung di aplikasi
+-                        </span>
+-                      </div>
+-                    </div>
+-
+-                    <button
+-                      type="button"
+-                      onClick={(e) => handleOpenDocPreview(e, selectedItem)}
+-                      style={{
+-                        padding: '6px 12px',
+-                        backgroundColor: '#eff6ff',
+-                        color: '#2563eb',
+-                        border: '1px solid #bfdbfe',
+-                        borderRadius: '8px',
+-                        fontSize: '11px',
+-                        fontWeight: '700',
+-                        cursor: 'pointer',
+-                        display: 'flex',
+-                        alignItems: 'center',
+-                        gap: '4px',
+-                        flexShrink: 0
+-                      }}
+-                    >
+-                      <Eye size={12} />
+-                      Buka
+-                    </button>
+-                  </div>
+-                </div>
+-              )}
+             </div>
+ 
+             {/* Modal Footer */}
+@@ -916,15 +810,6 @@ export default function PengumumanView({ onBack }) {
+           </div>
+         </div>
+       )}
+-
+-      {/* In-App Preview Modal untuk Dokumen Lampiran Pengumuman */}
+-      <DocumentPreviewModal
+-        isOpen={previewDoc.isOpen}
+-        onClose={() => setPreviewDoc({ ...previewDoc, isOpen: false })}
+-        modul={previewDoc.modul}
+-        id={previewDoc.id}
+-        title={previewDoc.title}
+-      />
+     </div>
+   );
+ }
+diff --git a/src/components/views/ProfileView.jsx b/src/components/views/ProfileView.jsx
+index 5214c3c..a89cc01 100644
+--- a/src/components/views/ProfileView.jsx
++++ b/src/components/views/ProfileView.jsx
+@@ -5,7 +5,7 @@ import {
+   ChevronRight, Camera, RefreshCw, Check, X,
+   CalendarDays, Award, TrendingUp, Navigation
+ } from 'lucide-react';
+-import api, { getOrCreateDeviceId } from '../../services/api';
++import api, { getOrCreateDeviceId, isAuthError } from '../../services/api';
+ 
+ export default function ProfileView({ user, onBack, onLogout, onOpenDenda, onOpenJadwal, onPhotoUpdated }) {
+   const [showPasswordForm, setShowPasswordForm] = useState(false);
+@@ -15,9 +15,10 @@ export default function ProfileView({ user, onBack, onLogout, onOpenDenda, onOpe
+   const [isSubmitting, setIsSubmitting] = useState(false);
+   const [message, setMessage] = useState({ type: '', text: '' });
+ 
+-  // State Skor KPI Periode Terbaru
++  // State Skor KPI Periode Terbaru (gagal muat = state error, bukan diam).
+   const [kpiData, setKpiData] = useState(user?.kpi_terbaru || null);
+   const [isLoadingKpi, setIsLoadingKpi] = useState(!user?.kpi_terbaru);
++  const [kpiError, setKpiError] = useState('');
+ 
+   useEffect(() => {
+     if (user?.kpi_terbaru) {
+@@ -31,9 +32,19 @@ export default function ProfileView({ user, onBack, onLogout, onOpenDenda, onOpe
+       .then(res => {
+         if (isMounted && res.success) {
+           setKpiData(res.data);
++        } else if (isMounted && !res.success) {
++          setKpiError(res.message || 'Gagal memuat evaluasi kinerja.');
++        }
++      })
++      .catch((err) => {
++        if (isMounted) {
++          if (isAuthError(err)) {
++            window.dispatchEvent(new CustomEvent('auth-expired'));
++          } else {
++            setKpiError(err.message || 'Gagal memuat evaluasi kinerja.');
++          }
+         }
+       })
+-      .catch(() => {})
+       .finally(() => {
+         if (isMounted) setIsLoadingKpi(false);
+       });
+@@ -83,6 +94,8 @@ export default function ProfileView({ user, onBack, onLogout, onOpenDenda, onOpe
+       const res = await api.updateFotoProfil(formData);
+ 
+       if (res.success) {
++        // Revoke blob preview (sebelumnya hanya di-cancel yang revoke).
++        if (previewFoto) URL.revokeObjectURL(previewFoto);
+         setFotoProfilUrl(res.foto_profil);
+         setPreviewFoto(null);
+         setFileFoto(null);
+@@ -93,7 +106,11 @@ export default function ProfileView({ user, onBack, onLogout, onOpenDenda, onOpe
+         setTimeout(() => setFotoMessage({ type: '', text: '' }), 3500);
+       }
+     } catch (err) {
+-      setFotoMessage({ type: 'error', text: err.message || 'Gagal menyimpan foto profil.' });
++      if (isAuthError(err)) {
++        window.dispatchEvent(new CustomEvent('auth-expired'));
++      } else {
++        setFotoMessage({ type: 'error', text: err.message || 'Gagal menyimpan foto profil.' });
++      }
+     } finally {
+       setIsUploadingFoto(false);
+     }
+@@ -129,7 +146,11 @@ export default function ProfileView({ user, onBack, onLogout, onOpenDenda, onOpe
+         setTimeout(() => setShowPasswordForm(false), 2000);
+       }
+     } catch (err) {
+-      setMessage({ type: 'error', text: err.message || 'Gagal mengubah kata sandi.' });
++      if (isAuthError(err)) {
++        window.dispatchEvent(new CustomEvent('auth-expired'));
++      } else {
++        setMessage({ type: 'error', text: err.message || 'Gagal mengubah kata sandi.' });
++      }
+     } finally {
+       setIsSubmitting(false);
+     }
+@@ -420,6 +441,17 @@ export default function ProfileView({ user, onBack, onLogout, onOpenDenda, onOpe
+               <RefreshCw size={14} className="animate-spin" />
+               <span style={{ fontSize: '11px', fontWeight: '600' }}>Memuat evaluasi kinerja...</span>
+             </div>
++          ) : kpiError ? (
++            <div style={{ padding: '12px', textAlign: 'center', backgroundColor: '#fef2f2', border: '1px solid #fecaca', borderRadius: '10px' }}>
++              <p style={{ fontSize: '11px', color: '#b91c1c', margin: '0 0 8px', fontWeight: '600' }}>{kpiError}</p>
++              <button
++                type="button"
++                onClick={() => { setKpiError(''); setIsLoadingKpi(true); api.getKpiTerbaru().then((res) => { if (res.success) setKpiData(res.data); else setKpiError(res.message || 'Gagal memuat evaluasi kinerja.'); }).catch((err) => { if (isAuthError(err)) window.dispatchEvent(new CustomEvent('auth-expired')); else setKpiError(err.message || 'Gagal memuat evaluasi kinerja.'); }).finally(() => setIsLoadingKpi(false)); }}
++                style={{ padding: '6px 14px', borderRadius: '8px', backgroundColor: '#dc2626', border: 'none', color: '#ffffff', fontSize: '11px', fontWeight: '700', cursor: 'pointer' }}
++              >
++                Coba lagi
++              </button>
++            </div>
+           ) : kpiData ? (
+             <div>
+               <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+@@ -815,7 +847,7 @@ export default function ProfileView({ user, onBack, onLogout, onOpenDenda, onOpe
+       {/* Tombol Logout */}
+       <button
+         type="button"
+-        onClick={onLogout}
++        onClick={() => { if (window.confirm('Keluar dari aplikasi? Anda harus login lagi untuk memakai aplikasi.')) onLogout(); }}
+         style={{
+           width: '100%',
+           height: '46px',
+diff --git a/src/components/views/ReimbursementView.jsx b/src/components/views/ReimbursementView.jsx
+index 45fb312..363af67 100644
+--- a/src/components/views/ReimbursementView.jsx
++++ b/src/components/views/ReimbursementView.jsx
+@@ -153,7 +153,13 @@ export default function ReimbursementView({ onBack }) {
+       const res = await api.ajukanReimbursement(formData);
+ 
+       if (res.success) {
+-        setToastMessage({ type: 'success', text: res.message || 'Pengajuan klaim berhasil dikirim.' });
++        // Dokumen dikirim tapi server melaporkan lampiran TIDAK
++        // tersimpan -> peringatan eksplisit (bukan sukses penuh).
++        if (dokumenFile && res.attachment_saved === false) {
++          setFormError('Pengajuan terkirim, tetapi lampiran bukti nota GAGAL tersimpan di server. Silakan hubungi admin / kirim ulang dengan lampiran.');
++        } else {
++          setToastMessage({ type: 'success', text: res.message || 'Pengajuan klaim berhasil dikirim.' });
++        }
+         if (draftKey) clearDraft(draftKey);
+         setTimeout(() => setToastMessage({ type: '', text: '' }), 4000);
+ 
+@@ -440,8 +446,6 @@ export default function ReimbursementView({ onBack }) {
+             </div>
+           ) : (
+             list.map(item => {
+-              const approval = item.approval || {};
+-              const isBertingkat = approval.is_bertingkat;
+ 
+               return (
+                 <div
+@@ -495,7 +499,7 @@ export default function ReimbursementView({ onBack }) {
+                         ? 'Telah Dicairkan'
+                         : (item.status === 'disetujui'
+                           ? 'Disetujui'
+-                          : (item.status === 'ditolak' ? 'Ditolak' : (isBertingkat ? `Step ${approval.step_current}/${approval.step_total}` : 'Menunggu Admin')))}
++                          : (item.status === 'ditolak' ? 'Ditolak' : 'Menunggu Admin'))}
+                     </span>
+                   </div>
+ 
+@@ -568,58 +572,6 @@ export default function ReimbursementView({ onBack }) {
+                       </div>
+                     )}
+ 
+-                    {/* Timeline Progres Approval Bertingkat jika ada */}
+-                    {isBertingkat && approval.steps && approval.steps.length > 0 && (
+-                      <div style={{
+-                        marginTop: '6px',
+-                        paddingTop: '8px',
+-                        borderTop: '1px solid #f1f5f9',
+-                        display: 'flex',
+-                        flexDirection: 'column',
+-                        gap: '6px'
+-                      }}>
+-                        <span style={{ fontSize: '10px', fontWeight: '800', color: '#64748b', textTransform: 'uppercase' }}>
+-                          Progres Persetujuan Bertingkat:
+-                        </span>
+-                        {approval.steps.map(s => {
+-                          const isDone = s.status === 'disetujui';
+-                          const isReject = s.status === 'ditolak';
+-                          const isCurr = s.is_current;
+-
+-                          return (
+-                            <div key={s.step_ke} style={{
+-                              display: 'flex',
+-                              alignItems: 'center',
+-                              justifyContent: 'space-between',
+-                              fontSize: '11px',
+-                              padding: '4px 6px',
+-                              borderRadius: '6px',
+-                              backgroundColor: isCurr ? '#fff7ed' : '#f8fafc',
+-                              border: isCurr ? '1px solid #fed7aa' : '1px solid transparent'
+-                            }}>
+-                              <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+-                                <span style={{
+-                                  width: '8px',
+-                                  height: '8px',
+-                                  borderRadius: '50%',
+-                                  backgroundColor: isDone ? '#10b981' : (isReject ? '#ef4444' : (isCurr ? '#f97316' : '#cbd5e1'))
+-                                }} />
+-                                <span style={{ fontWeight: '600', color: '#334155' }}>
+-                                  Step {s.step_ke}: {s.label}
+-                                </span>
+-                              </div>
+-                              <span style={{
+-                                fontSize: '10px',
+-                                fontWeight: '700',
+-                                color: isDone ? '#059669' : (isReject ? '#dc2626' : (isCurr ? '#ea580c' : '#94a3b8'))
+-                              }}>
+-                                {isDone ? 'Disetujui' : (isReject ? 'Ditolak' : (isCurr ? 'Menunggu' : 'Antrean'))}
+-                              </span>
+-                            </div>
+-                          );
+-                        })}
+-                      </div>
+-                    )}
+                   </div>
+                 </div>
+               );
+diff --git a/src/components/views/RiwayatView.jsx b/src/components/views/RiwayatView.jsx
+index f3fe2ec..c054823 100644
+--- a/src/components/views/RiwayatView.jsx
++++ b/src/components/views/RiwayatView.jsx
+@@ -320,7 +320,7 @@ export default function RiwayatView({ onBack }) {
+                           padding: '2px 8px',
+                           borderRadius: '999px'
+                         }}>
+-                          Cepat {item.menit_pulang_cepat}m
++                          Cepat {formatDurasiMenit(item.menit_pulang_cepat)}
+                         </span>
+                       )}
+                     </div>
+@@ -539,7 +539,7 @@ export default function RiwayatView({ onBack }) {
+               <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                 <span style={{ color: 'var(--text-muted)' }}>Status Pulang:</span>
+                 <strong style={{ color: selectedDetail.status_pulang === 'pulang_cepat' ? '#2563eb' : 'var(--text-main)' }}>
+-                  {selectedDetail.status_pulang === 'pulang_cepat' ? `Pulang Cepat (${selectedDetail.menit_pulang_cepat}m)` : 'Normal'}
++                  {selectedDetail.status_pulang === 'pulang_cepat' ? `Pulang Cepat (${formatDurasiMenit(selectedDetail.menit_pulang_cepat)})` : 'Normal'}
+                 </strong>
+               </div>
+               <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+diff --git a/src/components/views/SlipGajiView.jsx b/src/components/views/SlipGajiView.jsx
+index d1f2c0c..a126c69 100644
+--- a/src/components/views/SlipGajiView.jsx
++++ b/src/components/views/SlipGajiView.jsx
+@@ -30,31 +30,48 @@ export default function SlipGajiView({ onBack }) {
+   const [previewSlip, setPreviewSlip] = useState({ isOpen: false, id: null });
+   const [isLoadingList, setIsLoadingList] = useState(true);
+   const [isLoadingDetail, setIsLoadingDetail] = useState(false);
++  const [isLoadingMore, setIsLoadingMore] = useState(false);
++  const [listError, setListError] = useState('');
++  const [slipTotal, setSlipTotal] = useState(null);
++  const SLIP_PAGE = 24;
+ 
+-  // Format Helper Rupiah
+-  const formatRupiah = (val) => {
+-    return 'Rp ' + Number(val || 0).toLocaleString('id-ID');
++  // Format mata uang dari server (IDR -> 'Rp', lainnya kode apa adanya).
++  const formatRupiah = (val, cur) => {
++    const label = cur === 'IDR' ? 'Rp' : (cur || 'Rp');
++    return `${label} ${Number(val || 0).toLocaleString('id-ID')}`;
++  };
++
++  // Muat daftar slip gaji (limit/offset server) + state ERROR jaringan
++  // yang dibedakan dari kosong (tombol Coba lagi).
++  const fetchSlipList = async (append = false) => {
++    if (append) setIsLoadingMore(true);
++    else setIsLoadingList(true);
++    setListError('');
++    try {
++      const res = await api.getSlipGaji({ limit: SLIP_PAGE, offset: append ? slipList.length : 0 });
++      if (res.success && res.slip_gaji) {
++        setSlipList((prev) => (append ? [...prev, ...res.slip_gaji] : res.slip_gaji));
++        setSlipTotal(typeof res.total === 'number' ? res.total : null);
++      } else if (!append) {
++        setSlipList([]);
++      }
++    } catch (err) {
++      console.error('Gagal mengambil daftar slip gaji:', err);
++      setListError(err.message || 'Gagal memuat daftar slip gaji.');
++      if (!append) setSlipList([]);
++    } finally {
++      setIsLoadingList(false);
++      setIsLoadingMore(false);
++    }
+   };
+ 
+   // Muat daftar slip gaji saat inisialisasi
+   useEffect(() => {
+-    const fetchSlipList = async () => {
+-      setIsLoadingList(true);
+-      try {
+-        const res = await api.getSlipGaji();
+-        if (res.success && res.slip_gaji) {
+-          setSlipList(res.slip_gaji);
+-        } else {
+-          setSlipList([]);
+-        }
+-      } catch (err) {
+-        console.error('Gagal mengambil daftar slip gaji:', err);
+-      } finally {
+-        setIsLoadingList(false);
+-      }
+-    };
+-    fetchSlipList();
++    fetchSlipList(false);
++    // eslint-disable-next-line react-hooks/exhaustive-deps
+   }, []);
++  // Muat lagi hanya bila server mengirim total dan belum semua dimuat.
++  const hasMoreSlips = slipTotal != null && slipList.length < slipTotal;
+ 
+   // Muat detail saat pengguna mengklik salah satu card periode
+   const handleSelectSlip = async (slipId) => {
+@@ -207,50 +224,23 @@ export default function SlipGajiView({ onBack }) {
+                     fontSize: '10px',
+                     fontWeight: '800',
+                     textTransform: 'uppercase',
+-                    backgroundColor: slipDetail.status_pembayaran === 'dibayar' ? 'rgba(16, 185, 129, 0.2)' : 'rgba(59, 130, 246, 0.2)',
+-                    color: slipDetail.status_pembayaran === 'dibayar' ? '#34d399' : '#60a5fa',
+-                    border: `1px solid ${slipDetail.status_pembayaran === 'dibayar' ? 'rgba(16, 185, 129, 0.3)' : 'rgba(59, 130, 246, 0.3)'}`
++                    backgroundColor: 'rgba(59, 130, 246, 0.2)',
++                    color: '#60a5fa',
++                    border: '1px solid rgba(59, 130, 246, 0.3)'
+                   }}
+                 >
+-                  {slipDetail.status_pembayaran === 'dibayar' ? 'Dibayar' : (slipDetail.state_label || '-')}
++                  {slipDetail.state_label || '-'}
+                 </span>
+               </div>
+ 
+               <div style={{ fontSize: '28px', fontWeight: '900', color: '#34d399', letterSpacing: '-0.5px', marginBottom: '16px' }}>
+-                {formatRupiah(slipDetail.gaji_bersih)}
++                {formatRupiah(slipDetail.gaji_bersih, slipDetail.currency)}
+               </div>
+ 
+               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', paddingTop: '12px', borderTop: '1px solid rgba(255,255,255,0.1)', fontSize: '11px', color: '#94a3b8' }}>
+                 <span style={{ fontFamily: 'monospace', fontWeight: '700', color: '#cbd5e1' }}>{slipDetail.nomor_slip}</span>
+-                {slipDetail.metode_pembayaran ? (<span>{slipDetail.metode_pembayaran}</span>) : null}
+-              </div>
+-            </div>
+-
+-            {/* Statistik Kehadiran, Lembur & Denda — hanya bila server mengirim (S3) */}
+-            {(slipDetail.total_kehadiran != null || slipDetail.total_jam_lembur != null || slipDetail.total_menit_terlambat != null) && (
+-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '10px' }}>
+-              <div style={{ background: '#ffffff', borderRadius: '16px', padding: '12px', textAlign: 'center', border: '1px solid #e2e8f0', boxShadow: '0 2px 6px rgba(0,0,0,0.02)' }}>
+-                <span style={{ fontSize: '10px', fontWeight: '700', color: '#64748b', textTransform: 'uppercase' }}>Hadir</span>
+-                <div style={{ fontSize: '16px', fontWeight: '800', color: '#0f172a', marginTop: '2px' }}>
+-                  {slipDetail.total_kehadiran} <span style={{ fontSize: '10px', fontWeight: '600', color: '#94a3b8' }}>Hari</span>
+-                </div>
+-              </div>
+-
+-              <div style={{ background: '#fffbeb', borderRadius: '16px', padding: '12px', textAlign: 'center', border: '1px solid #fef3c7', boxShadow: '0 2px 6px rgba(217, 119, 6, 0.05)' }}>
+-                <span style={{ fontSize: '10px', fontWeight: '700', color: '#b45309', textTransform: 'uppercase' }}>Lembur</span>
+-                <div style={{ fontSize: '16px', fontWeight: '800', color: '#92400e', marginTop: '2px' }}>
+-                  {slipDetail.total_jam_lembur} <span style={{ fontSize: '10px', fontWeight: '600', color: '#b45309' }}>Jam</span>
+-                </div>
+-              </div>
+-
+-              <div style={{ background: '#fff1f2', borderRadius: '16px', padding: '12px', textAlign: 'center', border: '1px solid #fee2e2', boxShadow: '0 2px 6px rgba(225, 29, 72, 0.05)' }}>
+-                <span style={{ fontSize: '10px', fontWeight: '700', color: '#be123c', textTransform: 'uppercase' }}>Terlambat</span>
+-                <div style={{ fontSize: '16px', fontWeight: '800', color: '#9f1239', marginTop: '2px' }}>
+-                  {formatDurasiMenit(slipDetail.total_menit_terlambat)}
+-                </div>
+               </div>
+             </div>
+-            )}
+ 
+             {/* Rincian Komponen Penerimaan & Tunjangan */}
+             <div style={{ background: '#ffffff', borderRadius: '18px', border: '1px solid #e2e8f0', overflow: 'hidden', boxShadow: '0 2px 8px rgba(0,0,0,0.02)' }}>
+@@ -271,7 +261,7 @@ export default function SlipGajiView({ onBack }) {
+                   <div>
+                     <span style={{ fontSize: '13px', fontWeight: '800', color: '#0f172a' }}>Penerimaan (Tunjangan)</span>
+                     <span style={{ fontSize: '11px', color: '#059669', fontWeight: '700', marginLeft: '6px' }}>
+-                      +{formatRupiah(Number(slipDetail.gaji_pokok) + Number(slipDetail.total_tunjangan))}
++                      +{formatRupiah(Number(slipDetail.gaji_pokok) + Number(slipDetail.total_tunjangan), slipDetail.currency)}
+                     </span>
+                   </div>
+                 </div>
+@@ -284,7 +274,7 @@ export default function SlipGajiView({ onBack }) {
+                     <span style={{ color: '#0f172a', fontWeight: '800' }}>Gaji Pokok Dasar</span>
+                     <span style={{ display: 'block', fontSize: '10px', color: '#94a3b8' }}>Gaji pokok dasar bulanan</span>
+                   </div>
+-                  <span style={{ fontWeight: '800', color: '#0f172a' }}>{formatRupiah(slipDetail.gaji_pokok)}</span>
++                  <span style={{ fontWeight: '800', color: '#0f172a' }}>{formatRupiah(slipDetail.gaji_pokok, slipDetail.currency)}</span>
+                 </div>
+ 
+                 {/* Daftar Tunjangan */}
+@@ -303,7 +293,7 @@ export default function SlipGajiView({ onBack }) {
+                         <span style={{ fontSize: '10px', color: '#94a3b8' }}>{t.keterangan}</span>
+                       )}
+                     </div>
+-                    <span style={{ fontWeight: '700', color: '#059669' }}>+{formatRupiah(t.nominal)}</span>
++                    <span style={{ fontWeight: '700', color: '#059669' }}>+{formatRupiah(t.nominal, slipDetail.currency)}</span>
+                   </div>
+                 ))}
+               </div>
+@@ -328,7 +318,7 @@ export default function SlipGajiView({ onBack }) {
+                   <div>
+                     <span style={{ fontSize: '13px', fontWeight: '800', color: '#0f172a' }}>Potongan Gaji</span>
+                     <span style={{ fontSize: '11px', color: '#e11d48', fontWeight: '700', marginLeft: '6px' }}>
+-                      -{formatRupiah(slipDetail.total_potongan)}
++                      -{formatRupiah(slipDetail.total_potongan, slipDetail.currency)}
+                     </span>
+                   </div>
+                 </div>
+@@ -351,7 +341,7 @@ export default function SlipGajiView({ onBack }) {
+                           <span style={{ fontSize: '10px', color: '#94a3b8' }}>{p.keterangan}</span>
+                         )}
+                       </div>
+-                      <span style={{ fontWeight: '700', color: '#e11d48' }}>-{formatRupiah(p.nominal)}</span>
++                      <span style={{ fontWeight: '700', color: '#e11d48' }}>-{formatRupiah(p.nominal, slipDetail.currency)}</span>
+                     </div>
+                   ))
+                 ) : (
+@@ -462,6 +452,21 @@ export default function SlipGajiView({ onBack }) {
+           <div style={{ display: 'inline-block', width: '32px', height: '32px', border: '3px solid #e2e8f0', borderTopColor: '#0284c7', borderRadius: '50%', animation: 'spin 1s linear infinite' }} />
+           <p style={{ fontSize: '12px', marginTop: '12px', fontWeight: '600' }}>Memuat daftar riwayat slip gaji...</p>
+         </div>
++      ) : listError ? (
++        <div style={{ padding: '60px 20px', textAlign: 'center', background: '#fef2f2', borderRadius: '22px', border: '1px solid #fecaca' }}>
++          <div style={{ width: '60px', height: '60px', borderRadius: '18px', background: '#fee2e2', color: '#b91c1c', display: 'flex', alignItems: 'center', justifyContent: 'center', margin: '0 auto 16px' }}>
++            <AlertTriangle size={30} />
++          </div>
++          <h3 style={{ fontSize: '15px', fontWeight: '800', color: '#991b1b', margin: '0 0 6px' }}>Gagal Memuat Slip Gaji</h3>
++          <p style={{ fontSize: '12px', color: '#b91c1c', margin: '0 0 14px', lineHeight: 1.5 }}>{listError}</p>
++          <button
++            type="button"
++            onClick={() => fetchSlipList(false)}
++            style={{ padding: '9px 20px', borderRadius: '10px', backgroundColor: '#dc2626', border: 'none', color: '#ffffff', fontSize: '12px', fontWeight: '700', cursor: 'pointer' }}
++          >
++            Coba lagi
++          </button>
++        </div>
+       ) : slipList.length === 0 ? (
+         <div style={{ padding: '60px 20px', textAlign: 'center', background: '#f8fafc', borderRadius: '22px', border: '1px dashed #cbd5e1' }}>
+           <div style={{ width: '60px', height: '60px', borderRadius: '18px', background: '#e2e8f0', color: '#64748b', display: 'flex', alignItems: 'center', justifyContent: 'center', margin: '0 auto 16px' }}>
+@@ -480,7 +485,7 @@ export default function SlipGajiView({ onBack }) {
+               <Sparkles size={16} />
+             </div>
+             <p style={{ fontSize: '11px', color: '#0369a1', margin: 0, fontWeight: '600', lineHeight: 1.4 }}>
+-              Ditemukan <strong>{slipList.length} periode slip gaji</strong>. Klik salah satu card di bawah untuk melihat rincian detail penerimaan dan potongan.
++              Ditemukan <strong>{slipTotal != null ? slipTotal : slipList.length} periode slip gaji</strong>. Klik salah satu card di bawah untuk melihat rincian detail penerimaan dan potongan.
+             </p>
+           </div>
+ 
+@@ -534,12 +539,12 @@ export default function SlipGajiView({ onBack }) {
+                     fontSize: '10px',
+                     fontWeight: '800',
+                     textTransform: 'uppercase',
+-                    backgroundColor: item.status_pembayaran === 'dibayar' ? '#ecfdf5' : '#eff6ff',
+-                    color: item.status_pembayaran === 'dibayar' ? '#059669' : '#2563eb',
+-                    border: `1px solid ${item.status_pembayaran === 'dibayar' ? '#a7f3d0' : '#bfdbfe'}`
++                    backgroundColor: '#eff6ff',
++                    color: '#2563eb',
++                    border: '1px solid #bfdbfe'
+                   }}
+                 >
+-                  {item.status_pembayaran === 'dibayar' ? 'Dibayar' : (item.state_label || '-')}
++                  {item.state_label || '-'}
+                 </span>
+               </div>
+ 
+@@ -549,18 +554,12 @@ export default function SlipGajiView({ onBack }) {
+                   Gaji Bersih Diterima
+                 </span>
+                 <div style={{ fontSize: '22px', fontWeight: '900', color: '#059669', letterSpacing: '-0.5px', marginTop: '2px' }}>
+-                  {formatRupiah(item.gaji_bersih)}
++                  {formatRupiah(item.gaji_bersih, item.currency)}
+                 </div>
+ 
+                 {/* Sub info ringkas */}
+                 <div style={{ display: 'flex', gap: '12px', marginTop: '8px', paddingTop: '8px', borderTop: '1px dashed #e2e8f0', fontSize: '11px', color: '#64748b' }}>
+-                  <span>Gaji Pokok: <strong style={{ color: '#0f172a' }}>{formatRupiah(item.gaji_pokok)}</strong></span>
+-                  {item.total_upah_lembur > 0 && (
+-                    <span style={{ color: '#b45309' }}>Lembur: <strong>+{formatRupiah(item.total_upah_lembur)}</strong></span>
+-                  )}
+-                  {item.total_denda_keterlambatan > 0 && (
+-                    <span style={{ color: '#be123c' }}>Denda: <strong>-{formatRupiah(item.total_denda_keterlambatan)}</strong></span>
+-                  )}
++                  <span>Gaji Pokok: <strong style={{ color: '#0f172a' }}>{formatRupiah(item.gaji_pokok, item.currency)}</strong></span>
+                 </div>
+               </div>
+ 
+@@ -578,6 +577,26 @@ export default function SlipGajiView({ onBack }) {
+               </div>
+             </div>
+           ))}
++
++          {hasMoreSlips && (
++            <button
++              type="button"
++              onClick={() => fetchSlipList(true)}
++              disabled={isLoadingMore}
++              style={{
++                padding: '11px',
++                borderRadius: '12px',
++                border: '1.5px solid #bae6fd',
++                backgroundColor: '#f0f9ff',
++                color: '#0369a1',
++                fontSize: '12px',
++                fontWeight: '800',
++                cursor: 'pointer'
++              }}
++            >
++              {isLoadingMore ? 'Memuat...' : `Muat lagi (${slipList.length} dari ${slipTotal})`}
++            </button>
++          )}
+         </div>
+       )}
+     </div>
+diff --git a/src/components/views/TugasView.jsx b/src/components/views/TugasView.jsx
+index 1500a03..7fbdf53 100644
+--- a/src/components/views/TugasView.jsx
++++ b/src/components/views/TugasView.jsx
+@@ -1,9 +1,10 @@
+ import React, { useState, useEffect } from 'react';
+ import { 
+-  ChevronLeft, 
+-  Briefcase, 
+-  Clock, 
+-  CheckCircle2, 
++  ChevronLeft,
++  Briefcase,
++  Clock,
++  CheckCircle2,
++  XCircle,
+   AlertCircle, 
+   RefreshCw, 
+   ExternalLink, 
+@@ -19,21 +20,36 @@ import {
+   Download,
+   Info
+ } from 'lucide-react';
+-import api from '../../services/api';
++import api, { getStoredUser } from '../../services/api';
++import { loadDraft, saveDraft, clearDraft, DRAFT_KEYS } from '../../services/draftService';
+ 
+ export default function TugasView({ onBack }) {
+-  const [activeTab, setActiveTab] = useState('berjalan'); // 'berjalan' | 'selesai' | 'tim'
++  const [activeTab, setActiveTab] = useState('berjalan'); // 'berjalan' | 'selesai' | 'dibatalkan' | 'tim'
+   // C7: tab 'Tugas Tim' hanya bila scope=team tidak 403.
+   const [showTeamTab, setShowTeamTab] = useState(true);
+   const [tugasTim, setTugasTim] = useState([]);
+   const [isLoading, setIsLoading] = useState(true);
+-  const [statistik, setStatistik] = useState({ total_semua: 0, total_berjalan: 0, total_selesai: 0 });
+   const [tugasBerjalan, setTugasBerjalan] = useState([]);
+   const [tugasSelesai, setTugasSelesai] = useState([]);
++  const [tugasDibatalkan, setTugasDibatalkan] = useState([]);
+   const [selectedTugas, setSelectedTugas] = useState(null);
+   const [isSubmitting, setIsSubmitting] = useState(false);
+   const [actionMessage, setActionMessage] = useState({ type: '', text: '' });
+   const [catatanReview, setCatatanReview] = useState('');
++  const draftReviewKey = getStoredUser()?.id ? DRAFT_KEYS.tugas_review(getStoredUser().id) : null;
++
++  // Draf catatan review: muat saat detail dibuka, simpan tiap ketik,
++  // hapus saat submit sukses (di handleAjukanReview).
++  useEffect(() => {
++    if (!selectedTugas || !draftReviewKey) return;
++    const d = loadDraft(draftReviewKey, {});
++    if (d.catatan) setCatatanReview(d.catatan);
++    // eslint-disable-next-line react-hooks/exhaustive-deps
++  }, [selectedTugas?.id]);
++  useEffect(() => {
++    if (!selectedTugas || !draftReviewKey) return;
++    saveDraft(draftReviewKey, { catatan: catatanReview });
++  }, [catatanReview, draftReviewKey, selectedTugas?.id]);
+ 
+   const loadData = async () => {
+     setIsLoading(true);
+@@ -41,9 +57,11 @@ export default function TugasView({ onBack }) {
+     try {
+       const res = await api.getPenugasan();
+       if (res.success) {
+-        setStatistik(res.statistik || { total_semua: 0, total_berjalan: 0, total_selesai: 0 });
++        // Label/kartu dihitung dari panjang daftar nyata (bukan
++        // statistik server yang hanya menghitung status 'berjalan').
+         setTugasBerjalan(res.tugas_berjalan || []);
+         setTugasSelesai(res.tugas_selesai || []);
++        setTugasDibatalkan(res.tugas_dibatalkan || []);
+       }
+     } catch (err) {
+       console.error('Gagal memuat data penugasan:', err);
+@@ -79,6 +97,7 @@ export default function TugasView({ onBack }) {
+ 
+       if (res.success) {
+         alert(res.message || 'Tugas berhasil diajukan untuk evaluasi atasan!');
++        if (draftReviewKey) clearDraft(draftReviewKey);
+         setCatatanReview('');
+         setSelectedTugas(null);
+         await loadData();
+@@ -118,7 +137,7 @@ export default function TugasView({ onBack }) {
+     };
+   };
+ 
+-  const currentList = activeTab === 'berjalan' ? tugasBerjalan : (activeTab === 'selesai' ? tugasSelesai : tugasTim);
++  const currentList = activeTab === 'berjalan' ? tugasBerjalan : (activeTab === 'selesai' ? tugasSelesai : (activeTab === 'dibatalkan' ? tugasDibatalkan : tugasTim));
+ 
+   return (
+     <div style={{
+@@ -221,7 +240,7 @@ export default function TugasView({ onBack }) {
+               Semua
+             </span>
+             <span style={{ fontSize: '18px', fontWeight: '900', color: '#0f172a', marginTop: '2px', display: 'block' }}>
+-              {statistik.total_semua}
++              {tugasBerjalan.length + tugasSelesai.length + tugasDibatalkan.length}
+             </span>
+           </div>
+ 
+@@ -241,7 +260,7 @@ export default function TugasView({ onBack }) {
+               Berjalan
+             </span>
+             <span style={{ fontSize: '18px', fontWeight: '900', color: '#2563eb', marginTop: '2px', display: 'block' }}>
+-              {statistik.total_berjalan}
++              {tugasBerjalan.length}
+             </span>
+           </div>
+ 
+@@ -261,7 +280,7 @@ export default function TugasView({ onBack }) {
+               Selesai
+             </span>
+             <span style={{ fontSize: '18px', fontWeight: '900', color: '#059669', marginTop: '2px', display: 'block' }}>
+-              {statistik.total_selesai}
++              {tugasSelesai.length}
+             </span>
+           </div>
+         </div>
+@@ -272,7 +291,7 @@ export default function TugasView({ onBack }) {
+           padding: '4px',
+           borderRadius: '12px',
+           display: 'grid',
+-          gridTemplateColumns: showTeamTab ? '1fr 1fr 1fr' : '1fr 1fr',
++          gridTemplateColumns: showTeamTab ? '1fr 1fr 1fr 1fr' : '1fr 1fr 1fr',
+           gap: '4px'
+         }}>
+           <button
+@@ -296,7 +315,7 @@ export default function TugasView({ onBack }) {
+             }}
+           >
+             <Clock size={15} color={activeTab === 'berjalan' ? '#2563eb' : '#64748b'} />
+-            <span>Tugas Berjalan ({statistik.total_berjalan})</span>
++            <span>Tugas Berjalan ({tugasBerjalan.length})</span>
+           </button>
+ 
+           <button
+@@ -320,7 +339,31 @@ export default function TugasView({ onBack }) {
+             }}
+           >
+             <CheckCircle2 size={15} color={activeTab === 'selesai' ? '#10b981' : '#64748b'} />
+-            <span>Tugas Selesai ({statistik.total_selesai})</span>
++            <span>Tugas Selesai ({tugasSelesai.length})</span>
++          </button>
++
++          <button
++            type="button"
++            onClick={() => setActiveTab('dibatalkan')}
++            style={{
++              padding: '9px 12px',
++              borderRadius: '9px',
++              border: 'none',
++              backgroundColor: activeTab === 'dibatalkan' ? '#ffffff' : 'transparent',
++              color: activeTab === 'dibatalkan' ? '#0f172a' : '#64748b',
++              fontSize: '12px',
++              fontWeight: '800',
++              cursor: 'pointer',
++              display: 'flex',
++              alignItems: 'center',
++              justifyContent: 'center',
++              gap: '6px',
++              boxShadow: activeTab === 'dibatalkan' ? '0 1px 3px rgba(0,0,0,0.1)' : 'none',
++              transition: 'all 0.2s ease'
++            }}
++          >
++            <XCircle size={15} color={activeTab === 'dibatalkan' ? '#dc2626' : '#64748b'} />
++            <span>Tugas Dibatalkan ({tugasDibatalkan.length})</span>
+           </button>
+ 
+           {showTeamTab && (
+@@ -396,22 +439,24 @@ export default function TugasView({ onBack }) {
+               width: '54px',
+               height: '54px',
+               borderRadius: '16px',
+-              backgroundColor: activeTab === 'berjalan' ? '#eff6ff' : '#ecfdf5',
+-              color: activeTab === 'berjalan' ? '#3b82f6' : '#10b981',
++              backgroundColor: activeTab === 'berjalan' ? '#eff6ff' : (activeTab === 'dibatalkan' ? '#fef2f2' : '#ecfdf5'),
++              color: activeTab === 'berjalan' ? '#3b82f6' : (activeTab === 'dibatalkan' ? '#dc2626' : '#10b981'),
+               display: 'flex',
+               alignItems: 'center',
+               justifyContent: 'center',
+               margin: '0 auto 12px auto'
+             }}>
+-              {activeTab === 'berjalan' ? <Briefcase size={26} /> : <CheckCircle2 size={26} />}
++              {activeTab === 'berjalan' ? <Briefcase size={26} /> : (activeTab === 'dibatalkan' ? <XCircle size={26} /> : <CheckCircle2 size={26} />)}
+             </div>
+             <h4 style={{ fontSize: '14px', fontWeight: '800', color: '#1e293b', margin: '0 0 4px 0' }}>
+-              {activeTab === 'berjalan' ? 'Tidak Ada Tugas Berjalan' : 'Belum Ada Tugas Selesai'}
++              {activeTab === 'berjalan' ? 'Tidak Ada Tugas Berjalan' : (activeTab === 'dibatalkan' ? 'Tidak Ada Tugas Dibatalkan' : 'Belum Ada Tugas Selesai')}
+             </h4>
+             <p style={{ fontSize: '11px', color: '#64748b', margin: 0, maxWidth: '280px', marginInline: 'auto' }}>
+-              {activeTab === 'berjalan' 
++              {activeTab === 'berjalan'
+                 ? 'Semua penugasan dari atasan telah selesai atau belum ada tugas baru untuk Anda.'
+-                : 'Daftar penugasan yang telah diselesaikan dan disetujui atasan akan muncul di sini.'}
++                : (activeTab === 'dibatalkan'
++                  ? 'Penugasan yang dibatalkan atasan akan muncul di sini.'
++                  : 'Daftar penugasan yang telah diselesaikan dan disetujui atasan akan muncul di sini.')}
+             </p>
+           </div>
+         ) : (
+@@ -922,8 +967,9 @@ export default function TugasView({ onBack }) {
+                 </div>
+               )}
+ 
+-              {/* Form Ajukan Review ke Atasan (Hanya jika status berjalan / revisi) */}
+-              {selectedTugas.status !== 'selesai' && selectedTugas.status !== 'menunggu_review' && (
++              {/* Form Ajukan Review HANYA untuk status berjalan
++                  (dibatalkan/selesai/menunggu_review tidak boleh). */}
++              {selectedTugas.status === 'berjalan' && (
+                 <div style={{
+                   padding: '14px',
+                   borderRadius: '14px',
+diff --git a/src/components/views/TukarShiftModal.jsx b/src/components/views/TukarShiftModal.jsx
+index 8445ff4..b4eebe9 100644
+--- a/src/components/views/TukarShiftModal.jsx
++++ b/src/components/views/TukarShiftModal.jsx
+@@ -137,6 +137,24 @@ export default function TukarShiftModal({ isOpen, onClose, onSuccess }) {
+       return;
+     }
+ 
++    // Peringatan (bukan blokir): tanggal lampau & Libur<->Libur.
++    const shiftPengajuAwal = (jadwalPengaju || []).find((s) => String(s.id) === String(selectedJadwalPengajuId));
++    const shiftRekanAwal = (jadwalRekan || []).find((s) => String(s.id) === String(selectedJadwalRekanId));
++    const warnings = [];
++    const todayStr = new Date().toISOString().slice(0, 10);
++    if (shiftPengajuAwal?.tanggal && shiftPengajuAwal.tanggal < todayStr) {
++      warnings.push(`Shift Anda (${shiftPengajuAwal.tanggal}) sudah lewat.`);
++    }
++    if (shiftRekanAwal?.tanggal && shiftRekanAwal.tanggal < todayStr) {
++      warnings.push(`Shift rekan (${shiftRekanAwal.tanggal}) sudah lewat.`);
++    }
++    if (shiftPengajuAwal?.is_hari_libur && shiftRekanAwal?.is_hari_libur) {
++      warnings.push('Kedua shift adalah hari libur (Libur <-> Libur) — penukaran tidak mengubah apa pun.');
++    }
++    if (warnings.length > 0 && !window.confirm(`Perhatian:\n- ${warnings.join('\n- ')}\n\nTetap kirim pengajuan ini?`)) {
++      return;
++    }
++
+     setIsSubmitting(true);
+     setFeedback({ type: '', message: '' });
+ 
+@@ -1059,7 +1077,7 @@ export default function TukarShiftModal({ isOpen, onClose, onSuccess }) {
+             </h4>
+             <p style={{ margin: '0 0 14px 0', fontSize: '12px', color: 'var(--text-muted)', lineHeight: '1.4' }}>
+               {responModal.aksi === 'setuju'
+-                ? `Permintaan dicatat dan menunggu persetujuan. Jadwal baru berlaku setelah disetujui HRD/manager.`
++                ? `Menyetujui permintaan ini HANYA mencatat persetujuan Anda — jadwal kerja Anda dan rekan TIDAK berubah otomatis. Penukaran jadwal dilakukan manual oleh admin bila diperlukan.`
+                 : `Berikan catatan (opsional) mengapa Anda menolak permintaan tukar shift ini.`}
+             </p>
+ 
+diff --git a/src/pages/AttendanceCapturePage.jsx b/src/pages/AttendanceCapturePage.jsx
+index a5c7d5e..5ac4770 100644
+--- a/src/pages/AttendanceCapturePage.jsx
++++ b/src/pages/AttendanceCapturePage.jsx
+@@ -207,6 +207,21 @@ export default function AttendanceCapturePage({
+ 
+         setFaceDetected(true);
+ 
++        // Liveness: lacak transisi mata terbuka -> tertutup (kedipan)
++        // lewat checkBlink — pola yang sama seperti FaceEnrollmentPage.
++        // Kedipan yang pernah teramati menetap (ref) untuk sesi ini.
++        try {
++          const blinkInfo = checkBlink(detection.landmarks);
++          if (!blinkInfo.isClosed) {
++            eyeWasOpenRef.current = true;
++          } else if (eyeWasOpenRef.current && blinkInfo.isClosed && !hasBlinkedRef.current) {
++            hasBlinkedRef.current = true;
++            setBlinkDetected(true);
++          }
++        } catch {
++          // Deteksi kedipan gagal — jangan matikan verifikasi wajah.
++        }
++
+         // Verifikasi kecocokan wajah (1:1 matching dengan masterDescriptor user)
+         const masterDescriptor = user?.face_descriptor;
+         if (masterDescriptor) {
+@@ -272,13 +287,16 @@ export default function AttendanceCapturePage({
+     ctx.fillRect(0, height - 36, width, 36);
+     ctx.fillStyle = '#ffffff';
+     ctx.font = 'bold 13px sans-serif';
+-    ctx.fillText(`${user?.nama_lengkap || user?.nip} • ${timeString} WIB • GPS: ${locationData?.distance || 14}m`, 14, height - 14);
++    ctx.fillText(`${user?.nama_lengkap || user?.nip} • ${timeString} WIB • GPS: ${jarakText}`, 14, height - 14);
+ 
+     const dataUrl = canvas.toDataURL('image/jpeg', 0.85);
+     setCapturedPhoto(dataUrl);
+     return dataUrl;
+   };
+ 
++  // Jarak GPS apa adanya: null = tidak diketahui (bukan '14m' palsu).
++  const jarakText = locationData?.distance != null ? `${locationData.distance}m` : 'tidak diketahui';
++
+   // Fallback upload foto dari kamera HP / file picker
+   const handleFileSelect = (e) => {
+     const file = e.target.files?.[0];
+@@ -286,6 +304,16 @@ export default function AttendanceCapturePage({
+ 
+     const reader = new FileReader();
+     reader.onload = (event) => {
++      // Foto baru = verifikasi lama gugur (wajah pada foto baru belum
++      // dicocokkan) — reset status match agar tidak lolos dengan
++      // verifikasi foto sebelumnya.
++      setFaceMatched(false);
++      setIsFaceVerified(false);
++      isVerifiedRef.current = false;
++      isAutoSubmittingRef.current = false;
++      hasBlinkedRef.current = false;
++      eyeWasOpenRef.current = false;
++      setBlinkDetected(false);
+       setCapturedPhoto(event.target.result);
+       setCameraError('');
+     };
+@@ -316,7 +344,7 @@ export default function AttendanceCapturePage({
+     ctx.font = 'bold 15px sans-serif';
+     ctx.fillText(`FOTO VERIFIKASI: ${user?.nama_lengkap || user?.nip}`, 24, 350);
+     ctx.font = '12px monospace';
+-    ctx.fillText(`${timeString} WIB • GPS ${locationData?.distance || 14}m`, 24, 374);
++    ctx.fillText(`${timeString} WIB • GPS ${jarakText}`, 24, 374);
+ 
+     const dataUrl = canvas.toDataURL('image/jpeg', 0.85);
+     setCapturedPhoto(dataUrl);
+@@ -364,6 +392,16 @@ export default function AttendanceCapturePage({
+       }
+     }
+ 
++    // Liveness: bila wajah wajib dan verifikasi lewat kamera live,
++    // kedipan harus pernah teramati (anti foto diam). Jalur file-picker
++    // sudah tertahan gerbang faceMatched di atas, jadi gerbang ini
++    // hanya berlaku untuk verifikasi live.
++    if (hasFaceEnrolled && (faceMatched || isFaceVerified) && !hasBlinkedRef.current) {
++      setErrorMessage('Bukti liveness belum terpenuhi: silakan berkedip sekali di depan kamera, lalu tekan Absen Sekarang.');
++      setIsSubmitting(false);
++      return;
++    }
++
+     // C6 (K4): belum PERNAH enroll + wajah wajib → BLOKIR. Jangan
+     // kirim clock-in sama sekali (server backstop juga menolak, tapi
+     // UI tidak boleh lolos diam-diam dengan foto saja seperti dulu).
+@@ -374,11 +412,16 @@ export default function AttendanceCapturePage({
+       return;
+     }
+ 
++    // Tanpa koordinat GPS = gagal eksplisit (bukan fallback koordinat
++    // kantor hardcode yang membuat absen tercatat di titik palsu).
++    if (!locationData?.coords) {
++      setErrorMessage('Lokasi GPS tidak tersedia. Aktifkan GPS dan kembali ke halaman cek lokasi.');
++      setIsSubmitting(false);
++      return;
++    }
++
+     try {
+-      const coords = locationData?.coords || {
+-        latitude: -6.143662253255497,
+-        longitude: 106.6288537
+-      };
++      const coords = locationData.coords;
+ 
+       // Panggil endpoint REST API Laravel dengan data biometrik
+       const res = await api.absen({
+@@ -388,6 +431,9 @@ export default function AttendanceCapturePage({
+         foto: photoData,
+         face_matched: hasFaceEnrolled ? finalFaceVerified : true,
+         face_similarity: hasFaceEnrolled ? faceSimilarity : null,
++        // Hasil deteksi GPS palsu yang sebenarnya dari LocationCheckPage
++        // (bukan hardcode false) — server mencatatnya di audit.
++        mock_detected: Boolean(locationData?.mock_detected ?? locationData?.isFakeGps),
+       });
+ 
+       if (res.success) {
+@@ -894,7 +940,7 @@ export default function AttendanceCapturePage({
+             zIndex: 4
+           }}>
+             <MapPin size={12} />
+-            <span>{locationData?.distance || 14}m</span>
++            <span>{jarakText}</span>
+           </div>
+ 
+           {/* Tombol Ambil Ulang jika foto sudah diambil */}
+@@ -905,6 +951,11 @@ export default function AttendanceCapturePage({
+                 setCapturedPhoto(null);
+                 isVerifiedRef.current = false;
+                 isAutoSubmittingRef.current = false;
++                setFaceMatched(false);
++                setIsFaceVerified(false);
++                hasBlinkedRef.current = false;
++                eyeWasOpenRef.current = false;
++                setBlinkDetected(false);
+                 startCamera();
+               }}
+               style={{
+diff --git a/src/pages/DashboardPage.jsx b/src/pages/DashboardPage.jsx
+index bf35eb6..6ecbe5e 100644
+--- a/src/pages/DashboardPage.jsx
++++ b/src/pages/DashboardPage.jsx
+@@ -6,9 +6,11 @@ import {
+   PlaneTakeoff, Timer, CircleDollarSign, ChevronLeft, Info, ShieldAlert,
+   Receipt, HelpCircle, Coffee, Sparkles, CheckCheck, Megaphone, Bell, Wallet, Users
+ } from 'lucide-react';
+-import AttendanceModal from '../components/AttendanceModal';
+ import BottomNav from '../components/BottomNav';
+ import api, { getServerDate, formatTime24, formatDurasiMenit } from '../services/api';
++import {
++  setDashboardNav, consumePendingDashboardNav,
++} from '../services/navState';
+ import { checkFakeGps } from '../services/fakeGpsService.js';
+ import {
+   startBackgroundTracking,
+@@ -158,7 +160,8 @@ const getTimeTheme = (date) => {
+ 
+ export default function DashboardPage({ user: initialUser, onLogout, onStartAttendance, onNavigateToEnrollment }) {
+   const [currentTime, setCurrentTime] = useState(getServerDate());
+-  const [activeNav, setActiveNav] = useState('home'); // 'home' | 'history' | 'profile'
++  // Subview awal dari deep link (bila ada) — navState dikonsumsi sekali.
++  const [activeNav, setActiveNav] = useState(() => consumePendingDashboardNav() || 'home');
+   const [exitingNav, setExitingNav] = useState(null);
+   const screenScrollRef = useRef(null);
+ 
+@@ -182,7 +185,18 @@ export default function DashboardPage({ user: initialUser, onLogout, onStartAtte
+     setActiveNav(newNav);
+   };
+ 
+-  const [modalType, setModalType] = useState(null); // 'masuk' | 'pulang' | null
++  // Laporkan subview aktif ke registry (back handler Android) + dengar
++  // permintaan kembali-ke-Beranda dari back handler.
++  useEffect(() => {
++    setDashboardNav(activeNav);
++  }, [activeNav]);
++  useEffect(() => {
++    const goHome = () => handleNavBack('home');
++    window.addEventListener('dashboard-back-to-home', goHome);
++    return () => window.removeEventListener('dashboard-back-to-home', goHome);
++    // eslint-disable-next-line react-hooks/exhaustive-deps
++  }, [activeNav]);
++
+   const [isLoading, setIsLoading] = useState(true);
+   const [isRefreshing, setIsRefreshing] = useState(false);
+   const [dashboardData, setDashboardData] = useState(null);
+@@ -431,24 +445,17 @@ export default function DashboardPage({ user: initialUser, onLogout, onStartAtte
+     }
+   }, [activeNav]);
+ 
+-  const handleAttendanceSuccess = (result) => {
+-    setModalType(null);
+-    // Refresh data dashboard riil dari server
+-    loadDashboardData();
+-  };
+-
+   const handleLogoutClick = async () => {
++    if (!window.confirm('Keluar dari aplikasi? Anda harus login lagi untuk memakai aplikasi.')) return;
+     await api.logout();
+     onLogout();
+   };
+ 
+   const pegawai = dashboardData?.pegawai || initialUser;
+   const jamKerja = dashboardData?.jam_kerja_hari_ini;
+-  // Lokasi yang ditampilkan + dipakai modal absensi = lokasi terdekat
+-  // (bila GPS sudah jalan), fallback lokasi pertama dari server.
+-  const lokasi = nearestOffice || dashboardData?.lokasi_kantor;
++  // Lokasi yang ditampilkan = lokasi terdekat (bila GPS sudah jalan),
++  // fallback lokasi pertama dari server.
+   const absensiHariIni = dashboardData?.absensi_hari_ini;
+-  const stats = dashboardData?.statistik_bulan_ini;
+   const riwayatList = dashboardData?.riwayat_terakhir || [];
+ 
+   const sudahMasukRaw = absensiHariIni?.sudah_masuk;
+@@ -479,6 +486,10 @@ export default function DashboardPage({ user: initialUser, onLogout, onStartAtte
+   // tetap hanya di jalur check-in/out. Throttle 1 jam dipakai BERSAMA
+   // watcher background (backgroundTracking.js) supaya total kiriman ke
+   // server maksimal 1/jam, baik dari foreground maupun background.
++  // Reset throttle HANYA pada transisi tidak-aktif -> aktif (sesi baru):
++  // reset tiap efek jalan (termasuk remount dashboardKey) menggugurkan
++  // batas 1/jam. Throttle sendiri kini persisten (localStorage).
++  const sessionActiveRef = useRef(false);
+   useEffect(() => {
+     // Hanya selama sesi clock-in AKTIF (sudah masuk tapi BELUM
+     // pulang). Hari yang sudah pulang punya sudahMasuk=true (kartu
+@@ -486,9 +497,14 @@ export default function DashboardPage({ user: initialUser, onLogout, onStartAtte
+     // ini efek tracking ikut jalan sesudah check-out: server menolak
+     // ping-nya (NOT_CHECKED_IN) sambil menguras baterai + menyalakan
+     // foreground service tanpa keperluan.
+-    if (!sudahMasuk || sudahPulang) return;
++    if (!sudahMasuk || sudahPulang) {
++      sessionActiveRef.current = false;
++      return;
++    }
++    const isFreshSession = !sessionActiveRef.current;
++    sessionActiveRef.current = true;
+     let stopped = false;
+-    resetTrackingPingThrottle();
++    if (isFreshSession) resetTrackingPingThrottle();
+ 
+     const sendPing = () => {
+       if (stopped || !navigator.geolocation) return;
+@@ -568,8 +584,8 @@ export default function DashboardPage({ user: initialUser, onLogout, onStartAtte
+   // dashboardData.jadwal_ok — KONTRAK, lihat app2-notes). Strict
+   // === false: undefined = perilaku lama (tidak ada alarm palsu).
+   // Saat gagal, SEMUA tampilan turunan jadwal (banner Day Off, chip
+-  // "Hari Libur"/"Tidak Ada Jadwal", subtitle "Jadwal: ..." panel
+-  // istirahat) disembunyikan dan diganti banner peringatan — jangan
++  // "Hari Libur"/"Tidak Ada Jadwal", subtitle "Jadwal: ...")
++  // disembunyikan dan diganti banner peringatan — jangan
+   // sampai kegagalan muat disajikan sebagai fakta jadwal.
+   const jadwalGagalMuat = dashboardData?.jadwal_ok === false;
+ 
+@@ -1269,7 +1285,7 @@ export default function DashboardPage({ user: initialUser, onLogout, onStartAtte
+                     <div>
+                       <button
+                         type="button"
+-                        onClick={() => onStartAttendance ? onStartAttendance('masuk') : setModalType('masuk')}
++                        onClick={() => { if (onStartAttendance) onStartAttendance('masuk'); }}
+                         style={{
+                           width: '100%',
+                           padding: '8px 12px',
+@@ -1325,7 +1341,7 @@ export default function DashboardPage({ user: initialUser, onLogout, onStartAtte
+                       padding: '3px 8px',
+                       borderRadius: 'var(--radius-full)'
+                     }}>
+-                      {absensiHariIni?.status_pulang === 'pulang_cepat' ? `Pulang Cepat ${absensiHariIni.menit_pulang_cepat}m` : 'Pulang Normal'}
++                      {absensiHariIni?.status_pulang === 'pulang_cepat' ? `Pulang Cepat ${formatDurasiMenit(absensiHariIni.menit_pulang_cepat)}` : 'Pulang Normal'}
+                     </span>
+                   ) : isBatasPulangTerlewati ? (
+                     <div>
+@@ -1348,7 +1364,7 @@ export default function DashboardPage({ user: initialUser, onLogout, onStartAtte
+                       <div>
+                         <button
+                           type="button"
+-                          onClick={() => onStartAttendance ? onStartAttendance('pulang') : setModalType('pulang')}
++                          onClick={() => { if (onStartAttendance) onStartAttendance('pulang'); }}
+                           style={{
+                             width: '100%',
+                             padding: '8px 12px',
+@@ -1592,8 +1608,6 @@ export default function DashboardPage({ user: initialUser, onLogout, onStartAtte
+                     const aksiAbsen = sudahPulang ? 'masuk' : (sudahMasuk ? 'pulang' : 'masuk');
+                     if (onStartAttendance) {
+                       onStartAttendance(aksiAbsen);
+-                    } else {
+-                      setModalType(aksiAbsen);
+                     }
+                   }}
+                   style={{
+@@ -2294,16 +2308,6 @@ export default function DashboardPage({ user: initialUser, onLogout, onStartAtte
+       {/* Floating Bottom Navigation (Statis di Bawah) */}
+       <BottomNav activeNav={activeNav} onChangeNav={handleNavChange} />
+ 
+-      {/* Modal Absensi Riil */}
+-      {modalType && (
+-        <AttendanceModal
+-          type={modalType}
+-          user={pegawai}
+-          lokasiKantor={lokasi}
+-          onClose={() => setModalType(null)}
+-          onSuccess={handleAttendanceSuccess}
+-        />
+-      )}
+     </div>
+   );
+ }
+diff --git a/src/pages/FaceEnrollmentPage.jsx b/src/pages/FaceEnrollmentPage.jsx
+index 0d1736a..3ce736e 100644
+--- a/src/pages/FaceEnrollmentPage.jsx
++++ b/src/pages/FaceEnrollmentPage.jsx
+@@ -3,7 +3,7 @@ import {
+   ArrowLeft, Camera, RefreshCw, CheckCircle2, AlertCircle, 
+   ShieldCheck, Sparkles, Eye, UserCheck 
+ } from 'lucide-react';
+-import api from '../services/api';
++import api, { parseFaceDescriptor } from '../services/api';
+ import { 
+   loadFaceModels, 
+   detectSingleFaceWithDescriptor, 
+@@ -161,7 +161,7 @@ export default function FaceEnrollmentPage({ user, onBack, onSuccess }) {
+ 
+           if (!blinkInfo.isClosed) {
+             eyeWasOpenRef.current = true;
+-            setGuideText('Wajah pas! Silakan berkedip atau tekan tombol Simpan');
++            setGuideText('Wajah pas! Silakan berkedip untuk verifikasi liveness, lalu tekan Simpan.');
+           } else if (eyeWasOpenRef.current && blinkInfo.isClosed) {
+             // Kedipan mata valid terdeteksi (Transisi Terbuka -> Tertutup)
+             hasBlinkedRef.current = true;
+@@ -190,17 +190,17 @@ export default function FaceEnrollmentPage({ user, onBack, onSuccess }) {
+     }
+ 
+     // Validasi descriptor SEBELUM kirim: face-api = 128 angka.
+-    // [] / string kosong / tipe lain JANGAN dikirim — server lama
+-    // menerima [] dan menandai terdaftar palsu (flag true tanpa data).
++    // [] / string kosong / panjang bukan 128 / tipe lain JANGAN dikirim
++    // — server lama menerima [] dan menandai terdaftar palsu (flag true
++    // tanpa data). 128 adalah panjang sah satu-satunya dari face-api,
++    // jadi syarat ini tidak memblokir alur yang sah.
+     const isValidDescriptor = (d) => {
++      if (typeof d === 'string') d = parseFaceDescriptor(d);
+       if (Array.isArray(d) || ArrayBuffer.isView(d)) {
+         const arr = Array.from(d);
+-        return arr.length > 0
++        return arr.length === 128
+           && arr.every((v) => typeof v === 'number' && Number.isFinite(v));
+       }
+-      if (typeof d === 'string') {
+-        return d.trim().length > 0;
+-      }
+       return false;
+     };
+     if (!isValidDescriptor(descriptorToSave)) {
+@@ -597,10 +597,18 @@ export default function FaceEnrollmentPage({ user, onBack, onSuccess }) {
+           </div>
+         )}
+ 
+-        {/* TOMBOL MANUAL UTAMA: BISA KLIK KAPAN SAJA SAAT WAJAH TERDETEKSI */}
++        {/* TOMBOL MANUAL: mensyaratkan kedipan (liveness) — sama seperti
++            jalur auto-enroll. Tanpa kedipan, tombol menolak dengan pesan
++            jelas (bukan bypass verifikasi liveness). */}
+         <button
+           type="button"
+-          onClick={() => handleCaptureAndEnroll()}
++          onClick={() => {
++            if (!hasBlinkedRef.current) {
++              setErrorMessage('Silakan berkedip sekali di depan kamera untuk membuktikan wajah asli, lalu tekan Simpan.');
++              return;
++            }
++            handleCaptureAndEnroll();
++          }}
+           disabled={!canCapture || isSubmitting}
+           style={{
+             width: '100%',
+diff --git a/src/pages/LocationCheckPage.jsx b/src/pages/LocationCheckPage.jsx
+index ffe80d7..ed48f4b 100644
+--- a/src/pages/LocationCheckPage.jsx
++++ b/src/pages/LocationCheckPage.jsx
+@@ -79,12 +79,18 @@ export default function LocationCheckPage({
+   // Target validasi absensi: lokasi terpilih (bukan lagi selalu
+   // lokasi_kantor). Tanpa GPS / tanpa kandidat, pakai lokasi_kantor
+   // (perilaku lama) agar peta tetap punya target awal.
++  // Ada lokasi server bila daftar kandidat terisi ATAU lokasi kantor
++  // konteks punya koordinat. Tanpa keduanya, fallback di bawah HANYA
++  // target render peta — jarak dinyatakan tidak diketahui dan gerbang
++  // masuk tertutup (fail-closed), bukan lolos lewat titik hardcode.
++  const officeFromServer = candidateLocations.length > 0
++    || (currentOfficeLocation?.latitude != null && currentOfficeLocation?.longitude != null);
+   const officeCoords = useMemo(() => {
+     const fallback = {
+       id: currentOfficeLocation?.id,
+       latitude: currentOfficeLocation?.latitude != null ? Number(currentOfficeLocation.latitude) : -6.143662253255497,
+       longitude: currentOfficeLocation?.longitude != null ? Number(currentOfficeLocation.longitude) : 106.6288537,
+-      nama: currentOfficeLocation?.nama_lokasi || 'Kantor Pusat Tangerang',
++      nama: currentOfficeLocation?.nama_lokasi || (officeFromServer ? 'Kantor Pusat Tangerang' : 'Lokasi kantor belum tersedia dari server'),
+       radius: currentOfficeLocation?.radius_meter != null ? Number(currentOfficeLocation.radius_meter) : 100
+     };
+     if (!userCoords || !candidateLocations.length) return fallback;
+@@ -226,8 +232,14 @@ export default function LocationCheckPage({
+     );
+   }, []);
+ 
+-  // Kalkulasi jarak otomatis setiap kali userCoords ATAU titik kantor server (officeCoords) berubah
++  // Kalkulasi jarak otomatis setiap kali userCoords ATAU titik kantor server (officeCoords) berubah.
++  // Tanpa lokasi server, jarak = tidak diketahui (null) — gerbang masuk
++  // tertutup; titik fallback hardcode tidak pernah dipakai sebagai gerbang.
+   useEffect(() => {
++    if (!officeFromServer) {
++      setDistance(null);
++      return;
++    }
+     if (userCoords && officeCoords.latitude && officeCoords.longitude) {
+       const dist = calculateDistance(
+         userCoords.latitude,
+@@ -237,7 +249,7 @@ export default function LocationCheckPage({
+       );
+       setDistance(dist);
+     }
+-  }, [userCoords, officeCoords.latitude, officeCoords.longitude]);
++  }, [userCoords, officeCoords.latitude, officeCoords.longitude, officeFromServer]);
+ 
+   // Sinkronisasi Titik Lokasi & Deteksi GPS HANYA 1 KALI SAJA saat halaman dibuka
+   useEffect(() => {
+@@ -267,9 +279,14 @@ export default function LocationCheckPage({
+   // dan direkam untuk pulang.
+   const isPulang = !isMasuk;
+   const gateOk = isPulang || isInside;
+-  const canProceed = gateOk && !isFakeGps;
++  // Proceed terkunci selama pengecekan Fake GPS masih berjalan
++  // (tombol bisa ditekan saat cek belum selesai = lolos tanpa verifikasi).
++  const canProceed = gateOk && !isFakeGps && !isCheckingFakeGps;
+ 
+   const handleProceedClick = () => {
++    // Kunci selama pengecekan Fake GPS masih berjalan (jangan lolos
++    // tanpa verifikasi) — pelengkap canProceed di tombol.
++    if (isCheckingFakeGps) return;
+     if (isFakeGps) {
+       setShowFakeGpsModal(true);
+       return;
+@@ -284,8 +301,12 @@ export default function LocationCheckPage({
+       },
+       distance: distance || 0,
+       officeLocation: officeCoords,
+-      isFakeGps: false,
+-      antiFraudVerified: true
++      // Hasil deteksi yang sebenarnya (bukan hardcode false): proceed
++      // hanya bisa dipanggil saat isFakeGps false (lihat penjaga di
++      // atas), tapi nilai asli tetap diteruskan untuk audit server.
++      isFakeGps,
++      mock_detected: isFakeGps,
++      antiFraudVerified: !isFakeGps,
+     });
+   };
+ 
+@@ -840,6 +861,7 @@ export default function LocationCheckPage({
+             <button
+               type="button"
+               onClick={handleProceedClick}
++              disabled={!canProceed}
+               style={{
+                 flex: 1,
+                 height: '50px',
+diff --git a/src/pages/LoginPage.jsx b/src/pages/LoginPage.jsx
+index 94654b1..2fdcdbd 100644
+--- a/src/pages/LoginPage.jsx
++++ b/src/pages/LoginPage.jsx
+@@ -35,8 +35,12 @@ export default function LoginPage({ onBack, onLoginSuccess }) {
+       });
+ 
+       if (res.success && res.pegawai) {
+-        // Double check status aktif pegawai
++        // Double check status aktif pegawai (mapper kini membaca flag
++        // server — bukan hardcode true — sehingga cabang ini hidup).
+         if (res.pegawai.status_aktif === false || res.pegawai.status_aktif === 0) {
++          // Token yang baru dibuat ikut dicabut: jangan tinggal token
++          // valid untuk akun nonaktif di perangkat ini.
++          try { await api.logout(); } catch { /* abaikan */ }
+           setIsAccountInactive(true);
+           setErrorMessage('Akun pegawai Anda sedang dinonaktifkan oleh administrator.');
+           return;
+diff --git a/src/services/api.js b/src/services/api.js
+index 1d2ebc4..db3a1d5 100644
+--- a/src/services/api.js
++++ b/src/services/api.js
+@@ -299,10 +299,22 @@ export async function odooCall(path, params = {}, { timeoutMs = 30000 } = {}) {
+       // error validasi Odoo yang lolos tanpa amplop JSON), pesan aslinya
+       // masih bisa diekstrak alih-alih hilang jadi pesan generik.
+       const text = await res.text();
++      let parsedOk = true;
+       try {
+         json = JSON.parse(text);
+       } catch {
+         json = {};
++        parsedOk = false;
++      }
++      // Respons 200 yang badannya HTML (halaman login / error proxy)
++      // BUKAN sukses — dulu parse gagal diam-diam jadi {} dan view
++      // menampilkannya sebagai data kosong.
++      if (res.ok && !parsedOk) {
++        const htmlErr = new Error('Server mengembalikan halaman web, bukan data (sesi mungkin kedaluwarsa).');
++        htmlErr.status = res.status;
++        htmlErr.code = 'HTML_RESPONSE';
++        htmlErr.data = { html_response: true };
++        throw htmlErr;
+       }
+       // Server menjawab JSON error juga untuk status non-2xx (mis. 401).
+       if (!res.ok && json.status !== 'error') {
+@@ -325,6 +337,9 @@ export async function odooCall(path, params = {}, { timeoutMs = 30000 } = {}) {
+       clearTimeout(timer);
+     }
+   } catch (err) {
++    // Error yang sengaja dilempar di dalam blok fetch (mis. HTML_RESPONSE)
++    // diteruskan apa adanya — jangan ditulis ulang jadi 'gagal terhubung'.
++    if (err && err.code === 'HTML_RESPONSE') throw err;
+     const isTimeout = err && err.name === 'AbortError';
+     const e = new Error(
+       isTimeout
+@@ -340,6 +355,11 @@ export async function odooCall(path, params = {}, { timeoutMs = 30000 } = {}) {
+   if (result.status === 'error') {
+     const err = new Error(result.message || 'Terjadi kesalahan pada server Odoo.');
+     err.code = result.code || 'ERROR';
++    // Lampirkan amplop error mentah: cabang device_locked / account_
++    // inactive di LoginPage membaca err.data — server saat ini belum
++    // mengirim field itu (_err hanya {status, code, message}), jadi
++    // cabang itu dormant tapi hidup begitu agen server menambahkannya.
++    err.data = result;
+     // Token hilang / salah / kedaluwarsa -> bersihkan auth lokal agar
+     // app kembali ke layar login. NO_SESSION dipertahankan untuk
+     // kompatibilitas dengan server lama (pra-1.2.3) selama transisi.
+@@ -369,6 +389,33 @@ export function stripHtmlToText(html) {
+     .trim();
+ }
+ 
++// Parse descriptor wajah: server mengirim string JSON ('[0.1,...]') atau
++// array langsung (K-A1 audit ke-2: string lolos apa adanya membuat
++// computeDistance NaN sehingga pencocokan wajah selalu gagal sesudah
++// logout/login). String invalid -> null (diperlakukan belum terdaftar,
++// bukan crash).
++export function parseFaceDescriptor(raw) {
++  if (Array.isArray(raw)) return raw;
++  if (typeof raw === 'string') {
++    const t = raw.trim();
++    if (!t) return null;
++    try {
++      const parsed = JSON.parse(t);
++      return Array.isArray(parsed) ? parsed : null;
++    } catch {
++      return null;
++    }
++  }
++  return null;
++}
++
++// Validasi ringan descriptor (item 31): numerik + finite; panjang 128
++// dicek di FaceEnrollmentPage (peringatan, tanpa blokir alur yang sah).
++export function isValidFaceDescriptor(desc) {
++  if (!Array.isArray(desc) || desc.length === 0) return false;
++  return desc.every((v) => typeof v === 'number' && Number.isFinite(v));
++}
++
+ // Direct /jsonrpc execute_kw DIHAPUS di branch odoo 18.0: semua akses data
+ // lewat endpoint ag_rest_api (server adalah sumber kebenaran, tanpa
+ // kredensial tersimpan di perangkat). Fungsi ini sengaja tidak ada lagi.
+@@ -401,7 +448,10 @@ function mapPegawai(user, employeeBrief, profile) {
+     divisi: dept.name || '',
+     perusahaan: (emp.company && emp.company.name) || '',
+     foto_profil: photoUrl(emp.photo, getToken()),
+-    status_aktif: true,
++    // status_aktif & wajib_face_recognition dari server (bila flag tidak
++    // ada, wajah tetap wajib — jangan hardcode true).
++    status_aktif: (emp.status_aktif === false || emp.status_aktif === 0) ? false : true,
++    wajib_face_recognition: emp.wajib_face_recognition === false ? false : true,
+     // profil lengkap (bila UI butuh)
+     work_email: emp.work_email || '',
+     work_phone: emp.work_phone || '',
+@@ -424,8 +474,9 @@ function mapPegawai(user, employeeBrief, profile) {
+     face_code: emp.face_code || '',
+     // C5 (1.2.23): descriptor milik sendiri dari server (_emp_profile
+     // hanya mengirimkannya ke pemilik sendiri; list/bawahan tidak
+-    // memuatnya). '' bila server tidak mengirim (server lama).
+-    face_descriptor: emp.face_descriptor || '',
++    // memuatnya). String JSON di-parse (K-A1); string invalid -> null
++    // (diperlakukan belum terdaftar + banner Daftar Ulang di view).
++    face_descriptor: parseFaceDescriptor(emp.face_descriptor),
+     // policy lokasi (dari server, ag_rest_api): 'wfo' | 'anywhere'
+     location_policy: emp.location_policy || 'wfo',
+     // lokasi yang diizinkan (wfo): kosong = semua lokasi perusahaan
+@@ -697,10 +748,14 @@ function mapApprovalItem(lv) {
+   // dikirim server). Cabang lembur wajib ada: sebelumnya lembur jatuh
+   // ke cabang cuti dan aksinya salah rute (NOT_ALLOWED + risiko id
+   // antar-model bertabrakan menyetujui cuti orang lain).
++  // Kategori dinas: kunci kategori server bila ada, fallback substring
++  // nama tipe (mis. 'Dinas Luar Kota') bila keduanya tak ada.
++  const dinasByName = /dinas/i.test(`${lv.jenis_izin || ''} ${lv.label_jenis || ''} ${lv.type_name || ''} ${lv.name || ''}`);
+   const tipe = lv.tipe
+     || (lv.kategori === 'dinas' ? 'dinas'
+       : (lv.kategori === 'reimbursement' ? 'reimbursement'
+-        : (lv.kategori === 'lembur' ? 'lembur' : 'cuti')));
++        : (lv.kategori === 'lembur' ? 'lembur'
++          : (dinasByName ? 'dinas' : 'cuti'))));
+   const status = mapApprovalStatus(lv, tipe === 'reimbursement' ? 'reimbursement' : tipe);
+   const steps = mapApprovalSteps(lv);
+   // C29: jangan buang field server — pemohon lengkap, dokumen, dan
+@@ -776,8 +831,8 @@ function mapApprovalItem(lv) {
+         jam_mulai: lv.jam_mulai ?? null,
+         jam_selesai: lv.jam_selesai ?? null,
+         durasi_jam: lv.approved_hours ?? lv.proposed_hours ?? null,
+-        upah: lv.upah_lembur ?? lv.total_upah_lembur ?? null,
+-        upah_formatted: lv.upah_lembur_formatted ?? lv.total_upah_lembur_formatted ?? null,
++        upah: lv.upah ?? lv.hrms_amount ?? lv.upah_lembur ?? lv.total_upah_lembur ?? null,
++        upah_formatted: lv.upah_formatted ?? lv.hrms_amount_formatted ?? lv.upah_lembur_formatted ?? lv.total_upah_lembur_formatted ?? null,
+         keterangan: lv.name || lv.keterangan || '',
+         dokumen_ada: dokumenAda,
+         dokumen_id: dokumenId,
+@@ -882,6 +937,7 @@ function mapSlip(s) {
+     // Angka dari server (bila dikirim). Server lama tidak mengirim angka
+     // sama sekali -> tetap 0 secara jujur, bukan angka karangan.
+     gaji_bersih: s.net_pay ?? s.total ?? s.net ?? 0,
++    currency: s.currency || null,
+     // S1: gaji pokok dari BASIC, JANGAN gross (gross = pokok+tunjangan).
+     gaji_pokok: s.gaji_pokok ?? s.basic ?? 0,
+     _raw: s,
+@@ -930,6 +986,7 @@ function mapSlipDetail(s) {
+     total_tunjangan: alwTotal,
+     total_potongan: sum(dedLines),
+     gaji_bersih: s.net_pay ?? 0,
++    currency: s.currency || null,
+     bruto: s.bruto ?? s.gross ?? null,
+     neto: s.neto ?? s.net_pay ?? null,
+     // S3: statistik hanya bila server mengirimnya (bukan hardcode null
+@@ -976,10 +1033,11 @@ function mapOvertime(ot) {
+     keterangan_tugas: ot.name || '',
+     status,
+     approval_info: { status_label: ot.state_label || ot.state },
+-    // D2-12: upah dari server; null -> view sembunyikan kartu upah
+-    // (jangan tarif Rp 75.000 fiktif).
+-    total_upah_lembur: ot.upah_lembur ?? ot.total_upah_lembur ?? null,
+-    total_upah_lembur_formatted: ot.upah_lembur_formatted ?? ot.total_upah_lembur_formatted ?? null,
++    // D2-12: upah dari server (`upah` + `hrms_amount` — bukan
++    // upah_lembur/total_upah_lembur); null -> view sembunyikan kartu
++    // upah (jangan tarif Rp 75.000 fiktif).
++    total_upah_lembur: ot.upah ?? ot.hrms_amount ?? ot.upah_lembur ?? ot.total_upah_lembur ?? null,
++    total_upah_lembur_formatted: ot.upah_formatted ?? ot.hrms_amount_formatted ?? ot.upah_lembur_formatted ?? ot.total_upah_lembur_formatted ?? null,
+     _raw: ot,
+   };
+ }
+@@ -1520,10 +1578,16 @@ export const api = {
+   },
+ 
+   // ---- Slip gaji ----
+-  async getSlipGaji() {
+-    const res = await odooCall('/payslip/list', { limit: 24 });
+-    const items = (res.data && res.data.items) || [];
+-    return { success: true, slip_gaji: items.map(mapSlip) };
++  async getSlipGaji({ limit = 24, offset = 0 } = {}) {
++    const res = await odooCall('/payslip/list', { limit, offset });
++    const data = res.data || {};
++    const items = data.items || [];
++    return {
++      success: true,
++      slip_gaji: items.map(mapSlip),
++      // Total dari server (agen server) bila ada; fallback jumlah halaman.
++      total: (data.total ?? data.count ?? null),
++    };
+   },
+ 
+   async getSlipGajiDetail(id) {
+@@ -1547,24 +1611,38 @@ export const api = {
+     };
+   },
+ 
++  // Batalkan lembur draft (endpoint baru agen server; 404 bila belum
++  // ada — pemanggil menampilkan pesan error, bukan diam).
++  async cancelLembur(overtimeId) {
++    return odooCall('/overtime/cancel', { id: overtimeId });
++  },
++
+   async ajukanLembur(payload) {
+-    // Kontrak ag_rest_api: {date, notes, proposed_hours}.
+-    // proposed_hours dihitung dari jam_mulai/jam_selesai bila ada.
++    // Kontrak baru ag_rest_api: {date, jam_mulai, jam_selesai}
++    // (server menghitung durasi dari rentang; selesai <= mulai berarti
++    // lintas tengah malam / 24 jam). proposed_hours dipertahankan
++    // sebagai fallback untuk server lama.
+     let proposed = Number(payload.durasi_jam || payload.proposed_hours || 0);
+-    if (!proposed && payload.jam_mulai && payload.jam_selesai) {
++    let diffMin = null;
++    if (payload.jam_mulai && payload.jam_selesai) {
+       const [h1, m1] = String(payload.jam_mulai).split(':').map(Number);
+       const [h2, m2] = String(payload.jam_selesai).split(':').map(Number);
+-      // Lembur lintas tengah malam: selesai < mulai -> tambah 24 jam
+-      // (mapper lama memotong jadi 0, padahal form menampilkan 4 jam).
+-      let diff = h2 * 60 + m2 - h1 * 60 - m1;
+-      if (diff < 0) diff += 24 * 60;
+-      proposed = diff / 60;
++      diffMin = h2 * 60 + m2 - h1 * 60 - m1;
++      // Selesai <= mulai -> lintas tengah malam (termasuk mulai ==
++      // selesai = 24 jam, sesuai aturan server).
++      if (diffMin <= 0) diffMin += 24 * 60;
++      if (!proposed) proposed = diffMin / 60;
+     }
+-    const res = await odooCall('/overtime/request', {
++    const req = {
+       date: payload.tanggal_lembur,
+       notes: payload.keterangan_tugas,
+       proposed_hours: proposed,
+-    });
++    };
++    if (payload.jam_mulai && payload.jam_selesai) {
++      req.jam_mulai = payload.jam_mulai;
++      req.jam_selesai = payload.jam_selesai;
++    }
++    const res = await odooCall('/overtime/request', req);
+     return { success: true, message: res.message || 'Pengajuan lembur berhasil dikirim.' };
+   },
+ 
+diff --git a/src/services/apiAdapters.js b/src/services/apiAdapters.js
+index 22b0274..e6cb05c 100644
+--- a/src/services/apiAdapters.js
++++ b/src/services/apiAdapters.js
+@@ -148,9 +148,10 @@ export async function getKehadiranBawahanStatus() {
+   try {
+     const res = await odooCall('/subordinates/list');
+     const subs = (res.data && res.data.employees) || [];
++    // Server TIDAK mengirim flag is_enabled (tidak ada setting semacam
++    // itu) — jangan hardcode true; view tidak lagi bercabang padanya.
+     return {
+       success: true,
+-      is_enabled: true,
+       is_atasan: subs.length > 0,
+       total_bawahan: subs.length,
+     };
+@@ -197,13 +198,42 @@ export async function getKehadiranBawahanList(bulanParam) {
+         try {
+           const m = await odooCall('/subordinates/month', { employee_id: s.id, month, year });
+           const st = m.data && m.data.statistik;
+-          // Server 1.2.20 mengirim statistik nyata; pakai itu bila ada,
+-          // fallback ke hitungan array (perilaku lama) bila tidak ada.
+-          hadir = st ? (st.hadir || 0) : ((m.data && m.data.attendance) || []).length;
+-          izin = ((m.data && m.data.leaves) || []).length;
++          const leaves = (m.data && m.data.leaves) || [];
++          const att = (m.data && m.data.attendance) || [];
++          // Izin & sakit dihitung PER-HARI (sama satuannya dengan
++          // kalender detail): tiap cuti dipotong ke bulan tampil, lalu
++          // dihitung harinya; sakit dipisah dari izin (dulu izin =
++          // jumlah RECORD sehingga 1 cuti sakit 3 hari tampil Iz=1
++          // sekaligus Sk=3). Dinas masuk kolom izin (daftar ini tak
++          // punya kolom dinas sendiri).
++          const monthStart = `${year}-${pad2(month)}-01`;
++          const monthEnd = `${year}-${pad2(month)}-${new Date(year, month, 0).getDate()}`;
++          let izinDays = 0;
++          let sakitDays = 0;
++          for (const l of leaves) {
++            const f = (l.date_from || '').slice(0, 10);
++            const t = (l.date_to || '').slice(0, 10);
++            if (!f || !t) continue;
++            const a = f < monthStart ? monthStart : f;
++            const b = t > monthEnd ? monthEnd : t;
++            if (b < a) continue;
++            const days = Math.round((new Date(`${b}T00:00:00`) - new Date(`${a}T00:00:00`)) / 86400000) + 1;
++            const tName = (l.type && l.type.name) || l.type_name || '';
++            if (/sakit/i.test(tName)) sakitDays += days;
++            else izinDays += days;
++          }
++          // Hadir fallback = hari distinct yang punya check-out (bukan
++          // attendance.length — satu hari bisa punya banyak baris).
++          const hadirDays = new Set(
++            att.filter((x) => x.check_out).map((x) => {
++              try { return fmtYMDWib(utcToWib(x.check_in)); } catch { return ''; }
++            }).filter(Boolean),
++          ).size;
++          hadir = st ? (st.hadir || 0) : hadirDays;
++          izin = izinDays;
+           terlambat = st ? (st.terlambat || 0) : 0;
+           tidakHadir = st ? (st.tidak_hadir || 0) : 0;
+-          sakit = st ? (st.sakit || 0) : 0;
++          sakit = st ? (st.sakit || 0) : sakitDays;
+         } catch {
+           // ringkasan boleh kosong bila bulan itu gagal dimuat
+         }
+@@ -248,11 +278,23 @@ function normalizeOrgNode(node) {
+   };
+ }
+ 
++// Cache org chart per sesi login: kunci user+token sehingga logout
++// (token hilang) otomatis menginvalidasi — user berikutnya tidak pernah
++// melihat pohon user sebelumnya.
++let orgChartCache = null;
++export function clearOrgChartCache() { orgChartCache = null; }
++
+ export async function getTeamOrgChart() {
+   try {
++    const cacheKey = `${getStoredUser()?.id || ''}|${getToken() || ''}`;
++    if (orgChartCache && orgChartCache.key === cacheKey) {
++      return { success: true, tree: orgChartCache.tree, me_id: orgChartCache.me_id, cached: true };
++    }
+     const res = await odooCall('/team/org-chart');
+     const tree = ((res.data && res.data.tree) || []).map(normalizeOrgNode).filter(Boolean);
+-    return { success: true, tree, me_id: (res.data && res.data.me_id) || null };
++    const me_id = (res.data && res.data.me_id) || null;
++    orgChartCache = { key: cacheKey, tree, me_id };
++    return { success: true, tree, me_id };
+   } catch (err) {
+     throwIfAuth(err);
+     console.error('getTeamOrgChart error:', err);
+@@ -328,11 +370,12 @@ export async function getKalenderBawahan(bawahanId, bulanParam) {
+         jam_pulang: fmtHMWib(outD),
+         shift: '',
+         // Status masuk/pulang per tanggal TIDAK DIKETAHUI app-side
+-        // (jadwal bawahan tak tersedia lewat API) — null, bukan hardcode
+-        // 'tepat_waktu'/0 yang membuat semua hari tampak tepat waktu.
++        // (jadwal bawahan tak tersedia lewat API) — null, bukan vonis
++        // 'normal'/'tepat_waktu' palsu. View menampilkan 'Jadwal tidak
++        // tersedia' bila null.
+         status_masuk: null,
+         menit_terlambat: null,
+-        status_pulang: outD ? 'normal' : null,
++        status_pulang: null,
+         menit_pulang_cepat: null,
+       };
+     } else if (lv) {
+@@ -511,7 +554,13 @@ export async function ajukanReimbursement(payload) {
+     ...(jenis ? { product_id: jenis } : {}),
+     ...(docBase64 ? { attachment: docBase64, filename: docName } : {}),
+   });
+-  return { success: true, message: res.message || 'Pengajuan klaim reimbursement berhasil dikirim.' };
++  return {
++    success: true,
++    message: res.message || 'Pengajuan klaim reimbursement berhasil dikirim.',
++    // Server melaporkan apakah lampiran benar tersimpan; view memberi
++    // peringatan bila dokumen dikirim tapi attachment_saved === false.
++    attachment_saved: (res.data && res.data.attachment_saved) ?? null,
++  };
+ }
+ 
+ export async function approveReimbursement(sheetId, action, reason) {
+@@ -724,7 +773,9 @@ export async function ajukanDinas(payload) {
+     tanggal_mulai: tglMulai,
+     tanggal_selesai: tglSelesai,
+     ...(anggaran != null ? { anggaran_biaya: anggaran } : {}),
+-    ...(dokumen ? { dokumen, dokumen_nama: dokumenNama } : {}),
++    // Server membaca `filename` (dokumen_nama saja diabaikan) —
++    // kirim keduanya.
++    ...(dokumen ? { dokumen, filename: dokumenNama, dokumen_nama: dokumenNama } : {}),
+   });
+   return { success: true, message: res.message || 'Pengajuan dinas berhasil dikirim.' };
+ }
+@@ -838,6 +889,7 @@ export async function getPenugasan(opts = {}) {
+     penugasan: items,
+     tugas_berjalan: items.filter((i) => i.status === 'berjalan' || i.status === 'menunggu_review'),
+     tugas_selesai: items.filter((i) => i.status === 'selesai'),
++    tugas_dibatalkan: items.filter((i) => i.status === 'dibatalkan'),
+     tugas_tim: items,
+     statistik: d.statistik || { total_semua: 0, total_berjalan: 0, total_selesai: 0 },
+   };
+@@ -924,25 +976,33 @@ export async function getDokumenPreview(a, b) {
+ }
+ 
+ export async function updateFotoProfil(formData) {
+-  let fotoUrl = null;
+   const file = formData instanceof FormData ? formData.get('foto_profil') : null;
+-  if (file && file.size > 0) {
+-    const b64 = await fileToBase64(file);
+-    fotoUrl = `data:image/jpeg;base64,${b64}`;
+-    // Kirim ke server (bukan hanya localStorage seperti dulu).
+-    await odooCall('/employee/photo', { photo: b64 });
+-    const user = getStoredUser();
+-    if (user) {
+-      user.foto_profil = fotoUrl;
+-      setStoredUser(user);
+-    }
++  if (!file) throw new Error('Tidak ada file foto yang dipilih.');
++  // File 0-byte -> error eksplisit, bukan sukses palsu.
++  if (file.size === 0) throw new Error('File foto kosong (0 byte). Pilih foto lain.');
++  const b64 = await fileToBase64(file);
++  // Kirim ke server (bukan hanya localStorage seperti dulu).
++  await odooCall('/employee/photo', { photo: b64 });
++  // Muat ulang foto dari server (path foto + token) — JANGAN simpan
++  // base64 data-URL di localStorage (membengkak + basi).
++  let foto = null;
++  try {
++    const prof = await odooCall('/employee/profile');
++    const emp = prof && prof.data && prof.data.employee;
++    if (emp && emp.photo) foto = photoUrl(emp.photo, getToken());
++  } catch {
++    // Profil gagal dimuat ulang: pakai foto lama (bukan base64 baru).
++    foto = getStoredUser()?.foto_profil || null;
++  }
++  const user = getStoredUser();
++  if (user && foto) {
++    user.foto_profil = foto;
++    setStoredUser(user);
+   }
+   return {
+     success: true,
+-    // View membaca `foto_profil`; adapter lama hanya mengembalikan
+-    // `foto_url`, sehingga avatar tidak berubah saat simpan.
+-    foto_url: fotoUrl,
+-    foto_profil: fotoUrl,
++    foto_url: foto,
++    foto_profil: foto,
+     message: 'Foto profil berhasil diperbarui.',
+   };
+ }
+diff --git a/src/services/backgroundTracking.js b/src/services/backgroundTracking.js
+index 91e6994..c2b8874 100644
+--- a/src/services/backgroundTracking.js
++++ b/src/services/backgroundTracking.js
+@@ -46,7 +46,18 @@ const BG_DISTANCE_FILTER_M = 100;
+ 
+ // Throttle bersama foreground + background: stempel kiriman terakhir yang
+ // berhasil. Dipakai kedua jalur supaya total kiriman <= 1/jam.
+-let lastSentAtMs = 0;
++// PERSISTEN (localStorage): throttle memori saja hilang tiap remount
++// dashboard (dashboardKey) sehingga batas 1/jam gugur.
++const THROTTLE_KEY = 'ag-tracking-last-ping';
++function readLastSent() {
++  try {
++    const v = Number(localStorage.getItem(THROTTLE_KEY));
++    return Number.isFinite(v) ? v : 0;
++  } catch {
++    return 0;
++  }
++}
++let lastSentAtMs = readLastSent();
+ 
+ // ID watcher background yang sedang aktif (null bila tidak jalan).
+ let watcherId = null;
+@@ -56,6 +67,7 @@ let running = false;
+ // harus langsung lolos (tidak tertahan throttle sesi sebelumnya).
+ export function resetTrackingPingThrottle() {
+   lastSentAtMs = 0;
++  try { localStorage.removeItem(THROTTLE_KEY); } catch { /* abaikan */ }
+ }
+ 
+ export function shouldSendTrackingPing(now = Date.now()) {
+@@ -64,6 +76,7 @@ export function shouldSendTrackingPing(now = Date.now()) {
+ 
+ export function markTrackingPingSent(now = Date.now()) {
+   lastSentAtMs = now;
++  try { localStorage.setItem(THROTTLE_KEY, String(now)); } catch { /* abaikan */ }
+ }
+ 
+ export function isBackgroundTrackingRunning() {
+diff --git a/src/services/draftService.js b/src/services/draftService.js
+index 8f4b9dd..b962f5d 100644
+--- a/src/services/draftService.js
++++ b/src/services/draftService.js
+@@ -1,5 +1,3 @@
+-import { useState, useEffect, useCallback, useRef } from 'react';
+-
+ // Draf form persisten (localStorage) — ganti rugi atas unmount tab yang
+ // menghilangkan state form di memori (pindah tab di tengah mengisi form
+ // lalu kembali = form kosong). Modul ini TIDAK dipakai view mana pun
+@@ -48,44 +46,6 @@ export function clearDraft(key) {
+   }
+ }
+ 
+-// Hook siap pakai — wiring per form cukup 2 baris:
+-//
+-//   1. Ganti useState form:
+-//        const [form, setForm, resetDraft] =
+-//          useFormDraft(`izin:${user.id}`, { jenis: '', tanggal: '', alasan: '' });
+-//      (setForm dipakai persis seperti setter useState lama; tiap
+-//      perubahan otomatis tersimpan ke localStorage.)
+-//   2. Di handler sukses submit, sebelum/bersamaan reset form:
+-//        resetDraft();
+-//
+-// Perilaku: saat mount, draf tersimpan (bila ada) menimpa nilai awal
+-// per-field; field baru yang belum ada di draf memakai nilai awal.
+-// Saat unmount (pindah tab), nilai terakhir sudah tersimpan, jadi
+-// kembali ke form = draf pulih. Draf TIDAK dihapus saat unmount —
+-// hanya saat submit berhasil (resetDraft) atau logout (clearAuth
+-// tidak menyentuh kunci ini; lihat catatan integrator di app2-notes).
+-export function useFormDraft(key, initialValues) {
+-  const initialRef = useRef(initialValues);
+-  const [values, setValues] = useState(() => {
+-    const saved = loadDraft(key, null);
+-    return saved && typeof saved === 'object'
+-      ? { ...initialRef.current, ...saved }
+-      : initialRef.current;
+-  });
+-
+-  // Simpan tiap perubahan (form kecil; localStorage sinkron & cepat).
+-  useEffect(() => {
+-    saveDraft(key, values);
+-  }, [key, values]);
+-
+-  const resetDraft = useCallback(() => {
+-    clearDraft(key);
+-    setValues(initialRef.current);
+-  }, [key]);
+-
+-  return [values, setValues, resetDraft];
+-}
+-
+ // Daftar kunci draf yang dipakai aplikasi (satu per form; integrator
+ // menambahkan form baru di sini agar mudah dilacak & dibersihkan).
+ export const DRAFT_KEYS = {
+@@ -93,5 +53,22 @@ export const DRAFT_KEYS = {
+   dinas: (userId) => `dinas:${userId}`,
+   lembur: (userId) => `lembur:${userId}`,
+   reimbursement: (userId) => `reimbursement:${userId}`,
+-  tugas: (userId) => `tugas:${userId}`,
++  // Catatan review tugas (textarea detail tugas) + form masalah.
++  tugas_review: (userId) => `tugas_review:${userId}`,
++  masalah: (userId) => `masalah:${userId}`,
+ };
++
++// Hapus SEMUA draf (dipanggil saat logout — draf tidak boleh menetap
++// tanpa batas / bocor ke user berikutnya di perangkat yang sama).
++export function clearAllDrafts() {
++  try {
++    const keys = [];
++    for (let i = 0; i < localStorage.length; i++) {
++      const k = localStorage.key(i);
++      if (k && k.startsWith(PREFIX)) keys.push(k);
++    }
++    for (const k of keys) localStorage.removeItem(k);
++  } catch {
++    // Abaikan.
++  }
++}
+diff --git a/src/services/navState.js b/src/services/navState.js
+new file mode 100644
+index 0000000..be097d3
+--- /dev/null
++++ b/src/services/navState.js
+@@ -0,0 +1,57 @@
++// Registry navigasi dashboard (tanpa prop drilling):
++// - DashboardPage melaporkan subview aktifnya ke sini;
++// - Back handler Android di App.jsx membacanya (subview -> Beranda,
++//   Beranda -> exitApp);
++// - Deep link (appUrlOpen) menitipkan subview tujuan yang dikonsumsi
++//   DashboardPage saat mount berikutnya.
++let currentDashboardNav = 'home';
++let pendingDashboardNav = null;
++
++export function setDashboardNav(nav) {
++  currentDashboardNav = nav || 'home';
++}
++export function getDashboardNav() {
++  return currentDashboardNav;
++}
++export function setPendingDashboardNav(nav) {
++  pendingDashboardNav = nav || 'home';
++}
++export function consumePendingDashboardNav() {
++  const nav = pendingDashboardNav;
++  pendingDashboardNav = null;
++  return nav;
++}
++export function requestDashboardBackToHome() {
++  if (typeof window !== 'undefined') {
++    window.dispatchEvent(new CustomEvent('dashboard-back-to-home'));
++  }
++}
++
++// Peta segmen deep link -> subview DashboardPage (tidak dikenal -> Beranda).
++const DEEP_LINK_MAP = {
++  dashboard: 'home', beranda: 'home', home: 'home',
++  riwayat: 'history', history: 'history',
++  profil: 'profile', profile: 'profile',
++  izin: 'izin', cuti: 'izin',
++  jadwal: 'jadwal',
++  dinas: 'dinas',
++  lembur: 'lembur',
++  denda: 'denda',
++  slip: 'slip_gaji', slip_gaji: 'slip_gaji', gaji: 'slip_gaji',
++  masalah: 'masalah', tiket: 'masalah',
++  tugas: 'tugas',
++  approval: 'approval', persetujuan: 'approval',
++  pengumuman: 'pengumuman',
++  reimbursement: 'reimbursement', klaim: 'reimbursement',
++  bawahan: 'kehadiran_bawahan', tim: 'kehadiran_bawahan',
++  karyawan: 'karyawan',
++};
++export function deepLinkToDashboardNav(url) {
++  try {
++    const clean = String(url || '').split('?')[0].split('#')[0];
++    const seg = decodeURIComponent(clean.split('/').filter(Boolean).pop() || '');
++    return DEEP_LINK_MAP[seg.toLowerCase()] || 'home';
++  } catch {
++    return 'home';
++  }
++}

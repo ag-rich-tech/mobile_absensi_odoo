@@ -1,10 +1,15 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import {
   ChevronLeft, Users, Calendar, Search, ChevronRight, ChevronDown, X, Clock,
-  MapPin, AlertTriangle, CheckCircle2, ShieldAlert, Sparkles,
+  MapPin, AlertTriangle, CheckCircle2, Sparkles,
   Info, RefreshCw, Coffee, AlertCircle, Building, UserCheck
 } from 'lucide-react';
-import api, { formatDurasiMenit } from '../../services/api';
+import api, { formatDurasiMenit, getServerDate, getStoredUser } from '../../services/api';
+
+// Cache tampilan Org Chart per sesi login (pohon + state expand/cari):
+// kembali ke tab tanpa fetch ulang; kunci id user agar user berikutnya
+// tidak mewarisi tampilan user sebelumnya.
+let orgViewCache = null;
 
 const NAMA_BULAN = [
   'Januari', 'Februari', 'Maret', 'April', 'Mei', 'Juni',
@@ -176,7 +181,7 @@ function OrgChartNode({ node, depth, meId, expanded, onToggle, meNodeRef }) {
 }
 
 export default function KehadiranBawahanView({ onBack }) {
-  const currentDate = new Date();
+  const currentDate = getServerDate();
   const [selectedBulan, setSelectedBulan] = useState(currentDate.getMonth() + 1);
   const [selectedTahun, setSelectedTahun] = useState(currentDate.getFullYear());
   
@@ -212,6 +217,17 @@ export default function KehadiranBawahanView({ onBack }) {
   // DITAMBAH jalur dari root ke node user login agar node user selalu
   // terlihat (tidak tertutup di dalam cabang yang collapsed).
   const loadOrgChart = useCallback(async (silent = false) => {
+    // Cache per sesi: kembali tanpa fetch ulang (kecuali refresh
+    // eksplisit silent=true). Kunci id user.
+    const cacheUserId = getStoredUser()?.id || null;
+    if (!silent && orgViewCache && orgViewCache.userId === cacheUserId && orgViewCache.tree) {
+      setOrgTree(orgViewCache.tree);
+      setOrgMeId(orgViewCache.meId);
+      setOrgExpanded(orgViewCache.expanded || {});
+      setOrgSearchQuery(orgViewCache.search || '');
+      setOrgLoaded(true);
+      return;
+    }
     if (!silent) setOrgLoading(true);
     setOrgError(null);
     try {
@@ -251,6 +267,18 @@ export default function KehadiranBawahanView({ onBack }) {
       setOrgLoading(false);
     }
   }, []);
+
+  // Persist state org chart ke cache sesi tiap berubah.
+  useEffect(() => {
+    if (!orgLoaded) return;
+    orgViewCache = {
+      userId: getStoredUser()?.id || null,
+      tree: orgTree,
+      meId: orgMeId,
+      expanded: orgExpanded,
+      search: orgSearchQuery,
+    };
+  }, [orgLoaded, orgTree, orgMeId, orgExpanded, orgSearchQuery]);
 
   // Muat org chart sekali saat tab pertama dibuka.
   useEffect(() => {
@@ -376,19 +404,20 @@ export default function KehadiranBawahanView({ onBack }) {
     else setIsRefreshing(true);
 
     try {
-      // 1. Cek status otorisasi & setting admin
+      // 1. Cek status otorisasi. Gagal muat -> panel error + Coba lagi
+      // (BUKAN layar 'Fitur Dinonaktifkan': server tidak punya flag
+      // penonaktifan; cabang itu hanya hidup dari adapter lama yang
+      // meng-hardcode is_enabled).
       const statusRes = await api.getKehadiranBawahanStatus();
-      setStatusFitur(statusRes);
-
-      if (statusRes.message) {
-        setApiError(statusRes.message);
-        setIsLoading(false);
-        setIsRefreshing(false);
+      if (!statusRes.success) {
+        setStatusFitur(null);
+        setApiError(statusRes.message || 'Gagal memuat data bawahan.');
         return;
       }
+      setStatusFitur(statusRes);
       setApiError(null);
 
-      if (statusRes.success && statusRes.is_enabled && statusRes.is_atasan) {
+      if (statusRes.is_atasan) {
         const bulanParam = formatBulanTahunParam(selectedBulan, selectedTahun);
         const listRes = await api.getKehadiranBawahanList(bulanParam);
         if (listRes.message) {
@@ -452,7 +481,12 @@ export default function KehadiranBawahanView({ onBack }) {
     }
   };
 
+  // Bulan berjalan (server) — navigasi next tidak boleh melewatinya.
+  const currentYm = `${currentDate.getFullYear()}-${String(currentDate.getMonth() + 1).padStart(2, '0')}`;
+  const selectedYm = `${selectedTahun}-${String(selectedBulan).padStart(2, '0')}`;
+  const isAtCurrentMonth = selectedYm >= currentYm;
   const handleNextMonth = () => {
+    if (isAtCurrentMonth) return;
     let nextM = selectedBulan + 1;
     let nextY = selectedTahun;
     if (nextM > 12) {
@@ -485,72 +519,6 @@ export default function KehadiranBawahanView({ onBack }) {
         <span style={{ fontSize: '13px', fontWeight: '600', color: 'var(--text-muted)' }}>
           Memeriksa hak akses & data tim bawahan...
         </span>
-      </div>
-    );
-  }
-
-  // Tampilan 2: Fitur Dinonaktifkan oleh Admin di Panel Monitoring
-  if (statusFitur && !statusFitur.is_enabled) {
-    return (
-      <div style={{ padding: '20px', display: 'flex', flexDirection: 'column', gap: '16px' }} className="animate-fade-in">
-        <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-          <button
-            type="button"
-            onClick={onBack}
-            className="btn-back-action"
-            style={{
-              width: '36px',
-              height: '36px',
-              borderRadius: '10px',
-              backgroundColor: 'var(--bg-slate)',
-              border: '1px solid var(--border-light)',
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'center',
-              color: 'var(--text-main)',
-              cursor: 'pointer'
-            }}
-          >
-            <ChevronLeft size={20} />
-          </button>
-          <h2 style={{ fontSize: '16px', fontWeight: '800', color: 'var(--text-main)', margin: 0 }}>
-            Kehadiran Bawahan
-          </h2>
-        </div>
-
-        <div style={{
-          backgroundColor: '#fff7ed',
-          border: '1.5px solid #fed7aa',
-          borderRadius: '16px',
-          padding: '24px 20px',
-          textAlign: 'center',
-          display: 'flex',
-          flexDirection: 'column',
-          alignItems: 'center',
-          gap: '12px',
-          marginTop: '20px'
-        }}>
-          <div style={{
-            width: '56px',
-            height: '56px',
-            borderRadius: '50%',
-            backgroundColor: '#ffedd5',
-            color: '#ea580c',
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'center'
-          }}>
-            <ShieldAlert size={28} />
-          </div>
-          <div>
-            <h3 style={{ fontSize: '15px', fontWeight: '800', color: '#9a3412', margin: '0 0 6px' }}>
-              Fitur Dinonaktifkan
-            </h3>
-            <p style={{ fontSize: '12px', color: '#c2410c', margin: 0, lineHeight: 1.5 }}>
-              Fitur riwayat absensi bawahan sedang dinonaktifkan oleh Administrator melalui menu monitoring di panel admin. Silakan hubungi admin jika Anda membutuhkan akses ini.
-            </p>
-          </div>
-        </div>
       </div>
     );
   }
@@ -777,6 +745,7 @@ export default function KehadiranBawahanView({ onBack }) {
           <button
             type="button"
             onClick={handleNextMonth}
+            disabled={isAtCurrentMonth}
             style={{
               padding: '6px',
               borderRadius: '8px',
@@ -1126,7 +1095,7 @@ export default function KehadiranBawahanView({ onBack }) {
                           ? `Telat ${formatDurasiMenit(selectedDayDetail.detail_absensi.menit_terlambat)}`
                           : (selectedDayDetail.detail_absensi.status_masuk === 'tepat_waktu'
                             ? 'Tepat Waktu'
-                            : 'Status tidak diketahui')}
+                            : 'Jadwal tidak tersedia')}
                       </span>
                     </div>
 
@@ -1147,7 +1116,9 @@ export default function KehadiranBawahanView({ onBack }) {
                           ? 'Tidak Absen Pulang (TP)'
                           : (selectedDayDetail.detail_absensi.status_pulang === 'pulang_cepat'
                               ? `Pulang Cepat ${formatDurasiMenit(selectedDayDetail.detail_absensi.menit_pulang_cepat)}`
-                              : 'Normal')}
+                              : (selectedDayDetail.detail_absensi.status_pulang
+                                ? 'Normal'
+                                : 'Jadwal tidak tersedia'))}
                       </span>
                     </div>
                   </div>
@@ -1339,7 +1310,7 @@ export default function KehadiranBawahanView({ onBack }) {
               flexShrink: 0,
             }}
           >
-            重试
+            Coba lagi
           </button>
         </div>
       )}
@@ -1386,6 +1357,7 @@ export default function KehadiranBawahanView({ onBack }) {
           <button
             type="button"
             onClick={handleNextMonth}
+            disabled={isAtCurrentMonth}
             style={{
               padding: '6px',
               borderRadius: '8px',

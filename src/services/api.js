@@ -299,10 +299,22 @@ export async function odooCall(path, params = {}, { timeoutMs = 30000 } = {}) {
       // error validasi Odoo yang lolos tanpa amplop JSON), pesan aslinya
       // masih bisa diekstrak alih-alih hilang jadi pesan generik.
       const text = await res.text();
+      let parsedOk = true;
       try {
         json = JSON.parse(text);
       } catch {
         json = {};
+        parsedOk = false;
+      }
+      // Respons 200 yang badannya HTML (halaman login / error proxy)
+      // BUKAN sukses — dulu parse gagal diam-diam jadi {} dan view
+      // menampilkannya sebagai data kosong.
+      if (res.ok && !parsedOk) {
+        const htmlErr = new Error('Server mengembalikan halaman web, bukan data (sesi mungkin kedaluwarsa).');
+        htmlErr.status = res.status;
+        htmlErr.code = 'HTML_RESPONSE';
+        htmlErr.data = { html_response: true };
+        throw htmlErr;
       }
       // Server menjawab JSON error juga untuk status non-2xx (mis. 401).
       if (!res.ok && json.status !== 'error') {
@@ -325,6 +337,9 @@ export async function odooCall(path, params = {}, { timeoutMs = 30000 } = {}) {
       clearTimeout(timer);
     }
   } catch (err) {
+    // Error yang sengaja dilempar di dalam blok fetch (mis. HTML_RESPONSE)
+    // diteruskan apa adanya — jangan ditulis ulang jadi 'gagal terhubung'.
+    if (err && err.code === 'HTML_RESPONSE') throw err;
     const isTimeout = err && err.name === 'AbortError';
     const e = new Error(
       isTimeout
@@ -340,6 +355,11 @@ export async function odooCall(path, params = {}, { timeoutMs = 30000 } = {}) {
   if (result.status === 'error') {
     const err = new Error(result.message || 'Terjadi kesalahan pada server Odoo.');
     err.code = result.code || 'ERROR';
+    // Lampirkan amplop error mentah: cabang device_locked / account_
+    // inactive di LoginPage membaca err.data — server saat ini belum
+    // mengirim field itu (_err hanya {status, code, message}), jadi
+    // cabang itu dormant tapi hidup begitu agen server menambahkannya.
+    err.data = result;
     // Token hilang / salah / kedaluwarsa -> bersihkan auth lokal agar
     // app kembali ke layar login. NO_SESSION dipertahankan untuk
     // kompatibilitas dengan server lama (pra-1.2.3) selama transisi.
@@ -367,6 +387,33 @@ export function stripHtmlToText(html) {
     .replace(/<[^>]*>/g, ' ')
     .replace(/\s+/g, ' ')
     .trim();
+}
+
+// Parse descriptor wajah: server mengirim string JSON ('[0.1,...]') atau
+// array langsung (K-A1 audit ke-2: string lolos apa adanya membuat
+// computeDistance NaN sehingga pencocokan wajah selalu gagal sesudah
+// logout/login). String invalid -> null (diperlakukan belum terdaftar,
+// bukan crash).
+export function parseFaceDescriptor(raw) {
+  if (Array.isArray(raw)) return raw;
+  if (typeof raw === 'string') {
+    const t = raw.trim();
+    if (!t) return null;
+    try {
+      const parsed = JSON.parse(t);
+      return Array.isArray(parsed) ? parsed : null;
+    } catch {
+      return null;
+    }
+  }
+  return null;
+}
+
+// Validasi ringan descriptor (item 31): numerik + finite; panjang 128
+// dicek di FaceEnrollmentPage (peringatan, tanpa blokir alur yang sah).
+export function isValidFaceDescriptor(desc) {
+  if (!Array.isArray(desc) || desc.length === 0) return false;
+  return desc.every((v) => typeof v === 'number' && Number.isFinite(v));
 }
 
 // Direct /jsonrpc execute_kw DIHAPUS di branch odoo 18.0: semua akses data
@@ -401,7 +448,10 @@ function mapPegawai(user, employeeBrief, profile) {
     divisi: dept.name || '',
     perusahaan: (emp.company && emp.company.name) || '',
     foto_profil: photoUrl(emp.photo, getToken()),
-    status_aktif: true,
+    // status_aktif & wajib_face_recognition dari server (bila flag tidak
+    // ada, wajah tetap wajib — jangan hardcode true).
+    status_aktif: (emp.status_aktif === false || emp.status_aktif === 0) ? false : true,
+    wajib_face_recognition: emp.wajib_face_recognition === false ? false : true,
     // profil lengkap (bila UI butuh)
     work_email: emp.work_email || '',
     work_phone: emp.work_phone || '',
@@ -424,8 +474,9 @@ function mapPegawai(user, employeeBrief, profile) {
     face_code: emp.face_code || '',
     // C5 (1.2.23): descriptor milik sendiri dari server (_emp_profile
     // hanya mengirimkannya ke pemilik sendiri; list/bawahan tidak
-    // memuatnya). '' bila server tidak mengirim (server lama).
-    face_descriptor: emp.face_descriptor || '',
+    // memuatnya). String JSON di-parse (K-A1); string invalid -> null
+    // (diperlakukan belum terdaftar + banner Daftar Ulang di view).
+    face_descriptor: parseFaceDescriptor(emp.face_descriptor),
     // policy lokasi (dari server, ag_rest_api): 'wfo' | 'anywhere'
     location_policy: emp.location_policy || 'wfo',
     // lokasi yang diizinkan (wfo): kosong = semua lokasi perusahaan
@@ -697,10 +748,14 @@ function mapApprovalItem(lv) {
   // dikirim server). Cabang lembur wajib ada: sebelumnya lembur jatuh
   // ke cabang cuti dan aksinya salah rute (NOT_ALLOWED + risiko id
   // antar-model bertabrakan menyetujui cuti orang lain).
+  // Kategori dinas: kunci kategori server bila ada, fallback substring
+  // nama tipe (mis. 'Dinas Luar Kota') bila keduanya tak ada.
+  const dinasByName = /dinas/i.test(`${lv.jenis_izin || ''} ${lv.label_jenis || ''} ${lv.type_name || ''} ${lv.name || ''}`);
   const tipe = lv.tipe
     || (lv.kategori === 'dinas' ? 'dinas'
       : (lv.kategori === 'reimbursement' ? 'reimbursement'
-        : (lv.kategori === 'lembur' ? 'lembur' : 'cuti')));
+        : (lv.kategori === 'lembur' ? 'lembur'
+          : (dinasByName ? 'dinas' : 'cuti'))));
   const status = mapApprovalStatus(lv, tipe === 'reimbursement' ? 'reimbursement' : tipe);
   const steps = mapApprovalSteps(lv);
   // C29: jangan buang field server — pemohon lengkap, dokumen, dan
@@ -776,8 +831,8 @@ function mapApprovalItem(lv) {
         jam_mulai: lv.jam_mulai ?? null,
         jam_selesai: lv.jam_selesai ?? null,
         durasi_jam: lv.approved_hours ?? lv.proposed_hours ?? null,
-        upah: lv.upah_lembur ?? lv.total_upah_lembur ?? null,
-        upah_formatted: lv.upah_lembur_formatted ?? lv.total_upah_lembur_formatted ?? null,
+        upah: lv.upah ?? lv.hrms_amount ?? lv.upah_lembur ?? lv.total_upah_lembur ?? null,
+        upah_formatted: lv.upah_formatted ?? lv.hrms_amount_formatted ?? lv.upah_lembur_formatted ?? lv.total_upah_lembur_formatted ?? null,
         keterangan: lv.name || lv.keterangan || '',
         dokumen_ada: dokumenAda,
         dokumen_id: dokumenId,
@@ -882,6 +937,7 @@ function mapSlip(s) {
     // Angka dari server (bila dikirim). Server lama tidak mengirim angka
     // sama sekali -> tetap 0 secara jujur, bukan angka karangan.
     gaji_bersih: s.net_pay ?? s.total ?? s.net ?? 0,
+    currency: s.currency || null,
     // S1: gaji pokok dari BASIC, JANGAN gross (gross = pokok+tunjangan).
     gaji_pokok: s.gaji_pokok ?? s.basic ?? 0,
     _raw: s,
@@ -930,6 +986,7 @@ function mapSlipDetail(s) {
     total_tunjangan: alwTotal,
     total_potongan: sum(dedLines),
     gaji_bersih: s.net_pay ?? 0,
+    currency: s.currency || null,
     bruto: s.bruto ?? s.gross ?? null,
     neto: s.neto ?? s.net_pay ?? null,
     // S3: statistik hanya bila server mengirimnya (bukan hardcode null
@@ -976,10 +1033,11 @@ function mapOvertime(ot) {
     keterangan_tugas: ot.name || '',
     status,
     approval_info: { status_label: ot.state_label || ot.state },
-    // D2-12: upah dari server; null -> view sembunyikan kartu upah
-    // (jangan tarif Rp 75.000 fiktif).
-    total_upah_lembur: ot.upah_lembur ?? ot.total_upah_lembur ?? null,
-    total_upah_lembur_formatted: ot.upah_lembur_formatted ?? ot.total_upah_lembur_formatted ?? null,
+    // D2-12: upah dari server (`upah` + `hrms_amount` — bukan
+    // upah_lembur/total_upah_lembur); null -> view sembunyikan kartu
+    // upah (jangan tarif Rp 75.000 fiktif).
+    total_upah_lembur: ot.upah ?? ot.hrms_amount ?? ot.upah_lembur ?? ot.total_upah_lembur ?? null,
+    total_upah_lembur_formatted: ot.upah_formatted ?? ot.hrms_amount_formatted ?? ot.upah_lembur_formatted ?? ot.total_upah_lembur_formatted ?? null,
     _raw: ot,
   };
 }
@@ -1520,10 +1578,16 @@ export const api = {
   },
 
   // ---- Slip gaji ----
-  async getSlipGaji() {
-    const res = await odooCall('/payslip/list', { limit: 24 });
-    const items = (res.data && res.data.items) || [];
-    return { success: true, slip_gaji: items.map(mapSlip) };
+  async getSlipGaji({ limit = 24, offset = 0 } = {}) {
+    const res = await odooCall('/payslip/list', { limit, offset });
+    const data = res.data || {};
+    const items = data.items || [];
+    return {
+      success: true,
+      slip_gaji: items.map(mapSlip),
+      // Total dari server (agen server) bila ada; fallback jumlah halaman.
+      total: (data.total ?? data.count ?? null),
+    };
   },
 
   async getSlipGajiDetail(id) {
@@ -1547,24 +1611,38 @@ export const api = {
     };
   },
 
+  // Batalkan lembur draft (endpoint baru agen server; 404 bila belum
+  // ada — pemanggil menampilkan pesan error, bukan diam).
+  async cancelLembur(overtimeId) {
+    return odooCall('/overtime/cancel', { id: overtimeId });
+  },
+
   async ajukanLembur(payload) {
-    // Kontrak ag_rest_api: {date, notes, proposed_hours}.
-    // proposed_hours dihitung dari jam_mulai/jam_selesai bila ada.
+    // Kontrak baru ag_rest_api: {date, jam_mulai, jam_selesai}
+    // (server menghitung durasi dari rentang; selesai <= mulai berarti
+    // lintas tengah malam / 24 jam). proposed_hours dipertahankan
+    // sebagai fallback untuk server lama.
     let proposed = Number(payload.durasi_jam || payload.proposed_hours || 0);
-    if (!proposed && payload.jam_mulai && payload.jam_selesai) {
+    let diffMin = null;
+    if (payload.jam_mulai && payload.jam_selesai) {
       const [h1, m1] = String(payload.jam_mulai).split(':').map(Number);
       const [h2, m2] = String(payload.jam_selesai).split(':').map(Number);
-      // Lembur lintas tengah malam: selesai < mulai -> tambah 24 jam
-      // (mapper lama memotong jadi 0, padahal form menampilkan 4 jam).
-      let diff = h2 * 60 + m2 - h1 * 60 - m1;
-      if (diff < 0) diff += 24 * 60;
-      proposed = diff / 60;
+      diffMin = h2 * 60 + m2 - h1 * 60 - m1;
+      // Selesai <= mulai -> lintas tengah malam (termasuk mulai ==
+      // selesai = 24 jam, sesuai aturan server).
+      if (diffMin <= 0) diffMin += 24 * 60;
+      if (!proposed) proposed = diffMin / 60;
     }
-    const res = await odooCall('/overtime/request', {
+    const req = {
       date: payload.tanggal_lembur,
       notes: payload.keterangan_tugas,
       proposed_hours: proposed,
-    });
+    };
+    if (payload.jam_mulai && payload.jam_selesai) {
+      req.jam_mulai = payload.jam_mulai;
+      req.jam_selesai = payload.jam_selesai;
+    }
+    const res = await odooCall('/overtime/request', req);
     return { success: true, message: res.message || 'Pengajuan lembur berhasil dikirim.' };
   },
 

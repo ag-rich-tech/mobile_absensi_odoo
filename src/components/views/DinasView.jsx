@@ -567,55 +567,11 @@ export default function DinasView({ onBack }) {
                       }}
                     >
                       <Eye size={13} />
-                      <span>Buka Surat Tugas: {item.nama_dokumen || 'Lihat Dokumen'}</span>
+                      <span>Buka Surat Tugas: Lihat Dokumen</span>
                     </button>
                   </div>
                 )}
 
-                {item.approval_info?.is_bertingkat && (
-                  <div style={{
-                    marginTop: '2px',
-                    padding: '6px 8px',
-                    borderRadius: '8px',
-                    backgroundColor: '#fff7ed',
-                    border: '1px solid #fed7aa',
-                    fontSize: '10px'
-                  }}>
-                    <span style={{ fontWeight: '800', color: '#c2410c', display: 'block', marginBottom: '2px' }}>
-                      Alur Approval Bertingkat:
-                    </span>
-                    <span style={{ color: '#9a3412', fontWeight: '600' }}>
-                      {item.approval_info.status_label}
-                    </span>
-                  </div>
-                )}
-
-                {/* C9: batalkan dinas sendiri yang masih menunggu */}
-                {(item.status === 'menunggu' || item.status === 'confirm') && (
-                  <div style={{ margin: '0 14px 12px' }}>
-                    <button
-                      type="button"
-                      disabled={cancellingId === item.id}
-                      onClick={() => handleBatal(item)}
-                      style={{
-                        display: 'inline-flex',
-                        alignItems: 'center',
-                        gap: '6px',
-                        fontSize: '11px',
-                        fontWeight: '700',
-                        color: '#dc2626',
-                        backgroundColor: '#fef2f2',
-                        padding: '6px 12px',
-                        borderRadius: '8px',
-                        border: '1px solid #fecdd3',
-                        cursor: 'pointer'
-                      }}
-                    >
-                      <X size={13} />
-                      <span>{cancellingId === item.id ? 'Membatalkan...' : 'Batalkan Pengajuan'}</span>
-                    </button>
-                  </div>
-                )}
               </div>
             ))}
           </div>
