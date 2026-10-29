@@ -140,7 +140,10 @@ export default function AttendanceMap({
     group.clearLayers();
 
     // 1. Tambahkan Marker Kantor Utama & Lingkaran Geofence Utama (Target Validasi)
-    if (officeCoords) {
+    // Hanya bila koordinat kantor valid — officeCoords null (tanpa lokasi
+    // server) atau tanpa angka valid tidak boleh menggambar pin (0,0).
+    if (officeCoords && officeCoords.latitude != null && officeCoords.longitude != null
+      && !Number.isNaN(Number(officeCoords.latitude)) && !Number.isNaN(Number(officeCoords.longitude))) {
       const officeLat = Number(officeCoords.latitude);
       const officeLng = Number(officeCoords.longitude);
 

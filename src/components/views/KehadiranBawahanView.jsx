@@ -11,6 +11,13 @@ import api, { formatDurasiMenit, getServerDate, getStoredUser } from '../../serv
 // tidak mewarisi tampilan user sebelumnya.
 let orgViewCache = null;
 
+// Cache tab Bawahan per sesi login (pencarian + bulan, pola yang sama
+// dengan orgViewCache): pindah tab Dashboard meng-unmount view sehingga
+// state lokal hilang; cache modul ini membuatnya bertahan selama sesi.
+// Kunci id user agar user berikutnya tidak mewarisi pencarian/bulan
+// user sebelumnya.
+let bawahanTabCache = null;
+
 const NAMA_BULAN = [
   'Januari', 'Februari', 'Maret', 'April', 'Mei', 'Juni',
   'Juli', 'Agustus', 'September', 'Oktober', 'November', 'Desember'
@@ -182,13 +189,22 @@ function OrgChartNode({ node, depth, meId, expanded, onToggle, meNodeRef }) {
 
 export default function KehadiranBawahanView({ onBack }) {
   const currentDate = getServerDate();
-  const [selectedBulan, setSelectedBulan] = useState(currentDate.getMonth() + 1);
-  const [selectedTahun, setSelectedTahun] = useState(currentDate.getFullYear());
+  const [selectedBulan, setSelectedBulan] = useState(() => (
+    bawahanTabCache && bawahanTabCache.userId === (getStoredUser()?.id || null) && bawahanTabCache.bulan
+      ? bawahanTabCache.bulan : currentDate.getMonth() + 1
+  ));
+  const [selectedTahun, setSelectedTahun] = useState(() => (
+    bawahanTabCache && bawahanTabCache.userId === (getStoredUser()?.id || null) && bawahanTabCache.tahun
+      ? bawahanTabCache.tahun : currentDate.getFullYear()
+  ));
   
   // State data utama
   const [statusFitur, setStatusFitur] = useState(null);
   const [daftarBawahan, setDaftarBawahan] = useState([]);
-  const [searchQuery, setSearchQuery] = useState('');
+  const [searchQuery, setSearchQuery] = useState(() => (
+    bawahanTabCache && bawahanTabCache.userId === (getStoredUser()?.id || null)
+      ? (bawahanTabCache.searchQuery || '') : ''
+  ));
   const [isLoading, setIsLoading] = useState(true);
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [apiError, setApiError] = useState(null);
@@ -279,6 +295,17 @@ export default function KehadiranBawahanView({ onBack }) {
       search: orgSearchQuery,
     };
   }, [orgLoaded, orgTree, orgMeId, orgExpanded, orgSearchQuery]);
+
+  // Persist pencarian + bulan tab Bawahan ke cache sesi tiap berubah
+  // (pola yang sama dengan org chart di atas).
+  useEffect(() => {
+    bawahanTabCache = {
+      userId: getStoredUser()?.id || null,
+      searchQuery,
+      bulan: selectedBulan,
+      tahun: selectedTahun,
+    };
+  }, [searchQuery, selectedBulan, selectedTahun]);
 
   // Muat org chart sekali saat tab pertama dibuka.
   useEffect(() => {

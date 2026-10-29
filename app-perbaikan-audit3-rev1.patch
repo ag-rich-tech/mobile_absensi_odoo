@@ -1,0 +1,555 @@
+diff --git a/android/app/src/main/AndroidManifest.xml b/android/app/src/main/AndroidManifest.xml
+index c676e7f..3802933 100644
+--- a/android/app/src/main/AndroidManifest.xml
++++ b/android/app/src/main/AndroidManifest.xml
+@@ -25,6 +25,20 @@
+                 <category android:name="android.intent.category.LAUNCHER" />
+             </intent-filter>
+ 
++            <!-- Deep link: skema custom dari strings.xml (custom_url_scheme
++                 = com.mobileabsensi.app). JS (navState deepLinkToDashboardNav)
++                 memakai segmen terakhir URL, jadi
++                 com.mobileabsensi.app://slip membuka subview slip_gaji.
++                 Catatan: tautan https biasa TIDAK membuka app tanpa App
++                 Links (butuh assetlinks.json di domain web — tidak ada
++                 domain tautan yang dikonfigurasi untuk app ini). -->
++            <intent-filter>
++                <action android:name="android.intent.action.VIEW" />
++                <category android:name="android.intent.category.DEFAULT" />
++                <category android:name="android.intent.category.BROWSABLE" />
++                <data android:scheme="@string/custom_url_scheme" />
++            </intent-filter>
++
+         </activity>
+ 
+         <!-- Receivers heartbeat live tracking tahap 2 (alarm per jam). -->
+diff --git a/src/App.jsx b/src/App.jsx
+index e107870..6440bc0 100644
+--- a/src/App.jsx
++++ b/src/App.jsx
+@@ -219,14 +219,16 @@ function App() {
+     try {
+       const p1 = CapacitorApp.addListener('backButton', onBackButton);
+       if (p1 && typeof p1.then === 'function') {
+-        p1.then((h) => { backHandle = h; }).catch(() => {});
++        p1.then((h) => { backHandle = h; }).catch((err) => { console.warn('Gagal mendaftarkan listener backButton @capacitor/app:', err); });
+       } else { backHandle = p1; }
+       const p2 = CapacitorApp.addListener('appUrlOpen', onAppUrlOpen);
+       if (p2 && typeof p2.then === 'function') {
+-        p2.then((h) => { linkHandle = h; }).catch(() => {});
++        p2.then((h) => { linkHandle = h; }).catch((err) => { console.warn('Gagal mendaftarkan listener appUrlOpen @capacitor/app:', err); });
+       } else { linkHandle = p2; }
+-    } catch {
+-      // Bukan Android / plugin belum sync — abaikan, web tetap jalan.
++    } catch (err) {
++      // Bukan Android / plugin belum sync — web tetap jalan, tapi
++      // degradasi kini terlihat di log (bukan diam-diam).
++      console.warn('Listener backButton/appUrlOpen @capacitor/app tidak terdaftar (bukan Android / plugin belum cap sync):', err);
+     }
+     return () => {
+       if (backHandle && typeof backHandle.remove === 'function') backHandle.remove();
+diff --git a/src/components/AttendanceMap.jsx b/src/components/AttendanceMap.jsx
+index ddc1f0c..2ee45b8 100644
+--- a/src/components/AttendanceMap.jsx
++++ b/src/components/AttendanceMap.jsx
+@@ -140,7 +140,10 @@ export default function AttendanceMap({
+     group.clearLayers();
+ 
+     // 1. Tambahkan Marker Kantor Utama & Lingkaran Geofence Utama (Target Validasi)
+-    if (officeCoords) {
++    // Hanya bila koordinat kantor valid — officeCoords null (tanpa lokasi
++    // server) atau tanpa angka valid tidak boleh menggambar pin (0,0).
++    if (officeCoords && officeCoords.latitude != null && officeCoords.longitude != null
++      && !Number.isNaN(Number(officeCoords.latitude)) && !Number.isNaN(Number(officeCoords.longitude))) {
+       const officeLat = Number(officeCoords.latitude);
+       const officeLng = Number(officeCoords.longitude);
+ 
+diff --git a/src/components/ErrorBoundary.jsx b/src/components/ErrorBoundary.jsx
+new file mode 100644
+index 0000000..695e4ea
+--- /dev/null
++++ b/src/components/ErrorBoundary.jsx
+@@ -0,0 +1,64 @@
++import React from 'react';
++
++// ErrorBoundary minimal: satu crash render (mis. variabel tak terdefinisi)
++// tidak lagi memutihkan seluruh app. Menangkap error di subtree-nya,
++// mencatat ke console, dan menampilkan fallback dengan tombol muat ulang.
++// Dipakai membungkus <App /> di main.jsx.
++export default class ErrorBoundary extends React.Component {
++  constructor(props) {
++    super(props);
++    this.state = { hasError: false, message: '' };
++  }
++
++  static getDerivedStateFromError(error) {
++    return { hasError: true, message: error && error.message ? error.message : 'Terjadi kesalahan.' };
++  }
++
++  componentDidCatch(error, info) {
++    // Jangan ditelan diam-diam: error tetap terlihat di log perangkat.
++    console.error('ErrorBoundary menangkap crash render:', error, info);
++  }
++
++  render() {
++    if (this.state.hasError) {
++      return (
++        <div style={{
++          minHeight: '100dvh',
++          display: 'flex',
++          flexDirection: 'column',
++          alignItems: 'center',
++          justifyContent: 'center',
++          gap: '12px',
++          padding: '24px',
++          textAlign: 'center',
++          fontFamily: 'system-ui, sans-serif',
++        }}>
++          <div style={{ fontSize: '18px', fontWeight: '800', color: '#0f172a' }}>
++            Terjadi kesalahan pada aplikasi
++          </div>
++          <div style={{ fontSize: '13px', color: '#64748b', maxWidth: '420px' }}>
++            {this.state.message}
++          </div>
++          <button
++            type="button"
++            onClick={() => window.location.reload()}
++            style={{
++              height: '44px',
++              padding: '0 22px',
++              borderRadius: '10px',
++              border: 'none',
++              backgroundColor: '#0f172a',
++              color: '#ffffff',
++              fontSize: '14px',
++              fontWeight: '700',
++              cursor: 'pointer',
++            }}
++          >
++            Muat Ulang
++          </button>
++        </div>
++      );
++    }
++    return this.props.children;
++  }
++}
+diff --git a/src/components/views/ApprovalView.jsx b/src/components/views/ApprovalView.jsx
+index 17e4711..7550b8c 100644
+--- a/src/components/views/ApprovalView.jsx
++++ b/src/components/views/ApprovalView.jsx
+@@ -553,7 +553,12 @@ export default function ApprovalView({ onBack }) {
+                       ? (item.step_ke && item.total_step
+                         ? `Tahap ${item.step_ke} dari ${item.total_step}`
+                         : 'Menunggu Persetujuan')
+-                      : (item.status === 'disetujui' ? 'Telah Disetujui' : 'Telah Ditolak')}
++                      : (item.status === 'disetujui' ? 'Telah Disetujui'
++                        // Riwayat lembur 'ditolak' bisa berarti ditolak
++                        // approver ATAU dibatalkan pemilik (cancel lembur
++                        // dipetakan ke refused dan model tidak mencatat
++                        // aktor) — label netral, bukan atribusi palsu.
++                        : (activeTab === 'riwayat' && (item.tipe || item.modul) === 'lembur' ? 'Ditolak / Dibatalkan' : 'Telah Ditolak'))}
+                   </span>
+                 </div>
+ 
+@@ -689,7 +694,7 @@ export default function ApprovalView({ onBack }) {
+                   {/* Lampiran Dokumen — hanya modul yang dikenal route
+                       preview server (cuti/dinas/reimbursement/masalah);
+                       lembur tidak punya dokumen di server. */}
+-                  {(detail.dokumen_ada || !!detail.dokumen_url) && ['cuti', 'izin', 'dinas', 'reimbursement', 'masalah'].includes(item.modul) && (
++                  {(detail.dokumen_ada || !!detail.dokumen_url) && ['cuti', 'dinas', 'reimbursement', 'masalah'].includes(item.modul) && (
+                     <div style={{ marginTop: '4px', paddingTop: '6px', borderTop: '1px dashed #e2e8f0' }}>
+                       <button
+                         type="button"
+@@ -723,8 +728,9 @@ export default function ApprovalView({ onBack }) {
+ 
+                 {/* Tombol aksi HANYA di tab Menunggu + status menunggu:
+                     item yang sudah diputus (tab Riwayat) tidak boleh
+-                    menampilkan tombol aksi (is_current di mapper selalu
+-                    true sehingga tidak bisa dipakai sebagai gerbang). */}
++                    menampilkan tombol aksi. (Field is_current di mapper
++                    sudah dihapus karena selalu true dan tidak bisa
++                    dipakai sebagai gerbang.) */}
+                 {activeTab === 'menunggu' && item.status === 'menunggu' && (
+                   <div style={{
+                     padding: '12px 14px',
+diff --git a/src/components/views/IzinView.jsx b/src/components/views/IzinView.jsx
+index 57f6d6b..dab1763 100644
+--- a/src/components/views/IzinView.jsx
++++ b/src/components/views/IzinView.jsx
+@@ -251,7 +251,7 @@ export default function IzinView({ onBack }) {
+             Kuota Cuti {kuota.tahun}
+           </span>
+           <span style={{ fontSize: '11px', fontWeight: '800', color: '#38bdf8', backgroundColor: 'rgba(56, 189, 248, 0.15)', padding: '2px 8px', borderRadius: '999px' }}>
+-            Sisa {kuota.sisa ?? '–'} Hari
++            Sisa {kuota.sisa ?? '–'} Hari{kuota.nama ? ` · ${kuota.nama}` : ''}
+           </span>
+         </div>
+ 
+diff --git a/src/components/views/KehadiranBawahanView.jsx b/src/components/views/KehadiranBawahanView.jsx
+index 67a1287..6a476ec 100644
+--- a/src/components/views/KehadiranBawahanView.jsx
++++ b/src/components/views/KehadiranBawahanView.jsx
+@@ -11,6 +11,13 @@ import api, { formatDurasiMenit, getServerDate, getStoredUser } from '../../serv
+ // tidak mewarisi tampilan user sebelumnya.
+ let orgViewCache = null;
+ 
++// Cache tab Bawahan per sesi login (pencarian + bulan, pola yang sama
++// dengan orgViewCache): pindah tab Dashboard meng-unmount view sehingga
++// state lokal hilang; cache modul ini membuatnya bertahan selama sesi.
++// Kunci id user agar user berikutnya tidak mewarisi pencarian/bulan
++// user sebelumnya.
++let bawahanTabCache = null;
++
+ const NAMA_BULAN = [
+   'Januari', 'Februari', 'Maret', 'April', 'Mei', 'Juni',
+   'Juli', 'Agustus', 'September', 'Oktober', 'November', 'Desember'
+@@ -182,13 +189,22 @@ function OrgChartNode({ node, depth, meId, expanded, onToggle, meNodeRef }) {
+ 
+ export default function KehadiranBawahanView({ onBack }) {
+   const currentDate = getServerDate();
+-  const [selectedBulan, setSelectedBulan] = useState(currentDate.getMonth() + 1);
+-  const [selectedTahun, setSelectedTahun] = useState(currentDate.getFullYear());
++  const [selectedBulan, setSelectedBulan] = useState(() => (
++    bawahanTabCache && bawahanTabCache.userId === (getStoredUser()?.id || null) && bawahanTabCache.bulan
++      ? bawahanTabCache.bulan : currentDate.getMonth() + 1
++  ));
++  const [selectedTahun, setSelectedTahun] = useState(() => (
++    bawahanTabCache && bawahanTabCache.userId === (getStoredUser()?.id || null) && bawahanTabCache.tahun
++      ? bawahanTabCache.tahun : currentDate.getFullYear()
++  ));
+   
+   // State data utama
+   const [statusFitur, setStatusFitur] = useState(null);
+   const [daftarBawahan, setDaftarBawahan] = useState([]);
+-  const [searchQuery, setSearchQuery] = useState('');
++  const [searchQuery, setSearchQuery] = useState(() => (
++    bawahanTabCache && bawahanTabCache.userId === (getStoredUser()?.id || null)
++      ? (bawahanTabCache.searchQuery || '') : ''
++  ));
+   const [isLoading, setIsLoading] = useState(true);
+   const [isRefreshing, setIsRefreshing] = useState(false);
+   const [apiError, setApiError] = useState(null);
+@@ -280,6 +296,17 @@ export default function KehadiranBawahanView({ onBack }) {
+     };
+   }, [orgLoaded, orgTree, orgMeId, orgExpanded, orgSearchQuery]);
+ 
++  // Persist pencarian + bulan tab Bawahan ke cache sesi tiap berubah
++  // (pola yang sama dengan org chart di atas).
++  useEffect(() => {
++    bawahanTabCache = {
++      userId: getStoredUser()?.id || null,
++      searchQuery,
++      bulan: selectedBulan,
++      tahun: selectedTahun,
++    };
++  }, [searchQuery, selectedBulan, selectedTahun]);
++
+   // Muat org chart sekali saat tab pertama dibuka.
+   useEffect(() => {
+     if (tabAktif === 'orgchart' && !orgLoaded && !orgLoading) {
+diff --git a/src/components/views/LemburView.jsx b/src/components/views/LemburView.jsx
+index 0e8f23b..27d04f0 100644
+--- a/src/components/views/LemburView.jsx
++++ b/src/components/views/LemburView.jsx
+@@ -616,9 +616,11 @@ export default function LemburView({ onBack }) {
+                   "{item.keterangan_tugas}"
+                 </p>
+ 
+-                {/* Batalkan hanya untuk draft (state mentah di _raw):
+-                    confirm/validate sudah masuk antre approval. */}
+-                {item._raw?.state === 'draft' && (
++                {/* Batalkan hanya untuk draft. State mentah di _raw:
++                    'draft' bila item datang dari endpoint state model,
++                    'confirm' bila dari /overtime/history (server memetakan
++                    draft -> confirm di state_map) — keduanya = draft. */}
++                {(item._raw?.state === 'draft' || item._raw?.state === 'confirm') && (
+                   <button
+                     type="button"
+                     onClick={() => handleCancelLembur(item.id)}
+diff --git a/src/components/views/ProfileView.jsx b/src/components/views/ProfileView.jsx
+index a89cc01..4697fd0 100644
+--- a/src/components/views/ProfileView.jsx
++++ b/src/components/views/ProfileView.jsx
+@@ -62,6 +62,13 @@ export default function ProfileView({ user, onBack, onLogout, onOpenDenda, onOpe
+ 
+   const deviceId = getOrCreateDeviceId();
+ 
++  // Revoke blob preview foto saat unmount (dan saat diganti): revoke saat
++  // batal + simpan sudah ada, tapi keluar tab tanpa keduanya sebelumnya
++  // meninggalkan blob di memori.
++  useEffect(() => () => {
++    if (previewFoto) URL.revokeObjectURL(previewFoto);
++  }, [previewFoto]);
++
+   const handleFotoSelect = (e) => {
+     if (e.target.files && e.target.files[0]) {
+       const file = e.target.files[0];
+diff --git a/src/main.jsx b/src/main.jsx
+index b9a1a6d..4798aff 100644
+--- a/src/main.jsx
++++ b/src/main.jsx
+@@ -2,9 +2,12 @@ import { StrictMode } from 'react'
+ import { createRoot } from 'react-dom/client'
+ import './index.css'
+ import App from './App.jsx'
++import ErrorBoundary from './components/ErrorBoundary.jsx'
+ 
+ createRoot(document.getElementById('root')).render(
+   <StrictMode>
+-    <App />
++    <ErrorBoundary>
++      <App />
++    </ErrorBoundary>
+   </StrictMode>,
+ )
+diff --git a/src/pages/DashboardPage.jsx b/src/pages/DashboardPage.jsx
+index 338642e..4e2c43d 100644
+--- a/src/pages/DashboardPage.jsx
++++ b/src/pages/DashboardPage.jsx
+@@ -459,6 +459,7 @@ export default function DashboardPage({ user: initialUser, onLogout, onStartAtte
+   const jamKerja = dashboardData?.jam_kerja_hari_ini;
+   // Lokasi yang ditampilkan = lokasi terdekat (bila GPS sudah jalan),
+   // fallback lokasi pertama dari server.
++  const lokasi = nearestOffice || dashboardData?.lokasi_kantor;
+   const absensiHariIni = dashboardData?.absensi_hari_ini;
+   const riwayatList = dashboardData?.riwayat_terakhir || [];
+ 
+diff --git a/src/pages/LocationCheckPage.jsx b/src/pages/LocationCheckPage.jsx
+index ed48f4b..bb0e045 100644
+--- a/src/pages/LocationCheckPage.jsx
++++ b/src/pages/LocationCheckPage.jsx
+@@ -80,19 +80,20 @@ export default function LocationCheckPage({
+   // lokasi_kantor). Tanpa GPS / tanpa kandidat, pakai lokasi_kantor
+   // (perilaku lama) agar peta tetap punya target awal.
+   // Ada lokasi server bila daftar kandidat terisi ATAU lokasi kantor
+-  // konteks punya koordinat. Tanpa keduanya, fallback di bawah HANYA
+-  // target render peta — jarak dinyatakan tidak diketahui dan gerbang
+-  // masuk tertutup (fail-closed), bukan lolos lewat titik hardcode.
++  // konteks punya koordinat. Tanpa keduanya, fallback di bawah adalah
++  // null (TIDAK ADA lagi pin hardcode): peta tidak menggambar pin
++  // kantor, jarak dinyatakan tidak diketahui dan gerbang masuk
++  // tertutup (fail-closed).
+   const officeFromServer = candidateLocations.length > 0
+     || (currentOfficeLocation?.latitude != null && currentOfficeLocation?.longitude != null);
+   const officeCoords = useMemo(() => {
+-    const fallback = {
++    const fallback = (currentOfficeLocation?.latitude != null && currentOfficeLocation?.longitude != null) ? {
+       id: currentOfficeLocation?.id,
+-      latitude: currentOfficeLocation?.latitude != null ? Number(currentOfficeLocation.latitude) : -6.143662253255497,
+-      longitude: currentOfficeLocation?.longitude != null ? Number(currentOfficeLocation.longitude) : 106.6288537,
+-      nama: currentOfficeLocation?.nama_lokasi || (officeFromServer ? 'Kantor Pusat Tangerang' : 'Lokasi kantor belum tersedia dari server'),
++      latitude: Number(currentOfficeLocation.latitude),
++      longitude: Number(currentOfficeLocation.longitude),
++      nama: currentOfficeLocation?.nama_lokasi || 'Kantor',
+       radius: currentOfficeLocation?.radius_meter != null ? Number(currentOfficeLocation.radius_meter) : 100
+-    };
++    } : null;
+     if (!userCoords || !candidateLocations.length) return fallback;
+     const toCoords = (loc) => ({
+       id: loc?.id ?? null,
+@@ -148,6 +149,7 @@ export default function LocationCheckPage({
+   // lokasi_kantor, lokasi terpilih yang lain tampil sebagai
+   // "Lokasi Lain" padahal seharusnya jadi target).
+   const otherLocations = useMemo(() => {
++    if (!officeCoords) return [];
+     return candidateLocations.filter(loc => {
+       if (officeCoords.id != null && loc.id != null && loc.id === officeCoords.id) return false;
+       if (Math.abs(Number(loc.latitude) - Number(officeCoords.latitude)) < 0.0001 &&
+@@ -156,7 +158,7 @@ export default function LocationCheckPage({
+       }
+       return true;
+     });
+-  }, [candidateLocations, officeCoords.id, officeCoords.latitude, officeCoords.longitude]);
++  }, [candidateLocations, officeCoords]);
+ 
+   // States Anti-Fraud Fake GPS & Mock Location
+   const [isCheckingFakeGps, setIsCheckingFakeGps] = useState(false);
+@@ -187,13 +189,17 @@ export default function LocationCheckPage({
+         setUserCoords(coords);
+ 
+         const targetOffice = officeCoordsRef.current;
+-        const dist = calculateDistance(
+-          coords.latitude,
+-          coords.longitude,
+-          targetOffice.latitude,
+-          targetOffice.longitude
+-        );
+-        setDistance(dist);
++        if (targetOffice && targetOffice.latitude != null && targetOffice.longitude != null) {
++          const dist = calculateDistance(
++            coords.latitude,
++            coords.longitude,
++            targetOffice.latitude,
++            targetOffice.longitude
++          );
++          setDistance(dist);
++        } else {
++          setDistance(null);
++        }
+         setIsRefreshing(false);
+ 
+         // Validasi Anti-Fraud Fake GPS
+@@ -234,13 +240,13 @@ export default function LocationCheckPage({
+ 
+   // Kalkulasi jarak otomatis setiap kali userCoords ATAU titik kantor server (officeCoords) berubah.
+   // Tanpa lokasi server, jarak = tidak diketahui (null) — gerbang masuk
+-  // tertutup; titik fallback hardcode tidak pernah dipakai sebagai gerbang.
++  // tertutup; tidak ada lagi titik fallback yang dipakai sebagai gerbang.
+   useEffect(() => {
+     if (!officeFromServer) {
+       setDistance(null);
+       return;
+     }
+-    if (userCoords && officeCoords.latitude && officeCoords.longitude) {
++    if (userCoords && officeCoords && officeCoords.latitude && officeCoords.longitude) {
+       const dist = calculateDistance(
+         userCoords.latitude,
+         userCoords.longitude,
+@@ -249,7 +255,7 @@ export default function LocationCheckPage({
+       );
+       setDistance(dist);
+     }
+-  }, [userCoords, officeCoords.latitude, officeCoords.longitude, officeFromServer]);
++  }, [userCoords, officeCoords, officeFromServer]);
+ 
+   // Sinkronisasi Titik Lokasi & Deteksi GPS HANYA 1 KALI SAJA saat halaman dibuka
+   useEffect(() => {
+@@ -271,7 +277,7 @@ export default function LocationCheckPage({
+ 
+   // Evaluasi apakah karyawan berada di dalam radius atau berstatus Petugas Lapangan (Bebas Radius)
+   const isPetugasLapangan = Boolean(user?.is_petugas_lapangan || user?.ijinkan_wfa);
+-  const radius = officeCoords.radius;
++  const radius = officeCoords?.radius ?? 100;
+   const isInside = distance !== null ? (distance <= radius || isPetugasLapangan) : false;
+   // C24: clock-out TIDAK dibatasi radius (cerminan server — clock-out
+   // dari 22 km terbukti sukses). Gate radius hanya untuk 'masuk'.
+@@ -295,10 +301,13 @@ export default function LocationCheckPage({
+ 
+     onProceed({
+       type,
+-      coords: userCoords || {
++      // Tanpa GPS dan tanpa lokasi server, koordinat = null (jujur)
++      // alih-alih titik palsu; gerbang masuk sudah tertutup di kondisi
++      // ini, dan pulang tanpa GPS memang tidak punya titik kantor.
++      coords: userCoords || (officeCoords ? {
+         latitude: officeCoords.latitude,
+         longitude: officeCoords.longitude
+-      },
++      } : { latitude: null, longitude: null }),
+       distance: distance || 0,
+       officeLocation: officeCoords,
+       // Hasil deteksi yang sebenarnya (bukan hardcode false): proceed
+@@ -624,7 +633,7 @@ export default function LocationCheckPage({
+             <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+               <Building size={16} style={{ color: isFakeGps ? '#dc2626' : (isPetugasLapangan ? '#4f46e5' : (isInside ? 'var(--success)' : 'var(--primary-600)')) }} />
+               <span style={{ fontSize: '13px', fontWeight: '800', color: 'var(--text-main)' }}>
+-                {officeCoords.nama}
++                {officeCoords?.nama || 'Lokasi kantor belum tersedia dari server'}
+               </span>
+             </div>
+ 
+diff --git a/src/services/api.js b/src/services/api.js
+index db3a1d5..bff0a50 100644
+--- a/src/services/api.js
++++ b/src/services/api.js
+@@ -802,7 +802,6 @@ function mapApprovalItem(lv) {
+       },
+       alur_steps: [],
+       catatan_saya: lv.catatan_saya || '',
+-      is_current: true,
+       step_ke: steps.step_ke,
+       total_step: steps.total_step,
+       _raw: lv,
+@@ -816,7 +815,6 @@ function mapApprovalItem(lv) {
+       id: lv.id,
+       tipe: 'lembur',
+       pengajuan_id: lv.id,
+-      modul: 'lembur',
+       label_modul: 'Lembur',
+       pemohon: pemohonOut,
+       created_at: lv.date ? fmtTanggalId(utcToWib(lv.date + ' 00:00:00')) : '',
+@@ -839,7 +837,6 @@ function mapApprovalItem(lv) {
+       },
+       alur_steps: [],
+       catatan_saya: lv.catatan_saya || '',
+-      is_current: true,
+       step_ke: steps.step_ke,
+       total_step: steps.total_step,
+       _raw: lv,
+@@ -882,7 +879,6 @@ function mapApprovalItem(lv) {
+     },
+     alur_steps: [],
+     catatan_saya: lv.catatan_saya || '',
+-    is_current: true,
+     step_ke: steps.step_ke,
+     total_step: steps.total_step,
+     _raw: lv,
+@@ -978,6 +974,7 @@ function mapSlipDetail(s) {
+     return '';
+   };
+   return {
++    id: s.id,
+     nomor_slip: s.name || `#${s.id}`,
+     periode: s.date_from && s.date_to
+       ? `${fmtTanggalId(utcToWib(s.date_from + ' 00:00:00'))} – ${fmtTanggalId(utcToWib(s.date_to + ' 00:00:00'))}`
+@@ -1487,9 +1484,28 @@ export const api = {
+     const res = await odooCall(path, { limit, offset });
+     const items = (res.data && res.data.items) || [];
+     const count = (res.data && typeof res.data.count === 'number') ? res.data.count : null;
++    const mapped = items.map(mapApprovalItem);
++    if (tab === 'riwayat') {
++      // Urut global berdasarkan tanggal acuan tiap item (bukan per-grup
++      // tipe seperti urutan server): cuti = date_from, reimbursement =
++      // tanggal (create_date), lembur = tanggal (date_from). Server tidak
++      // mengirim stempel waktu keputusan, jadi ini urutan tanggal item,
++      // bukan tanggal keputusan — dan hanya berlaku dalam satu halaman
++      // (paginasi server memotong sebelum sort; urutan global penuh
++      // lintas halaman butuh sort server sebelum slice).
++      const stamp = (it) => {
++        const raw = (it && it._raw) || {};
++        const v = raw.date_from || raw.tanggal || raw.tanggal_lembur || null;
++        const t = v ? Date.parse(v) : NaN;
++        return Number.isNaN(t) ? -Infinity : t;
++      };
++      // Array.sort stabil (ES2019+): item tanpa tanggal tetap di urutan
++      // relatif semula di akhir daftar.
++      mapped.sort((a, b) => stamp(b) - stamp(a));
++    }
+     return {
+       success: true,
+-      data: items.map(mapApprovalItem),
++      data: mapped,
+       count,
+       has_more: count != null ? (offset + items.length < count) : items.length >= limit,
+     };
+diff --git a/src/services/apiAdapters.js b/src/services/apiAdapters.js
+index e6cb05c..4e89aed 100644
+--- a/src/services/apiAdapters.js
++++ b/src/services/apiAdapters.js
+@@ -773,7 +773,7 @@ export async function ajukanDinas(payload) {
+     tanggal_mulai: tglMulai,
+     tanggal_selesai: tglSelesai,
+     ...(anggaran != null ? { anggaran_biaya: anggaran } : {}),
+-    // Server membaca `filename` (dokumen_nama saja diabaikan) —
++    // Server membaca `filename` DAN `dokumen_nama` (sejak 1.2.25) —
+     // kirim keduanya.
+     ...(dokumen ? { dokumen, filename: dokumenNama, dokumen_nama: dokumenNama } : {}),
+   });
+@@ -800,11 +800,12 @@ function mapIssue(m) {
+   return {
+     ...m,
+     tanggal_kejadian_teks: m.tanggal_kejadian ? fmtTanggalDariYMD(m.tanggal_kejadian) : '',
+-    // View detail membaca `foto_bukti`; server mengirim
+-    // `foto_bukti_url` (saat ini selalu null, tapi jangan dibuang).
++    // View detail membaca `foto_bukti`; server mengirim `foto_bukti_id`
++    // (kontrak C1 — dipakai view untuk preview) dan `foto_bukti_url`
++    // sebagai fallback bila ada.
+     foto_bukti: m.foto_bukti_url || m.foto_bukti || null,
+-    // C20: foto tersimpan di server tapi url selalu null — id lampiran
+-    // dipakai view untuk membuka preview dokumen (kontrak C1).
++    // C20: id lampiran dipakai view untuk membuka preview dokumen
++    // (kontrak C1) — jangan dibuang walau url-nya null.
+     foto_bukti_id: m.foto_bukti_id ?? m.attachment_id ?? null,
+     foto_ada: !!m.foto_ada || !!(m.foto_bukti_id ?? m.attachment_id),
+   };

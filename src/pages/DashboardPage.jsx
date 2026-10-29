@@ -459,6 +459,7 @@ export default function DashboardPage({ user: initialUser, onLogout, onStartAtte
   const jamKerja = dashboardData?.jam_kerja_hari_ini;
   // Lokasi yang ditampilkan = lokasi terdekat (bila GPS sudah jalan),
   // fallback lokasi pertama dari server.
+  const lokasi = nearestOffice || dashboardData?.lokasi_kantor;
   const absensiHariIni = dashboardData?.absensi_hari_ini;
   const riwayatList = dashboardData?.riwayat_terakhir || [];
 

@@ -773,7 +773,7 @@ export async function ajukanDinas(payload) {
     tanggal_mulai: tglMulai,
     tanggal_selesai: tglSelesai,
     ...(anggaran != null ? { anggaran_biaya: anggaran } : {}),
-    // Server membaca `filename` (dokumen_nama saja diabaikan) —
+    // Server membaca `filename` DAN `dokumen_nama` (sejak 1.2.25) —
     // kirim keduanya.
     ...(dokumen ? { dokumen, filename: dokumenNama, dokumen_nama: dokumenNama } : {}),
   });
@@ -800,11 +800,12 @@ function mapIssue(m) {
   return {
     ...m,
     tanggal_kejadian_teks: m.tanggal_kejadian ? fmtTanggalDariYMD(m.tanggal_kejadian) : '',
-    // View detail membaca `foto_bukti`; server mengirim
-    // `foto_bukti_url` (saat ini selalu null, tapi jangan dibuang).
+    // View detail membaca `foto_bukti`; server mengirim `foto_bukti_id`
+    // (kontrak C1 — dipakai view untuk preview) dan `foto_bukti_url`
+    // sebagai fallback bila ada.
     foto_bukti: m.foto_bukti_url || m.foto_bukti || null,
-    // C20: foto tersimpan di server tapi url selalu null — id lampiran
-    // dipakai view untuk membuka preview dokumen (kontrak C1).
+    // C20: id lampiran dipakai view untuk membuka preview dokumen
+    // (kontrak C1) — jangan dibuang walau url-nya null.
     foto_bukti_id: m.foto_bukti_id ?? m.attachment_id ?? null,
     foto_ada: !!m.foto_ada || !!(m.foto_bukti_id ?? m.attachment_id),
   };

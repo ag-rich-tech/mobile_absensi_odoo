@@ -802,7 +802,6 @@ function mapApprovalItem(lv) {
       },
       alur_steps: [],
       catatan_saya: lv.catatan_saya || '',
-      is_current: true,
       step_ke: steps.step_ke,
       total_step: steps.total_step,
       _raw: lv,
@@ -816,7 +815,6 @@ function mapApprovalItem(lv) {
       id: lv.id,
       tipe: 'lembur',
       pengajuan_id: lv.id,
-      modul: 'lembur',
       label_modul: 'Lembur',
       pemohon: pemohonOut,
       created_at: lv.date ? fmtTanggalId(utcToWib(lv.date + ' 00:00:00')) : '',
@@ -839,7 +837,6 @@ function mapApprovalItem(lv) {
       },
       alur_steps: [],
       catatan_saya: lv.catatan_saya || '',
-      is_current: true,
       step_ke: steps.step_ke,
       total_step: steps.total_step,
       _raw: lv,
@@ -882,7 +879,6 @@ function mapApprovalItem(lv) {
     },
     alur_steps: [],
     catatan_saya: lv.catatan_saya || '',
-    is_current: true,
     step_ke: steps.step_ke,
     total_step: steps.total_step,
     _raw: lv,
@@ -978,6 +974,7 @@ function mapSlipDetail(s) {
     return '';
   };
   return {
+    id: s.id,
     nomor_slip: s.name || `#${s.id}`,
     periode: s.date_from && s.date_to
       ? `${fmtTanggalId(utcToWib(s.date_from + ' 00:00:00'))} – ${fmtTanggalId(utcToWib(s.date_to + ' 00:00:00'))}`
@@ -1487,9 +1484,28 @@ export const api = {
     const res = await odooCall(path, { limit, offset });
     const items = (res.data && res.data.items) || [];
     const count = (res.data && typeof res.data.count === 'number') ? res.data.count : null;
+    const mapped = items.map(mapApprovalItem);
+    if (tab === 'riwayat') {
+      // Urut global berdasarkan tanggal acuan tiap item (bukan per-grup
+      // tipe seperti urutan server): cuti = date_from, reimbursement =
+      // tanggal (create_date), lembur = tanggal (date_from). Server tidak
+      // mengirim stempel waktu keputusan, jadi ini urutan tanggal item,
+      // bukan tanggal keputusan — dan hanya berlaku dalam satu halaman
+      // (paginasi server memotong sebelum sort; urutan global penuh
+      // lintas halaman butuh sort server sebelum slice).
+      const stamp = (it) => {
+        const raw = (it && it._raw) || {};
+        const v = raw.date_from || raw.tanggal || raw.tanggal_lembur || null;
+        const t = v ? Date.parse(v) : NaN;
+        return Number.isNaN(t) ? -Infinity : t;
+      };
+      // Array.sort stabil (ES2019+): item tanpa tanggal tetap di urutan
+      // relatif semula di akhir daftar.
+      mapped.sort((a, b) => stamp(b) - stamp(a));
+    }
     return {
       success: true,
-      data: items.map(mapApprovalItem),
+      data: mapped,
       count,
       has_more: count != null ? (offset + items.length < count) : items.length >= limit,
     };

@@ -25,6 +25,20 @@
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
 
+            <!-- Deep link: skema custom dari strings.xml (custom_url_scheme
+                 = com.mobileabsensi.app). JS (navState deepLinkToDashboardNav)
+                 memakai segmen terakhir URL, jadi
+                 com.mobileabsensi.app://slip membuka subview slip_gaji.
+                 Catatan: tautan https biasa TIDAK membuka app tanpa App
+                 Links (butuh assetlinks.json di domain web — tidak ada
+                 domain tautan yang dikonfigurasi untuk app ini). -->
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="@string/custom_url_scheme" />
+            </intent-filter>
+
         </activity>
 
         <!-- Receivers heartbeat live tracking tahap 2 (alarm per jam). -->

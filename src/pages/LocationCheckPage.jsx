@@ -80,19 +80,20 @@ export default function LocationCheckPage({
   // lokasi_kantor). Tanpa GPS / tanpa kandidat, pakai lokasi_kantor
   // (perilaku lama) agar peta tetap punya target awal.
   // Ada lokasi server bila daftar kandidat terisi ATAU lokasi kantor
-  // konteks punya koordinat. Tanpa keduanya, fallback di bawah HANYA
-  // target render peta — jarak dinyatakan tidak diketahui dan gerbang
-  // masuk tertutup (fail-closed), bukan lolos lewat titik hardcode.
+  // konteks punya koordinat. Tanpa keduanya, fallback di bawah adalah
+  // null (TIDAK ADA lagi pin hardcode): peta tidak menggambar pin
+  // kantor, jarak dinyatakan tidak diketahui dan gerbang masuk
+  // tertutup (fail-closed).
   const officeFromServer = candidateLocations.length > 0
     || (currentOfficeLocation?.latitude != null && currentOfficeLocation?.longitude != null);
   const officeCoords = useMemo(() => {
-    const fallback = {
+    const fallback = (currentOfficeLocation?.latitude != null && currentOfficeLocation?.longitude != null) ? {
       id: currentOfficeLocation?.id,
-      latitude: currentOfficeLocation?.latitude != null ? Number(currentOfficeLocation.latitude) : -6.143662253255497,
-      longitude: currentOfficeLocation?.longitude != null ? Number(currentOfficeLocation.longitude) : 106.6288537,
-      nama: currentOfficeLocation?.nama_lokasi || (officeFromServer ? 'Kantor Pusat Tangerang' : 'Lokasi kantor belum tersedia dari server'),
+      latitude: Number(currentOfficeLocation.latitude),
+      longitude: Number(currentOfficeLocation.longitude),
+      nama: currentOfficeLocation?.nama_lokasi || 'Kantor',
       radius: currentOfficeLocation?.radius_meter != null ? Number(currentOfficeLocation.radius_meter) : 100
-    };
+    } : null;
     if (!userCoords || !candidateLocations.length) return fallback;
     const toCoords = (loc) => ({
       id: loc?.id ?? null,
@@ -148,6 +149,7 @@ export default function LocationCheckPage({
   // lokasi_kantor, lokasi terpilih yang lain tampil sebagai
   // "Lokasi Lain" padahal seharusnya jadi target).
   const otherLocations = useMemo(() => {
+    if (!officeCoords) return [];
     return candidateLocations.filter(loc => {
       if (officeCoords.id != null && loc.id != null && loc.id === officeCoords.id) return false;
       if (Math.abs(Number(loc.latitude) - Number(officeCoords.latitude)) < 0.0001 &&
@@ -156,7 +158,7 @@ export default function LocationCheckPage({
       }
       return true;
     });
-  }, [candidateLocations, officeCoords.id, officeCoords.latitude, officeCoords.longitude]);
+  }, [candidateLocations, officeCoords]);
 
   // States Anti-Fraud Fake GPS & Mock Location
   const [isCheckingFakeGps, setIsCheckingFakeGps] = useState(false);
@@ -187,13 +189,17 @@ export default function LocationCheckPage({
         setUserCoords(coords);
 
         const targetOffice = officeCoordsRef.current;
-        const dist = calculateDistance(
-          coords.latitude,
-          coords.longitude,
-          targetOffice.latitude,
-          targetOffice.longitude
-        );
-        setDistance(dist);
+        if (targetOffice && targetOffice.latitude != null && targetOffice.longitude != null) {
+          const dist = calculateDistance(
+            coords.latitude,
+            coords.longitude,
+            targetOffice.latitude,
+            targetOffice.longitude
+          );
+          setDistance(dist);
+        } else {
+          setDistance(null);
+        }
         setIsRefreshing(false);
 
         // Validasi Anti-Fraud Fake GPS
@@ -234,13 +240,13 @@ export default function LocationCheckPage({
 
   // Kalkulasi jarak otomatis setiap kali userCoords ATAU titik kantor server (officeCoords) berubah.
   // Tanpa lokasi server, jarak = tidak diketahui (null) — gerbang masuk
-  // tertutup; titik fallback hardcode tidak pernah dipakai sebagai gerbang.
+  // tertutup; tidak ada lagi titik fallback yang dipakai sebagai gerbang.
   useEffect(() => {
     if (!officeFromServer) {
       setDistance(null);
       return;
     }
-    if (userCoords && officeCoords.latitude && officeCoords.longitude) {
+    if (userCoords && officeCoords && officeCoords.latitude && officeCoords.longitude) {
       const dist = calculateDistance(
         userCoords.latitude,
         userCoords.longitude,
@@ -249,7 +255,7 @@ export default function LocationCheckPage({
       );
       setDistance(dist);
     }
-  }, [userCoords, officeCoords.latitude, officeCoords.longitude, officeFromServer]);
+  }, [userCoords, officeCoords, officeFromServer]);
 
   // Sinkronisasi Titik Lokasi & Deteksi GPS HANYA 1 KALI SAJA saat halaman dibuka
   useEffect(() => {
@@ -271,7 +277,7 @@ export default function LocationCheckPage({
 
   // Evaluasi apakah karyawan berada di dalam radius atau berstatus Petugas Lapangan (Bebas Radius)
   const isPetugasLapangan = Boolean(user?.is_petugas_lapangan || user?.ijinkan_wfa);
-  const radius = officeCoords.radius;
+  const radius = officeCoords?.radius ?? 100;
   const isInside = distance !== null ? (distance <= radius || isPetugasLapangan) : false;
   // C24: clock-out TIDAK dibatasi radius (cerminan server — clock-out
   // dari 22 km terbukti sukses). Gate radius hanya untuk 'masuk'.
@@ -295,10 +301,13 @@ export default function LocationCheckPage({
 
     onProceed({
       type,
-      coords: userCoords || {
+      // Tanpa GPS dan tanpa lokasi server, koordinat = null (jujur)
+      // alih-alih titik palsu; gerbang masuk sudah tertutup di kondisi
+      // ini, dan pulang tanpa GPS memang tidak punya titik kantor.
+      coords: userCoords || (officeCoords ? {
         latitude: officeCoords.latitude,
         longitude: officeCoords.longitude
-      },
+      } : { latitude: null, longitude: null }),
       distance: distance || 0,
       officeLocation: officeCoords,
       // Hasil deteksi yang sebenarnya (bukan hardcode false): proceed
@@ -624,7 +633,7 @@ export default function LocationCheckPage({
             <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
               <Building size={16} style={{ color: isFakeGps ? '#dc2626' : (isPetugasLapangan ? '#4f46e5' : (isInside ? 'var(--success)' : 'var(--primary-600)')) }} />
               <span style={{ fontSize: '13px', fontWeight: '800', color: 'var(--text-main)' }}>
-                {officeCoords.nama}
+                {officeCoords?.nama || 'Lokasi kantor belum tersedia dari server'}
               </span>
             </div>
 

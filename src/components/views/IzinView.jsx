@@ -251,7 +251,7 @@ export default function IzinView({ onBack }) {
             Kuota Cuti {kuota.tahun}
           </span>
           <span style={{ fontSize: '11px', fontWeight: '800', color: '#38bdf8', backgroundColor: 'rgba(56, 189, 248, 0.15)', padding: '2px 8px', borderRadius: '999px' }}>
-            Sisa {kuota.sisa ?? '–'} Hari
+            Sisa {kuota.sisa ?? '–'} Hari{kuota.nama ? ` · ${kuota.nama}` : ''}
           </span>
         </div>
 

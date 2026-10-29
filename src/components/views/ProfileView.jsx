@@ -62,6 +62,13 @@ export default function ProfileView({ user, onBack, onLogout, onOpenDenda, onOpe
 
   const deviceId = getOrCreateDeviceId();
 
+  // Revoke blob preview foto saat unmount (dan saat diganti): revoke saat
+  // batal + simpan sudah ada, tapi keluar tab tanpa keduanya sebelumnya
+  // meninggalkan blob di memori.
+  useEffect(() => () => {
+    if (previewFoto) URL.revokeObjectURL(previewFoto);
+  }, [previewFoto]);
+
   const handleFotoSelect = (e) => {
     if (e.target.files && e.target.files[0]) {
       const file = e.target.files[0];

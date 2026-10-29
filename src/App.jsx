@@ -219,14 +219,16 @@ function App() {
     try {
       const p1 = CapacitorApp.addListener('backButton', onBackButton);
       if (p1 && typeof p1.then === 'function') {
-        p1.then((h) => { backHandle = h; }).catch(() => {});
+        p1.then((h) => { backHandle = h; }).catch((err) => { console.warn('Gagal mendaftarkan listener backButton @capacitor/app:', err); });
       } else { backHandle = p1; }
       const p2 = CapacitorApp.addListener('appUrlOpen', onAppUrlOpen);
       if (p2 && typeof p2.then === 'function') {
-        p2.then((h) => { linkHandle = h; }).catch(() => {});
+        p2.then((h) => { linkHandle = h; }).catch((err) => { console.warn('Gagal mendaftarkan listener appUrlOpen @capacitor/app:', err); });
       } else { linkHandle = p2; }
-    } catch {
-      // Bukan Android / plugin belum sync — abaikan, web tetap jalan.
+    } catch (err) {
+      // Bukan Android / plugin belum sync — web tetap jalan, tapi
+      // degradasi kini terlihat di log (bukan diam-diam).
+      console.warn('Listener backButton/appUrlOpen @capacitor/app tidak terdaftar (bukan Android / plugin belum cap sync):', err);
     }
     return () => {
       if (backHandle && typeof backHandle.remove === 'function') backHandle.remove();

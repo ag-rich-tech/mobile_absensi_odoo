@@ -616,9 +616,11 @@ export default function LemburView({ onBack }) {
                   "{item.keterangan_tugas}"
                 </p>
 
-                {/* Batalkan hanya untuk draft (state mentah di _raw):
-                    confirm/validate sudah masuk antre approval. */}
-                {item._raw?.state === 'draft' && (
+                {/* Batalkan hanya untuk draft. State mentah di _raw:
+                    'draft' bila item datang dari endpoint state model,
+                    'confirm' bila dari /overtime/history (server memetakan
+                    draft -> confirm di state_map) — keduanya = draft. */}
+                {(item._raw?.state === 'draft' || item._raw?.state === 'confirm') && (
                   <button
                     type="button"
                     onClick={() => handleCancelLembur(item.id)}

@@ -553,7 +553,12 @@ export default function ApprovalView({ onBack }) {
                       ? (item.step_ke && item.total_step
                         ? `Tahap ${item.step_ke} dari ${item.total_step}`
                         : 'Menunggu Persetujuan')
-                      : (item.status === 'disetujui' ? 'Telah Disetujui' : 'Telah Ditolak')}
+                      : (item.status === 'disetujui' ? 'Telah Disetujui'
+                        // Riwayat lembur 'ditolak' bisa berarti ditolak
+                        // approver ATAU dibatalkan pemilik (cancel lembur
+                        // dipetakan ke refused dan model tidak mencatat
+                        // aktor) — label netral, bukan atribusi palsu.
+                        : (activeTab === 'riwayat' && (item.tipe || item.modul) === 'lembur' ? 'Ditolak / Dibatalkan' : 'Telah Ditolak'))}
                   </span>
                 </div>
 
@@ -689,7 +694,7 @@ export default function ApprovalView({ onBack }) {
                   {/* Lampiran Dokumen — hanya modul yang dikenal route
                       preview server (cuti/dinas/reimbursement/masalah);
                       lembur tidak punya dokumen di server. */}
-                  {(detail.dokumen_ada || !!detail.dokumen_url) && ['cuti', 'izin', 'dinas', 'reimbursement', 'masalah'].includes(item.modul) && (
+                  {(detail.dokumen_ada || !!detail.dokumen_url) && ['cuti', 'dinas', 'reimbursement', 'masalah'].includes(item.modul) && (
                     <div style={{ marginTop: '4px', paddingTop: '6px', borderTop: '1px dashed #e2e8f0' }}>
                       <button
                         type="button"
@@ -723,8 +728,9 @@ export default function ApprovalView({ onBack }) {
 
                 {/* Tombol aksi HANYA di tab Menunggu + status menunggu:
                     item yang sudah diputus (tab Riwayat) tidak boleh
-                    menampilkan tombol aksi (is_current di mapper selalu
-                    true sehingga tidak bisa dipakai sebagai gerbang). */}
+                    menampilkan tombol aksi. (Field is_current di mapper
+                    sudah dihapus karena selalu true dan tidak bisa
+                    dipakai sebagai gerbang.) */}
                 {activeTab === 'menunggu' && item.status === 'menunggu' && (
                   <div style={{
                     padding: '12px 14px',
