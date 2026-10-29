@@ -679,6 +679,14 @@ export default function TugasView({ onBack }) {
           </div>
         )}
 
+        {/* Spacer anti-bottom-nav (elemen nyata, bukan padding):
+            TugasView punya scroller sendiri (flex column + overflow-y
+            auto) sehingga spacer bersama di DashboardPage tidak
+            menolong halaman ini — padding-bottom scroller ini pun
+            diabaikan Chrome/WebView dengan alasan yang sama.
+            Tinggi = tinggi visual nav + jarak aman, sama seperti
+            spacer di DashboardPage. */}
+        <div aria-hidden="true" style={{ height: 'calc(112px + env(safe-area-inset-bottom, 0px))', flexShrink: 0 }} />
       </div>
 
       {/* MODAL DETAIL PENUGASAN LENGKAP */}

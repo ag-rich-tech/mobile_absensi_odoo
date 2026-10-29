@@ -745,7 +745,16 @@ export default function DashboardPage({ user: initialUser, onLogout, onStartAtte
         overflowX: 'hidden',
         WebkitOverflowScrolling: 'touch',
         position: 'relative',
-        paddingBottom: '90px'
+        // JANGAN pakai paddingBottom di sini: container ini adalah
+        // flex column + overflow-y auto, dan Chrome/WebView TIDAK
+        // menghitung padding-bottom container seperti itu sebagai
+        // area scroll (bug perilaku flexbox yang sudah dikenal) —
+        // itulah akar tombol bawah tertutup nav (padding 90px lama
+        // praktis bernilai 0 di HP, terbukti dari screenshot tiket:
+        // tombol mentok 30px + tinggi tombol di atas bawah layar).
+        // Ruang bawah untuk nav disediakan spacer di akhir konten
+        // (elemen nyata, bukan padding) agar dihitung semua browser.
+        paddingBottom: '0px'
       }}>
         {/* Main Content View Switcher */}
         {activeNav === 'home' && !exitingNav && (
@@ -2318,6 +2327,13 @@ export default function DashboardPage({ user: initialUser, onLogout, onStartAtte
             )}
           </div>
         )}
+        {/* Spacer anti-bottom-nav (elemen nyata, bukan padding):
+            tinggi = tinggi visual nav (bar 62px + tonjolan tombol
+            Home 22px + padding bawah nav) + jarak aman. Nav bersifat
+            absolute di atas area scroll, jadi tanpa spacer ini elemen
+            terbawah halaman (mis. tombol Kirim di Ajukan Permasalahan)
+            mentok di balik nav dan tidak bisa ditekan. */}
+        <div aria-hidden="true" style={{ height: 'calc(112px + env(safe-area-inset-bottom, 0px))', flexShrink: 0 }} />
       </div>
 
       {/* Floating Bottom Navigation (Statis di Bawah) */}
