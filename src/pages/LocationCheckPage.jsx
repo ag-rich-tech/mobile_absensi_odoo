@@ -35,14 +35,79 @@ export default function LocationCheckPage({
   const [isFetchingOffice, setIsFetchingOffice] = useState(false);
   const [isOfficeUpdated, setIsOfficeUpdated] = useState(false);
 
-  // Default titik lokasi kantor (TARGET VALIDASI ABSENSI RESMI PEGAWAI) - Reaktif terhadap data server terbaru
-  const officeCoords = useMemo(() => ({
-    id: currentOfficeLocation?.id,
-    latitude: currentOfficeLocation?.latitude != null ? Number(currentOfficeLocation.latitude) : -6.143662253255497,
-    longitude: currentOfficeLocation?.longitude != null ? Number(currentOfficeLocation.longitude) : 106.6288537,
-    nama: currentOfficeLocation?.nama_lokasi || 'Kantor Pusat Tangerang',
-    radius: currentOfficeLocation?.radius_meter != null ? Number(currentOfficeLocation.radius_meter) : 100
-  }), [currentOfficeLocation]);
+  // State posisi user — dideklarasikan di atas memo pemilihan target
+  // karena memo itu membaca userCoords saat render.
+  const [userCoords, setUserCoords] = useState(null);
+  const [distance, setDistance] = useState(null);
+  const [isRefreshing, setIsRefreshing] = useState(false);
+  const [gpsError, setGpsError] = useState('');
+
+  // Kalkulasi jarak Haversine (Meter) — didefinisikan di atas
+  // officeCoords karena memo pemilihan target memakainya saat render.
+  const calculateDistance = (lat1, lon1, lat2, lon2) => {
+    const R = 6371000; // Radius bumi dalam meter
+    const dLat = (lat2 - lat1) * (Math.PI / 180);
+    const dLon = (lon2 - lon1) * (Math.PI / 180);
+    const a =
+      Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+      Math.cos(lat1 * (Math.PI / 180)) * Math.cos(lat2 * (Math.PI / 180)) *
+      Math.sin(dLon / 2) * Math.sin(dLon / 2);
+    const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+    return Math.round(R * c);
+  };
+
+  // AUTO-SWITCH LOKASI TERDEKAT (perbaikan bug multi-kantor):
+  // dulu target validasi SELALU lokasi_kantor = semua_lokasi[0]
+  // (Kantor 1), sehingga karyawan yang diizinkan di Kantor 1 +
+  // Kantor 2 tapi berdiri di Kantor 2 tetap diblokir "Di Luar
+  // Radius". Sekarang target = lokasi yang mengandung titik
+  // (jarak <= radius-nya); bila beberapa mengandung, yang
+  // terdekat; bila tidak ada yang mengandung, yang terdekat
+  // secara keseluruhan (agar pesan jaraknya jujur). Ini cerminan
+  // _match_location server — clock-in sendiri sudah begitu, jadi
+  // tidak perlu perubahan server. Satu lokasi = perilaku lama.
+  const candidateLocations = useMemo(() => {
+    const list = Array.isArray(locationsList) ? locationsList : [];
+    const valid = list.filter((loc) =>
+      loc && loc.latitude != null && loc.longitude != null &&
+      !isNaN(Number(loc.latitude)) && !isNaN(Number(loc.longitude)));
+    if (valid.length) return valid;
+    if (currentOfficeLocation) return [currentOfficeLocation];
+    return [];
+  }, [locationsList, currentOfficeLocation]);
+
+  // Target validasi absensi: lokasi terpilih (bukan lagi selalu
+  // lokasi_kantor). Tanpa GPS / tanpa kandidat, pakai lokasi_kantor
+  // (perilaku lama) agar peta tetap punya target awal.
+  const officeCoords = useMemo(() => {
+    const fallback = {
+      id: currentOfficeLocation?.id,
+      latitude: currentOfficeLocation?.latitude != null ? Number(currentOfficeLocation.latitude) : -6.143662253255497,
+      longitude: currentOfficeLocation?.longitude != null ? Number(currentOfficeLocation.longitude) : 106.6288537,
+      nama: currentOfficeLocation?.nama_lokasi || 'Kantor Pusat Tangerang',
+      radius: currentOfficeLocation?.radius_meter != null ? Number(currentOfficeLocation.radius_meter) : 100
+    };
+    if (!userCoords || !candidateLocations.length) return fallback;
+    const toCoords = (loc) => ({
+      id: loc?.id ?? null,
+      latitude: Number(loc.latitude),
+      longitude: Number(loc.longitude),
+      nama: loc?.nama_lokasi || loc?.nama || 'Kantor',
+      radius: loc?.radius_meter != null ? Number(loc.radius_meter) : (loc?.radius_m != null ? Number(loc.radius_m) : 100),
+    });
+    let nearest = null;
+    let nearestDist = Infinity;
+    let nearestInside = null;
+    let nearestInsideDist = Infinity;
+    for (const loc of candidateLocations) {
+      const c = toCoords(loc);
+      const d = calculateDistance(
+        userCoords.latitude, userCoords.longitude, c.latitude, c.longitude);
+      if (d < nearestDist) { nearestDist = d; nearest = c; }
+      if (d <= c.radius && d < nearestInsideDist) { nearestInsideDist = d; nearestInside = c; }
+    }
+    return nearestInside || nearest || fallback;
+  }, [userCoords, candidateLocations, currentOfficeLocation]);
 
   const officeCoordsRef = useRef(officeCoords);
   useEffect(() => {
@@ -72,42 +137,26 @@ export default function LocationCheckPage({
     }
   }, []);
 
-  // Titik lokasi absensi lainnya (Hanya ditampilkan di peta, validasi tetap ke officeCoords di atas)
+  // Titik lokasi lainnya: semua kandidat KECUALI target terpilih
+  // (dulu: semua kecuali lokasi_kantor — karena target selalu
+  // lokasi_kantor, lokasi terpilih yang lain tampil sebagai
+  // "Lokasi Lain" padahal seharusnya jadi target).
   const otherLocations = useMemo(() => {
-    if (!Array.isArray(locationsList)) return [];
-    return locationsList.filter(loc => {
-      if (currentOfficeLocation?.id && loc.id === currentOfficeLocation.id) return false;
+    return candidateLocations.filter(loc => {
+      if (officeCoords.id != null && loc.id != null && loc.id === officeCoords.id) return false;
       if (Math.abs(Number(loc.latitude) - Number(officeCoords.latitude)) < 0.0001 &&
         Math.abs(Number(loc.longitude) - Number(officeCoords.longitude)) < 0.0001) {
         return false;
       }
       return true;
     });
-  }, [locationsList, currentOfficeLocation?.id, officeCoords.latitude, officeCoords.longitude]);
-
-  const [userCoords, setUserCoords] = useState(null);
-  const [distance, setDistance] = useState(null);
-  const [isRefreshing, setIsRefreshing] = useState(false);
-  const [gpsError, setGpsError] = useState('');
+  }, [candidateLocations, officeCoords.id, officeCoords.latitude, officeCoords.longitude]);
 
   // States Anti-Fraud Fake GPS & Mock Location
   const [isCheckingFakeGps, setIsCheckingFakeGps] = useState(false);
   const [isFakeGps, setIsFakeGps] = useState(false);
   const [fakeGpsReason, setFakeGpsReason] = useState('');
   const [showFakeGpsModal, setShowFakeGpsModal] = useState(false);
-
-  // Kalkulasi jarak Haversine (Meter)
-  const calculateDistance = (lat1, lon1, lat2, lon2) => {
-    const R = 6371000; // Radius bumi dalam meter
-    const dLat = (lat2 - lat1) * (Math.PI / 180);
-    const dLon = (lon2 - lon1) * (Math.PI / 180);
-    const a =
-      Math.sin(dLat / 2) * Math.sin(dLat / 2) +
-      Math.cos(lat1 * (Math.PI / 180)) * Math.cos(lat2 * (Math.PI / 180)) *
-      Math.sin(dLon / 2) * Math.sin(dLon / 2);
-    const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
-    return Math.round(R * c);
-  };
 
   // Ambil Posisi GPS Karyawan Real-Time & Lakukan Deteksi Fake GPS
   const fetchLocation = useCallback(async () => {
