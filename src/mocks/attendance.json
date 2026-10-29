@@ -70,11 +70,6 @@
       ]
     }
   },
-  "break": {
-    "status": "success",
-    "message": "Waktu istirahat berhasil dicatat.",
-    "data": {}
-  },
   "tracking": {
     "status": "success",
     "message": "OK",

@@ -38,7 +38,6 @@ const TABLE = {
   '/attendance/clock-in': attendance.clock_in,
   '/attendance/clock-out': attendance.clock_out,
   '/attendance/history': attendance.history,
-  '/attendance/break': attendance.break,
   '/tracking/ping': attendance.tracking,
   '/face/enroll': face.enroll,
   '/face/status': face.status,

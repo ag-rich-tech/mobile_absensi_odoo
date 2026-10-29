@@ -149,6 +149,18 @@ export function formatTime24(dateObj) {
   return d.toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false });
 }
 
+// Durasi keterlambatan (menit) -> kata: <60 menit cukup menit saja,
+// >=60 menit jadi "X jam Y menit" (Y=0 -> "X jam" saja). Non-angka -> '-'.
+export function formatDurasiMenit(menit) {
+  if (menit == null) return '-';
+  const m = Math.round(Number(menit));
+  if (!Number.isFinite(m) || m < 0) return '-';
+  if (m < 60) return `${m} menit`;
+  const j = Math.floor(m / 60);
+  const s = m % 60;
+  return s === 0 ? `${j} jam` : `${j} jam ${s} menit`;
+}
+
 // ---------------------------------------------------------------------------
 // Helper tanggal/waktu (Odoo kirim UTC "YYYY-MM-DD HH:MM:SS")
 // ---------------------------------------------------------------------------
@@ -1169,10 +1181,10 @@ export const api = {
         location_policy: policy,
         ijinkan_wfa: policy === 'anywhere',
         jam_kerja_hari_ini,
-        // C22 (1.2.23): status istirahat + sinyal jadwal (false =
-        // jadwal gagal dimuat; null = server tidak mengirim).
+        // C22 (1.2.23): sinyal jadwal (false = jadwal gagal dimuat;
+        // null = server tidak mengirim). Fitur istirahat dihapus
+        // 2026-10-29, jadi status_istirahat tidak lagi diteruskan.
         jadwal_ok: d.jadwal_ok ?? null,
-        status_istirahat: d.status_istirahat ?? null,
         absensi_hari_ini,
         riwayat_terakhir,
         server_time: d.server_time,
@@ -1291,12 +1303,6 @@ export const api = {
     };
   },
 
-  async catatIstirahat(aksi) {
-    // JANGAN menelan error jadi sukses (audit Bug 2 M16): DashboardPage
-    // sudah menampilkan alert di catch-nya, jadi biarkan error naik.
-    const res = await odooCall('/attendance/break', { action: aksi });
-    return { success: true, message: res.message || 'Waktu istirahat berhasil dicatat.' };
-  },
 
   async getRiwayat(bulan = null, tahun = null) {
     const now = getServerDate(); /* B#1: akurat di semua zona/jam device (server time) */

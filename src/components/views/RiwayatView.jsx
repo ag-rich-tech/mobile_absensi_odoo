@@ -3,7 +3,7 @@ import {
   ChevronLeft, Calendar, Clock, MapPin, CheckCircle2, AlertTriangle,
   Camera, Filter, ChevronRight, X, Info, RefreshCw, CalendarDays
 } from 'lucide-react';
-import api from '../../services/api';
+import api, { formatDurasiMenit } from '../../services/api';
 
 const NAMA_BULAN = [
   'Januari', 'Februari', 'Maret', 'April', 'Mei', 'Juni',
@@ -296,7 +296,7 @@ export default function RiwayatView({ onBack }) {
                           padding: '2px 8px',
                           borderRadius: '999px'
                         }}>
-                          Terlambat {item.menit_terlambat}m
+                          Terlambat {formatDurasiMenit(item.menit_terlambat)}
                         </span>
                       ) : (
                         <span style={{
@@ -533,7 +533,7 @@ export default function RiwayatView({ onBack }) {
               <div style={{ display: 'flex', justifyContent: 'space-between' }}>
                 <span style={{ color: 'var(--text-muted)' }}>Status Masuk:</span>
                 <strong style={{ color: selectedDetail.status_masuk === 'terlambat' ? 'var(--danger)' : (selectedDetail.status_masuk === 'tepat_waktu' ? 'var(--success)' : 'var(--text-muted)') }}>
-                  {selectedDetail.status_masuk === 'terlambat' ? `Terlambat (${selectedDetail.menit_terlambat}m)` : (selectedDetail.status_masuk === 'tepat_waktu' ? 'Tepat Waktu' : 'Tidak diketahui')}
+                  {selectedDetail.status_masuk === 'terlambat' ? `Terlambat (${formatDurasiMenit(selectedDetail.menit_terlambat)})` : (selectedDetail.status_masuk === 'tepat_waktu' ? 'Tepat Waktu' : 'Tidak diketahui')}
                 </strong>
               </div>
               <div style={{ display: 'flex', justifyContent: 'space-between' }}>

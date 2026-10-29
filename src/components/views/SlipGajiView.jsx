@@ -19,7 +19,7 @@ import {
   CreditCard,
   User
 } from 'lucide-react';
-import api from '../../services/api';
+import api, { formatDurasiMenit } from '../../services/api';
 import DocumentPreviewModal from '../DocumentPreviewModal';
 
 export default function SlipGajiView({ onBack }) {
@@ -246,7 +246,7 @@ export default function SlipGajiView({ onBack }) {
               <div style={{ background: '#fff1f2', borderRadius: '16px', padding: '12px', textAlign: 'center', border: '1px solid #fee2e2', boxShadow: '0 2px 6px rgba(225, 29, 72, 0.05)' }}>
                 <span style={{ fontSize: '10px', fontWeight: '700', color: '#be123c', textTransform: 'uppercase' }}>Terlambat</span>
                 <div style={{ fontSize: '16px', fontWeight: '800', color: '#9f1239', marginTop: '2px' }}>
-                  {slipDetail.total_menit_terlambat} <span style={{ fontSize: '10px', fontWeight: '600', color: '#be123c' }}>Mnt</span>
+                  {formatDurasiMenit(slipDetail.total_menit_terlambat)}
                 </div>
               </div>
             </div>

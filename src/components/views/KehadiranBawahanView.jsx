@@ -4,7 +4,7 @@ import {
   MapPin, AlertTriangle, CheckCircle2, ShieldAlert, Sparkles,
   Info, RefreshCw, Coffee, AlertCircle, Building, UserCheck
 } from 'lucide-react';
-import api from '../../services/api';
+import api, { formatDurasiMenit } from '../../services/api';
 
 const NAMA_BULAN = [
   'Januari', 'Februari', 'Maret', 'April', 'Mei', 'Juni',
@@ -1123,7 +1123,7 @@ export default function KehadiranBawahanView({ onBack }) {
                         color: selectedDayDetail.detail_absensi.status_masuk === 'terlambat' ? '#ea580c' : (selectedDayDetail.detail_absensi.status_masuk === 'tepat_waktu' ? '#16a34a' : '#64748b')
                       }}>
                         {selectedDayDetail.detail_absensi.status_masuk === 'terlambat'
-                          ? `Telat ${selectedDayDetail.detail_absensi.menit_terlambat} mnt`
+                          ? `Telat ${formatDurasiMenit(selectedDayDetail.detail_absensi.menit_terlambat)}`
                           : (selectedDayDetail.detail_absensi.status_masuk === 'tepat_waktu'
                             ? 'Tepat Waktu'
                             : 'Status tidak diketahui')}
@@ -1146,7 +1146,7 @@ export default function KehadiranBawahanView({ onBack }) {
                         {!selectedDayDetail.detail_absensi.jam_pulang
                           ? 'Tidak Absen Pulang (TP)'
                           : (selectedDayDetail.detail_absensi.status_pulang === 'pulang_cepat'
-                              ? `Pulang Cepat ${selectedDayDetail.detail_absensi.menit_pulang_cepat} mnt`
+                              ? `Pulang Cepat ${formatDurasiMenit(selectedDayDetail.detail_absensi.menit_pulang_cepat)}`
                               : 'Normal')}
                       </span>
                     </div>

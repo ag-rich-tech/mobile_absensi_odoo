@@ -4,11 +4,11 @@ import {
   CheckCircle2, AlertTriangle, ArrowRight, ShieldCheck, RefreshCw,
   ChevronRight, Building, Award, History, CalendarDays, FileText,
   PlaneTakeoff, Timer, CircleDollarSign, ChevronLeft, Info, ShieldAlert,
-  Receipt, HelpCircle, Coffee, Check, Sparkles, CheckCheck, Megaphone, Bell, Wallet, Users
+  Receipt, HelpCircle, Coffee, Sparkles, CheckCheck, Megaphone, Bell, Wallet, Users
 } from 'lucide-react';
 import AttendanceModal from '../components/AttendanceModal';
 import BottomNav from '../components/BottomNav';
-import api, { getServerDate, formatTime24 } from '../services/api';
+import api, { getServerDate, formatTime24, formatDurasiMenit } from '../services/api';
 import { checkFakeGps } from '../services/fakeGpsService.js';
 import {
   startBackgroundTracking,
@@ -198,9 +198,6 @@ export default function DashboardPage({ user: initialUser, onLogout, onStartAtte
   const [distanceToOffice, setDistanceToOffice] = useState(null);
   // Lokasi terdekat dari daftar yang diizinkan (multi-lokasi 18.0.1.2.0).
   const [nearestOffice, setNearestOffice] = useState(null);
-  // 'Lewati' istirahat hari ini (lokal saja, tanpa mencatat break di
-  // server — beda dari 'Selesai' yang mencatat break_end).
-  const [lewatiIstirahatHariIni, setLewatiIstirahatHariIni] = useState(false);
   const [riwayatBulan, setRiwayatBulan] = useState([]);
   const [isLoadingRiwayat, setIsLoadingRiwayat] = useState(false);
   const [pendingApprovalCount, setPendingApprovalCount] = useState(0);
@@ -440,44 +437,6 @@ export default function DashboardPage({ user: initialUser, onLogout, onStartAtte
     loadDashboardData();
   };
 
-  const [isSubmittingIstirahat, setIsSubmittingIstirahat] = useState(false);
-
-  const handleCatatIstirahat = async (aksi) => {
-    if (isSubmittingIstirahat) return;
-
-    // 'Lewati' BERBEDA dari 'Selesai': lewati = tidak mengambil
-    // istirahat hari ini, cukup sembunyikan panel secara lokal TANPA
-    // memanggil endpoint (server memperlakukan semua aksi non-start
-    // sebagai break_end, sehingga memanggil endpoint untuk 'lewati'
-    // sama saja dengan 'selesai'). 'Selesai' tetap mencatat break_end.
-    if (aksi === 'lewati') {
-      const ok = window.confirm('Lewati sesi istirahat hari ini dan langsung lanjut bekerja?');
-      if (!ok) return;
-      setLewatiIstirahatHariIni(true);
-      return;
-    }
-
-    if (aksi === 'mulai') {
-      const ok = window.confirm('Mulai sesi istirahat sekarang? Jam istirahat Anda akan tercatat dalam sistem.');
-      if (!ok) return;
-    } else if (aksi === 'selesai') {
-      const ok = window.confirm('Selesaikan sesi istirahat dan kembali bekerja?');
-      if (!ok) return;
-    }
-
-    try {
-      setIsSubmittingIstirahat(true);
-      const res = await api.catatIstirahat(aksi);
-      if (res.success) {
-        await loadDashboardData();
-      }
-    } catch (err) {
-      alert(err.message || 'Gagal memproses sesi istirahat');
-    } finally {
-      setIsSubmittingIstirahat(false);
-    }
-  };
-
   const handleLogoutClick = async () => {
     await api.logout();
     onLogout();
@@ -495,18 +454,8 @@ export default function DashboardPage({ user: initialUser, onLogout, onStartAtte
   const sudahMasukRaw = absensiHariIni?.sudah_masuk;
   const sudahPulang = absensiHariIni?.sudah_pulang;
 
-  const jamMulaiIstirahat = jamKerja?.jam_mulai_istirahat;
-  const jamSelesaiIstirahat = jamKerja?.jam_selesai_istirahat;
-  const statusIstirahat = absensiHariIni?.status_istirahat || 'belum';
-  const jamIstirahatMulai = absensiHariIni?.jam_istirahat_mulai;
-  const jamIstirahatSelesai = absensiHariIni?.jam_istirahat_selesai;
-
-  // Cek apakah jam kerja ini memiliki pengaturan jam istirahat
-  const adaSettingIstirahat = Boolean(jamMulaiIstirahat);
-
-  // Waktu saat ini dibandingkan dengan jam mulai istirahat setting
+  // Waktu saat ini (dipakai gerbang batas pulang).
   const currentTimeHHMM = timeString.slice(0, 5);
-  const isSudahWaktuIstirahat = adaSettingIstirahat && (currentTimeHHMM >= jamMulaiIstirahat);
 
   // Deteksi apakah batas akhir absen pulang telah terlewati (baik dari flag backend maupun kalkulasi waktu riil)
   const isBatasPulangTerlewati = Boolean(
@@ -603,14 +552,6 @@ export default function DashboardPage({ user: initialUser, onLogout, onStartAtte
     stopBackgroundTracking().catch(() => {});
   }, [sudahMasuk, sudahPulang]);
 
-  // Tombol Istirahat & Lewati aktif menggantikan tombol Masuk & Pulang.
-  // Panel tampil selama sesi clock-in aktif dan istirahat belum diambil
-  // / dilewati — TIDAK digerbang pada jam istirahat server, karena
-  // field jam istirahat tidak pernah dikirim server sehingga gerbang
-  // lama membuat panel mati total. Bila server mengirim jadwal, panel
-  // tetap menampilkan jadwalnya (subtitle di bawah).
-  const tampilkanOpsiIstirahat = sudahMasuk && !sudahPulang && statusIstirahat === 'belum' && !lewatiIstirahatHariIni;
-  const sedangIstirahat = sudahMasuk && !sudahPulang && statusIstirahat === 'istirahat';
 
   // Server mengirim radius_m (bukan radius_meter) — pakai kunci yang benar.
   // Jarak null (GPS gagal) = TIDAK diketahui, bukan "di dalam area".
@@ -1291,7 +1232,7 @@ export default function DashboardPage({ user: initialUser, onLogout, onStartAtte
                       padding: '3px 8px',
                       borderRadius: 'var(--radius-full)'
                     }}>
-                      {absensiHariIni?.status_masuk === 'terlambat' ? `Terlambat ${absensiHariIni.menit_terlambat}m` : 'Tepat Waktu'}
+                      {absensiHariIni?.status_masuk === 'terlambat' ? `Terlambat ${formatDurasiMenit(absensiHariIni.menit_terlambat)}` : 'Tepat Waktu'}
                     </span>
                   ) : jadwalGagalMuat ? (
                     <div>
@@ -1404,41 +1345,6 @@ export default function DashboardPage({ user: initialUser, onLogout, onStartAtte
                       </span>
                     </div>
                   ) : sudahMasuk ? (
-                    tampilkanOpsiIstirahat ? (
-                      <div>
-                        <span style={{
-                          display: 'inline-block',
-                          fontSize: '10px',
-                          fontWeight: '700',
-                          color: '#b45309',
-                          backgroundColor: '#fef3c7',
-                          padding: '4px 8px',
-                          borderRadius: 'var(--radius-full)'
-                        }}>
-                          ☕ Waktu Istirahat
-                        </span>
-                        <span style={{ fontSize: '9px', color: '#b45309', display: 'block', marginTop: '4px', fontWeight: '600' }}>
-                          Pilih opsi di bawah
-                        </span>
-                      </div>
-                    ) : sedangIstirahat ? (
-                      <div>
-                        <span style={{
-                          display: 'inline-block',
-                          fontSize: '10px',
-                          fontWeight: '700',
-                          color: '#047857',
-                          backgroundColor: '#d1fae5',
-                          padding: '4px 8px',
-                          borderRadius: 'var(--radius-full)'
-                        }}>
-                          ☕ Sedang Istirahat
-                        </span>
-                        <span style={{ fontSize: '9px', color: '#047857', display: 'block', marginTop: '4px', fontWeight: '600' }}>
-                          Mulai: {jamIstirahatMulai ? jamIstirahatMulai.slice(0, 5) : '--:--'} WIB
-                        </span>
-                      </div>
-                    ) : (
                       <div>
                         <button
                           type="button"
@@ -1458,34 +1364,13 @@ export default function DashboardPage({ user: initialUser, onLogout, onStartAtte
                         >
                           Absen Pulang
                         </button>
-                        {statusIstirahat === 'selesai' && (
-                          <span style={{ fontSize: '9px', color: '#16a34a', display: 'block', textAlign: 'center', marginTop: '4px', fontWeight: '700' }}>
-                            Istirahat: {jamIstirahatMulai?.slice(0, 5)} - {jamIstirahatSelesai?.slice(0, 5)}
-                          </span>
-                        )}
-                        {statusIstirahat === 'dilewati' && (
-                          <span style={{ fontSize: '9px', color: '#64748b', display: 'block', textAlign: 'center', marginTop: '4px', fontWeight: '700' }}>
-                            Istirahat dilewati
-                          </span>
-                        )}
-                        {lewatiIstirahatHariIni && statusIstirahat !== 'dilewati' && (
-                          <span style={{ fontSize: '9px', color: '#64748b', display: 'block', textAlign: 'center', marginTop: '4px', fontWeight: '700' }}>
-                            Istirahat dilewati hari ini
-                          </span>
-                        )}
-                        {adaSettingIstirahat && !isSudahWaktuIstirahat && (
-                          <span style={{ fontSize: '9px', color: '#b45309', display: 'block', textAlign: 'center', marginTop: '4px', fontWeight: '700' }}>
-                            Istirahat buka pukul {jamMulaiIstirahat}
-                          </span>
-                        )}
                         {jamKerja?.batasi_absen && (
                           <span style={{ fontSize: '9px', color: '#0284c7', display: 'block', textAlign: 'center', marginTop: '4px', fontWeight: '700' }}>
                             Batas: s/d {jamKerja.jam_akhir_pulang}
                           </span>
                         )}
                       </div>
-                    )
-                  ) : jadwalGagalMuat ? (
+                    ) : jadwalGagalMuat ? (
                     <span style={{
                       display: 'inline-block',
                       fontSize: '10px',
@@ -1517,187 +1402,6 @@ export default function DashboardPage({ user: initialUser, onLogout, onStartAtte
                 </div>
               </div>
             </div>
-
-            {/* Panel Pilihan Sesi Istirahat & Lewati saat Waktu Istirahat Tiba */}
-            {tampilkanOpsiIstirahat && (
-              <div style={{
-                padding: '16px',
-                borderRadius: 'var(--radius-md)',
-                background: 'linear-gradient(135deg, #fffbeb 0%, #fef3c7 100%)',
-                border: '1.5px solid #fde68a',
-                boxShadow: '0 4px 14px rgba(245, 158, 11, 0.15)',
-                display: 'flex',
-                flexDirection: 'column',
-                gap: '12px'
-              }}>
-                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                    <div style={{
-                      width: '34px',
-                      height: '34px',
-                      borderRadius: '10px',
-                      backgroundColor: '#f59e0b',
-                      color: '#ffffff',
-                      display: 'flex',
-                      alignItems: 'center',
-                      justifyContent: 'center',
-                      boxShadow: '0 2px 6px rgba(245, 158, 11, 0.3)'
-                    }}>
-                      <Coffee size={18} />
-                    </div>
-                    <div>
-                      <h4 style={{ fontSize: '13px', fontWeight: '800', color: '#92400e', margin: 0 }}>
-                        Sesi Waktu Istirahat
-                      </h4>
-                      <p style={{ fontSize: '11px', color: '#b45309', margin: 0, fontWeight: '500' }}>
-                        {jadwalGagalMuat
-                          ? 'Jadwal istirahat tidak dapat dimuat'
-                          : adaSettingIstirahat
-                            ? `Jadwal: ${jamMulaiIstirahat} - ${jamSelesaiIstirahat || 'Selesai'}`
-                            : 'Istirahat dapat diambil kapan saja selama jam kerja'}
-                      </p>
-                    </div>
-                  </div>
-                  <span style={{
-                    fontSize: '10px',
-                    fontWeight: '800',
-                    color: '#b45309',
-                    backgroundColor: 'rgba(245, 158, 11, 0.2)',
-                    padding: '2px 8px',
-                    borderRadius: 'var(--radius-full)'
-                  }}>
-                    Dibuka
-                  </span>
-                </div>
-
-                <div style={{ display: 'grid', gridTemplateColumns: '1.6fr 1fr', gap: '10px' }}>
-                  <button
-                    type="button"
-                    disabled={isSubmittingIstirahat}
-                    onClick={() => handleCatatIstirahat('mulai')}
-                    style={{
-                      padding: '11px 14px',
-                      borderRadius: 'var(--radius-sm)',
-                      background: 'linear-gradient(135deg, #f59e0b, #d97706)',
-                      border: 'none',
-                      color: '#ffffff',
-                      fontSize: '13px',
-                      fontWeight: '800',
-                      cursor: 'pointer',
-                      display: 'flex',
-                      alignItems: 'center',
-                      justifyContent: 'center',
-                      gap: '6px',
-                      boxShadow: '0 4px 12px rgba(217, 119, 6, 0.35)',
-                      transition: 'all 0.2s ease'
-                    }}
-                  >
-                    <Coffee size={16} />
-                    <span>{isSubmittingIstirahat ? 'Memproses...' : 'Istirahat'}</span>
-                  </button>
-
-                  <button
-                    type="button"
-                    disabled={isSubmittingIstirahat}
-                    onClick={() => handleCatatIstirahat('lewati')}
-                    style={{
-                      padding: '11px 14px',
-                      borderRadius: 'var(--radius-sm)',
-                      backgroundColor: '#ffffff',
-                      border: '1.5px solid #d1d5db',
-                      color: '#4b5563',
-                      fontSize: '13px',
-                      fontWeight: '700',
-                      cursor: 'pointer',
-                      display: 'flex',
-                      alignItems: 'center',
-                      justifyContent: 'center',
-                      gap: '4px',
-                      boxShadow: '0 1px 3px rgba(0, 0, 0, 0.05)',
-                      transition: 'all 0.2s ease'
-                    }}
-                  >
-                    <span>Lewati</span>
-                  </button>
-                </div>
-              </div>
-            )}
-
-            {/* Panel Sedang Beristirahat Aktif */}
-            {sedangIstirahat && (
-              <div style={{
-                padding: '16px',
-                borderRadius: 'var(--radius-md)',
-                background: 'linear-gradient(135deg, #ecfdf5 0%, #d1fae5 100%)',
-                border: '1.5px solid #a7f3d0',
-                boxShadow: '0 4px 14px rgba(16, 185, 129, 0.15)',
-                display: 'flex',
-                flexDirection: 'column',
-                gap: '12px'
-              }}>
-                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                    <div style={{
-                      width: '34px',
-                      height: '34px',
-                      borderRadius: '10px',
-                      backgroundColor: '#10b981',
-                      color: '#ffffff',
-                      display: 'flex',
-                      alignItems: 'center',
-                      justifyContent: 'center',
-                      boxShadow: '0 2px 6px rgba(16, 185, 129, 0.3)'
-                    }}>
-                      <Coffee size={18} />
-                    </div>
-                    <div>
-                      <h4 style={{ fontSize: '13px', fontWeight: '800', color: '#065f46', margin: 0 }}>
-                        Sedang Beristirahat
-                      </h4>
-                      <p style={{ fontSize: '11px', color: '#047857', margin: 0, fontWeight: '500' }}>
-                        Mulai pukul {jamIstirahatMulai ? jamIstirahatMulai.slice(0, 5) : '--:--'} WIB
-                      </p>
-                    </div>
-                  </div>
-                  <span style={{
-                    fontSize: '10px',
-                    fontWeight: '800',
-                    color: '#065f46',
-                    backgroundColor: 'rgba(16, 185, 129, 0.2)',
-                    padding: '2px 8px',
-                    borderRadius: 'var(--radius-full)'
-                  }}>
-                    Aktif
-                  </span>
-                </div>
-
-                <button
-                  type="button"
-                  disabled={isSubmittingIstirahat}
-                  onClick={() => handleCatatIstirahat('selesai')}
-                  style={{
-                    width: '100%',
-                    padding: '12px 14px',
-                    borderRadius: 'var(--radius-sm)',
-                    background: 'linear-gradient(135deg, #10b981, #059669)',
-                    border: 'none',
-                    color: '#ffffff',
-                    fontSize: '13px',
-                    fontWeight: '800',
-                    cursor: 'pointer',
-                    display: 'flex',
-                    alignItems: 'center',
-                    justifyContent: 'center',
-                    gap: '6px',
-                    boxShadow: '0 4px 12px rgba(5, 150, 105, 0.3)',
-                    transition: 'all 0.2s ease'
-                  }}
-                >
-                  <Check size={16} />
-                  <span>{isSubmittingIstirahat ? 'Memproses...' : 'Selesai Istirahat (Kembali Bekerja)'}</span>
-                </button>
-              </div>
-            )}
 
             {/* Banner Notifikasi Pending Approval Khusus Karyawan Approver */}
             {pendingApprovalCount > 0 && (
