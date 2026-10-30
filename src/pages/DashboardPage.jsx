@@ -9,6 +9,10 @@ import {
 import BottomNav from '../components/BottomNav';
 import api, { getServerDate, formatTime24, formatDurasiMenit } from '../services/api';
 import {
+  fetchMobileFeatures, mergeMobileFeatures,
+  navFeatureCode, isMobileFeatureOn,
+} from '../services/mobileFeatures.js';
+import {
   setDashboardNav, consumePendingDashboardNav,
 } from '../services/navState';
 import { checkFakeGps } from '../services/fakeGpsService.js';
@@ -186,6 +190,14 @@ export default function DashboardPage({ user: initialUser, onLogout, onStartAtte
     if (exitingNav) {
       setExitingNav(null);
     }
+    // Penjaga navigasi (bersama efek penjaga di bawah): tap ke subview
+    // yang fiturnya baru dinonaktifkan dialihkan ke Beranda, bukan
+    // membuka layar fitur yang sudah disembunyikan.
+    const code = navFeatureCode(newNav);
+    if (mobileFeatures && code && !isMobileFeatureOn(mobileFeatures, code)) {
+      setActiveNav('home');
+      return;
+    }
     setActiveNav(newNav);
   };
 
@@ -219,7 +231,11 @@ export default function DashboardPage({ user: initialUser, onLogout, onStartAtte
   const [riwayatBulan, setRiwayatBulan] = useState([]);
   const [isLoadingRiwayat, setIsLoadingRiwayat] = useState(false);
   const [pendingApprovalCount, setPendingApprovalCount] = useState(0);
-  const [featureFlags, setFeatureFlags] = useState({});
+  // Fitur mobile dari GET /mobile/features (lihat mobileFeatures.js).
+  // null = belum dimuat / fetch gagal -> FAIL-OPEN: semua menu tampil.
+  // Bukan hardcode dan bukan localStorage; diisi ulang setiap kali
+  // dashboard dimuat (lihat loadDashboardData).
+  const [mobileFeatures, setMobileFeatures] = useState(null);
   const [unreadPengumumanCount, setUnreadPengumumanCount] = useState(0);
   const [urgentPengumumanCount, setUrgentPengumumanCount] = useState(0);
   const [statusBawahan, setStatusBawahan] = useState(null);
@@ -269,14 +285,39 @@ export default function DashboardPage({ user: initialUser, onLogout, onStartAtte
   };
 
   // 1. Muat Data Dashboard Riil dari Backend dengan Deteksi Status Nonaktif Otomatis
-  // On/off fitur dari admin Odoo. Default tampil bila flag belum termuat
-  // atau kode tidak dikenal (agar tidak ada menu hilang misterius).
-  const isOn = (code) => featureFlags[code] !== false;
+  // On/off fitur dari admin Odoo (kontrak GET /mobile/features).
+  // Default tampil bila fitur belum termuat, fetch gagal, atau kode
+  // tidak dikenal (fail-open: tidak ada menu hilang misterius).
+  const isOn = (code) => isMobileFeatureOn(mobileFeatures, code);
+  // Kode kartu grid Menu Utama — dipakai penghitung "Menu Layanan".
+  // 'shift' bukan kartu grid (entrinya di Profil), 'karyawan' ikut
+  // dihitung karena kartunya ada di grid ini.
   const FEATURE_CODES = ['attendance', 'history', 'leave', 'dinas', 'overtime',
-    'payslip', 'helpdesk', 'tasks', 'approval', 'announcement',
+    'payslip', 'ticket', 'task', 'approval', 'announcement',
     'reimbursement', 'team', 'karyawan'];
 
+  // Penjaga navigasi: subview aktif yang fiturnya baru dinonaktifkan
+  // (toggle berubah saat user sedang di tab itu, deep link / state lama
+  // yang mengarah ke fitur mati) dialihkan ke Beranda. Tidak jalan
+  // selama mobileFeatures null (fail-open: jangan redirect karena
+  // fetch gagal/loading). 'home'/'profile' memetakan null -> tak
+  // pernah memicu redirect, jadi tidak ada loop.
+  useEffect(() => {
+    if (!mobileFeatures) return;
+    const code = navFeatureCode(activeNav);
+    if (code && !isMobileFeatureOn(mobileFeatures, code)) {
+      setExitingNav(null);
+      setActiveNav('home');
+    }
+  }, [mobileFeatures, activeNav]);
+
   const loadDashboardData = async (showLoading = true) => {
+    // Daftar fitur diambil SETIAP kali dashboard dimuat (mount, kembali
+    // ke Beranda, fokus kembali, refresh berkala) — bukan hanya saat
+    // login — agar toggle di Odoo langsung terasa tanpa relogin.
+    // Dimulai paralel supaya tidak menunda dashboard; fetch-nya tidak
+    // pernah melempar (gagal -> null -> fail-open).
+    const mobileFeaturesPromise = fetchMobileFeatures();
     try {
       if (showLoading) {
         if (!dashboardData) setIsLoading(true);
@@ -296,7 +337,13 @@ export default function DashboardPage({ user: initialUser, onLogout, onStartAtte
         setDashboardData(res);
         hasDashboardDataRef.current = true;
         setDashboardLoadError(null);
-        if (res.fitur) setFeatureFlags(res.fitur);
+        // Peta kontrak otoritatif; objek fitur legacy dashboard summary
+        // hanya melengkapi kode yang tak ada di kontrak ('karyawan').
+        // Bila fetch kontrak gagal, merged = null (fail-open) walau
+        // dashboard sukses — legacy tidak boleh menyembunyikan menu.
+        mobileFeaturesPromise.then((fetched) => {
+          setMobileFeatures(mergeMobileFeatures(fetched, res.fitur));
+        });
       }
       loadPendingApprovalCount();
       loadPengumumanCount();
@@ -311,6 +358,11 @@ export default function DashboardPage({ user: initialUser, onLogout, onStartAtte
       if (!hasDashboardDataRef.current) {
         setDashboardLoadError(err.message || 'Gagal memuat data dashboard.');
       }
+      // Dashboard gagal bukan berarti fitur ikut gagal: terapkan hasil
+      // fetch fitur (null bila gagal -> fail-open, semua menu tampil).
+      mobileFeaturesPromise.then((fetched) => {
+        setMobileFeatures(mergeMobileFeatures(fetched, null));
+      });
       if (err.data?.account_inactive || err.message?.toLowerCase().includes('nonaktif') || err.message?.toLowerCase().includes('non-aktif')) {
         window.dispatchEvent(new CustomEvent('account-deactivated', {
           detail: { message: err.message || 'Status akun pegawai Anda telah dinonaktifkan oleh Administrator.' }
@@ -1444,7 +1496,8 @@ export default function DashboardPage({ user: initialUser, onLogout, onStartAtte
             </div>
 
             {/* Banner Notifikasi Pending Approval Khusus Karyawan Approver */}
-            {pendingApprovalCount > 0 && (
+            {/* Titik masuk approval: disembunyikan bila approval off. */}
+            {isOn('approval') && pendingApprovalCount > 0 && (
               <div
                 onClick={() => setActiveNav('approval')}
                 style={{
@@ -1500,7 +1553,8 @@ export default function DashboardPage({ user: initialUser, onLogout, onStartAtte
 
             {/* Card Navigasi Menu Utama */}
             {/* Banner Pengumuman Interaktif (Jika ada yang belum dibaca) */}
-            {unreadPengumumanCount > 0 && (
+            {/* Titik masuk pengumuman: disembunyikan bila announcement off. */}
+            {isOn('announcement') && unreadPengumumanCount > 0 && (
               <div
                 onClick={() => setActiveNav('pengumuman')}
                 style={{
@@ -1859,7 +1913,7 @@ export default function DashboardPage({ user: initialUser, onLogout, onStartAtte
 )}
 
                 {/* 8. Kendala & Bantuan */}
-                {isOn('helpdesk') && (
+                {isOn('ticket') && (
 <button
                   type="button"
                   onClick={() => setActiveNav('masalah')}
@@ -1894,7 +1948,7 @@ export default function DashboardPage({ user: initialUser, onLogout, onStartAtte
 )}
 
                 {/* 9. Penugasan Kerja (Tugas Berjalan & Selesai) */}
-                {isOn('tasks') && (
+                {isOn('task') && (
 <button
                   type="button"
                   onClick={() => setActiveNav('tugas')}
@@ -2170,6 +2224,8 @@ export default function DashboardPage({ user: initialUser, onLogout, onStartAtte
                 <span style={{ fontSize: '12px', fontWeight: '800', color: 'var(--text-main)' }}>
                   Presensi Terakhir
                 </span>
+                {/* Titik masuk riwayat dari blok Presensi Terakhir. */}
+                {isOn('history') && (
                 <button
                   type="button"
                   onClick={() => setActiveNav('history')}
@@ -2184,6 +2240,7 @@ export default function DashboardPage({ user: initialUser, onLogout, onStartAtte
                 >
                   Lihat Semua
                 </button>
+                )}
               </div>
 
               <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
@@ -2249,6 +2306,7 @@ export default function DashboardPage({ user: initialUser, onLogout, onStartAtte
                 onLogout={handleLogoutClick}
                 onOpenDenda={() => setActiveNav('denda')}
                 onOpenJadwal={() => setActiveNav('jadwal')}
+                isShiftOn={isOn('shift')}
                 onPhotoUpdated={(newPhotoUrl) => {
                   setDashboardData((prev) => prev ? {
                     ...prev,
@@ -2337,7 +2395,7 @@ export default function DashboardPage({ user: initialUser, onLogout, onStartAtte
       </div>
 
       {/* Floating Bottom Navigation (Statis di Bawah) */}
-      <BottomNav activeNav={activeNav} onChangeNav={handleNavChange} />
+      <BottomNav activeNav={activeNav} onChangeNav={handleNavChange} isFeatureOn={isOn} />
 
     </div>
   );

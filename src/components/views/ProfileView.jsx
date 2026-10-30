@@ -7,7 +7,7 @@ import {
 } from 'lucide-react';
 import api, { getOrCreateDeviceId, isAuthError } from '../../services/api';
 
-export default function ProfileView({ user, onBack, onLogout, onOpenDenda, onOpenJadwal, onPhotoUpdated }) {
+export default function ProfileView({ user, onBack, onLogout, onOpenDenda, onOpenJadwal, onPhotoUpdated, isShiftOn = true }) {
   const [showPasswordForm, setShowPasswordForm] = useState(false);
   const [passwordLama, setPasswordLama] = useState('');
   const [passwordBaru, setPasswordBaru] = useState('');
@@ -626,7 +626,11 @@ export default function ProfileView({ user, onBack, onLogout, onOpenDenda, onOpe
         ))}
       </div>
 
-      {/* Menu Akses: Jadwal Kerja & Shift Pegawai */}
+      {/* Menu Akses: Jadwal Kerja & Shift Pegawai — satu-satunya entri
+          menu di Profil (onOpenDenda tidak dirender di mana pun).
+          Disembunyikan bila fitur 'shift' off (default true bila
+          pemanggil tidak mengoper isShiftOn -> fail-open). */}
+      {isShiftOn && (
       <div
         onClick={onOpenJadwal}
         style={{
@@ -696,6 +700,7 @@ export default function ProfileView({ user, onBack, onLogout, onOpenDenda, onOpe
           <ChevronRight size={18} />
         </div>
       </div>
+      )}
 
       {/* Status Keamanan Lock Device */}
       <div style={{

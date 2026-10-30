@@ -1,7 +1,21 @@
 import React from 'react';
 import { Home, Calendar, Briefcase, User, FileText } from 'lucide-react';
 
-export default function BottomNav({ activeNav = 'home', onNavChange, onChangeNav }) {
+// BottomNav 5 tab: Riwayat (history), Izin (leave), Home (selalu),
+// Tugas (task), Profil (selalu). Home + Profil BUKAN fitur yang bisa
+// dimatikan, jadi selalu dirender.
+//
+// Penyembunyian fitur mobile (kontrak GET /mobile/features):
+// DashboardPage mengoper isFeatureOn(kode) — tab yang fiturnya off
+// TIDAK dirender sama sekali (bukan di-disable abu-abu, bukan slot
+// kosong). Bila isFeatureOn tidak dioper, semua tab tampil (fail-open).
+//
+// Home tetap di tengah apa pun kombinasinya: bar memakai flex tiga
+// kolom — sisi kiri (flex:1), tombol Home tengah (lebar tetap), sisi
+// kanan (flex:1). Sisi yang tabnya habis tetap menjadi spacer flex:1
+// sehingga Home tidak bergeser; tab yang tersisa merapat di sisinya
+// masing-masing (space-around) tanpa menyisakan slot kosong.
+export default function BottomNav({ activeNav = 'home', onNavChange, onChangeNav, isFeatureOn }) {
   const handleNav = (tab) => {
     if (typeof onChangeNav === 'function') {
       onChangeNav(tab);
@@ -9,6 +23,30 @@ export default function BottomNav({ activeNav = 'home', onNavChange, onChangeNav
       onNavChange(tab);
     }
   };
+
+  const showFeature = (code) => (
+    typeof isFeatureOn !== 'function' || isFeatureOn(code)
+  );
+
+  const tabStyle = (active) => ({
+    display: 'flex',
+    flexDirection: 'column',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: '3px',
+    background: 'none',
+    border: 'none',
+    color: active ? 'var(--primary-600)' : '#94a3b8',
+    fontSize: '10px',
+    fontWeight: active ? '800' : '600',
+    padding: '6px 0',
+    cursor: 'pointer',
+    transition: 'all 0.2s ease',
+  });
+
+  const tabDot = (active) => active && (
+    <span style={{ width: '4px', height: '4px', borderRadius: '50%', backgroundColor: 'var(--primary-600)' }}></span>
+  );
 
   return (
     <nav className="bottom-nav-bar" style={{
@@ -32,65 +70,44 @@ export default function BottomNav({ activeNav = 'home', onNavChange, onChangeNav
         maxWidth: '580px',
         width: '100%',
         height: '62px',
-        display: 'grid',
-        gridTemplateColumns: '1fr 1fr 1.2fr 1fr 1fr',
+        display: 'flex',
         alignItems: 'center',
         padding: '0 8px',
         boxSizing: 'border-box'
       }}>
-      {/* 1. Riwayat Presensi (Kiri 1) */}
+      {/* Sisi kiri: Riwayat + Izin (masing-masing bisa hilang). */}
+      <div style={{
+        flex: 1,
+        display: 'flex',
+        justifyContent: 'space-around',
+        alignItems: 'center',
+      }}>
+      {/* 1. Riwayat Presensi */}
+      {showFeature('history') && (
       <button
         type="button"
         onClick={() => handleNav('history')}
-        style={{
-          display: 'flex',
-          flexDirection: 'column',
-          alignItems: 'center',
-          justifyContent: 'center',
-          gap: '3px',
-          background: 'none',
-          border: 'none',
-          color: activeNav === 'history' ? 'var(--primary-600)' : '#94a3b8',
-          fontSize: '10px',
-          fontWeight: activeNav === 'history' ? '800' : '600',
-          padding: '6px 0',
-          cursor: 'pointer',
-          transition: 'all 0.2s ease'
-        }}
+        style={tabStyle(activeNav === 'history')}
       >
         <Calendar size={19} strokeWidth={activeNav === 'history' ? 2.5 : 2} />
         <span>Riwayat</span>
-        {activeNav === 'history' && (
-          <span style={{ width: '4px', height: '4px', borderRadius: '50%', backgroundColor: 'var(--primary-600)' }}></span>
-        )}
+        {tabDot(activeNav === 'history')}
       </button>
+      )}
 
-      {/* 2. Pengajuan Izin / Cuti (Kiri 2) */}
+      {/* 2. Pengajuan Izin / Cuti */}
+      {showFeature('leave') && (
       <button
         type="button"
         onClick={() => handleNav('izin')}
-        style={{
-          display: 'flex',
-          flexDirection: 'column',
-          alignItems: 'center',
-          justifyContent: 'center',
-          gap: '3px',
-          background: 'none',
-          border: 'none',
-          color: activeNav === 'izin' ? 'var(--primary-600)' : '#94a3b8',
-          fontSize: '10px',
-          fontWeight: activeNav === 'izin' ? '800' : '600',
-          padding: '6px 0',
-          cursor: 'pointer',
-          transition: 'all 0.2s ease'
-        }}
+        style={tabStyle(activeNav === 'izin')}
       >
         <FileText size={19} strokeWidth={activeNav === 'izin' ? 2.5 : 2} />
         <span>Izin</span>
-        {activeNav === 'izin' && (
-          <span style={{ width: '4px', height: '4px', borderRadius: '50%', backgroundColor: 'var(--primary-600)' }}></span>
-        )}
+        {tabDot(activeNav === 'izin')}
       </button>
+      )}
+      </div>
 
       {/* 3. HOME / BERANDA UTAMA (TEPAT DI TENGAH - FLOATING ELEVATED BUTTON) */}
       <div style={{
@@ -98,7 +115,8 @@ export default function BottomNav({ activeNav = 'home', onNavChange, onChangeNav
         flexDirection: 'column',
         alignItems: 'center',
         justifyContent: 'center',
-        marginTop: '-22px'
+        marginTop: '-22px',
+        flexShrink: 0,
       }}>
         <button
           type="button"
@@ -137,59 +155,37 @@ export default function BottomNav({ activeNav = 'home', onNavChange, onChangeNav
         </span>
       </div>
 
-      {/* 4. Tugas Kerja (Kanan 1 - Menggantikan Jadwal yang dipindah ke Profil) */}
+      {/* Sisi kanan: Tugas + Profil (hanya Tugas yang bisa hilang). */}
+      <div style={{
+        flex: 1,
+        display: 'flex',
+        justifyContent: 'space-around',
+        alignItems: 'center',
+      }}>
+      {/* 4. Tugas Kerja */}
+      {showFeature('task') && (
       <button
         type="button"
         onClick={() => handleNav('tugas')}
-        style={{
-          display: 'flex',
-          flexDirection: 'column',
-          alignItems: 'center',
-          justifyContent: 'center',
-          gap: '3px',
-          background: 'none',
-          border: 'none',
-          color: activeNav === 'tugas' ? 'var(--primary-600)' : '#94a3b8',
-          fontSize: '10px',
-          fontWeight: activeNav === 'tugas' ? '800' : '600',
-          padding: '6px 0',
-          cursor: 'pointer',
-          transition: 'all 0.2s ease'
-        }}
+        style={tabStyle(activeNav === 'tugas')}
       >
         <Briefcase size={19} strokeWidth={activeNav === 'tugas' ? 2.5 : 2} />
         <span>Tugas</span>
-        {activeNav === 'tugas' && (
-          <span style={{ width: '4px', height: '4px', borderRadius: '50%', backgroundColor: 'var(--primary-600)' }}></span>
-        )}
+        {tabDot(activeNav === 'tugas')}
       </button>
+      )}
 
-      {/* 5. Profil Pegawai (Kanan 2) */}
+      {/* 5. Profil Pegawai (selalu tampil) */}
       <button
         type="button"
         onClick={() => handleNav('profile')}
-        style={{
-          display: 'flex',
-          flexDirection: 'column',
-          alignItems: 'center',
-          justifyContent: 'center',
-          gap: '3px',
-          background: 'none',
-          border: 'none',
-          color: activeNav === 'profile' ? 'var(--primary-600)' : '#94a3b8',
-          fontSize: '10px',
-          fontWeight: activeNav === 'profile' ? '800' : '600',
-          padding: '6px 0',
-          cursor: 'pointer',
-          transition: 'all 0.2s ease'
-        }}
+        style={tabStyle(activeNav === 'profile')}
       >
         <User size={19} strokeWidth={activeNav === 'profile' ? 2.5 : 2} />
         <span>Profil</span>
-        {activeNav === 'profile' && (
-          <span style={{ width: '4px', height: '4px', borderRadius: '50%', backgroundColor: 'var(--primary-600)' }}></span>
-        )}
+        {tabDot(activeNav === 'profile')}
       </button>
+      </div>
       </div>
     </nav>
   );
