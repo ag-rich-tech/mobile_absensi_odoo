@@ -216,6 +216,25 @@ export function fmtTanggalIdWib(date) {
   return `${pad2(date.getUTCDate())} ${NAMA_BULAN[date.getUTCMonth()]} ${date.getUTCFullYear()}`;
 }
 
+// Format tanggal server untuk pengumuman (fitur pengumuman kaya):
+// tanggal saja 'YYYY-MM-DD' (publish/release/expiry_date) diformat
+// LANGSUNG dari komponennya — tanggal kalender, bukan instant, jadi
+// tidak boleh digeser timezone. Datetime 'YYYY-MM-DD HH:MM:SS' (UTC)
+// tetap lewat utcToWib seperti formatter lain. Hasilnya string lokal
+// 'DD Mon YYYY' (mis. '30 Okt 2026') atau '' bila tak valid.
+export function formatTanggalServer(value) {
+  if (!value) return '';
+  const s = String(value).trim();
+  const dateOnly = s.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if (dateOnly) {
+    const month = Number(dateOnly[2]);
+    if (month < 1 || month > 12) return '';
+    return `${dateOnly[3]} ${NAMA_BULAN[month - 1]} ${dateOnly[1]}`;
+  }
+  const dt = utcToWib(s);
+  return dt ? fmtTanggalIdWib(dt) : '';
+}
+
 export function fmtHariTanggalWib(date) {
   if (!date) return null;
   return `${NAMA_HARI[date.getUTCDay()]}, ${fmtTanggalIdWib(date)}`;
@@ -966,9 +985,14 @@ function mapApprovalItem(lv) {
 }
 function mapAnnouncement(a) {
   const body = a.body || '';
-  // PNG-3: modal menampilkan teks polos — strip tag HTML (dan isi
-  // <script>) di mapper, jangan pernah render HTML mentah.
-  const bodyText = stripHtmlToText(body);
+  // List: HANYA snippet teks polos (body_text) yang dirender di kartu.
+  // HTML penuh list dipertahankan di body_html semata-mata sebagai data
+  // — view detail TIDAK memakainya (detail wajib endpoint detail baru).
+  // Render HTML di app SELALU lewat sanitizeHtml (lihat PengumumanView),
+  // jangan pernah render body_html mentah.
+  const bodyText = a.body_text
+    ? String(a.body_text).replace(/\s+/g, ' ').trim()
+    : stripHtmlToText(body);
   // PNG-7: tipe dari pinned server (penting vs informasi), bukan
   // hardcode 'Informasi' untuk semua kartu.
   const tipe = a.tipe || (a.pinned ? 'penting' : 'informasi');
@@ -977,10 +1001,19 @@ function mapAnnouncement(a) {
     judul: a.title || '',
     ringkasan: bodyText.slice(0, 140),
     isi: bodyText,
+    body_text: bodyText,
+    body_html: body,
     tipe,
     label_tipe: a.label_tipe || (tipe === 'penting' ? 'Penting' : 'Informasi'),
-    tanggal_mulai: a.publish_date ? fmtTanggalId(utcToWib(a.publish_date + ' 00:00:00')) : '',
-    created_at_human: a.publish_date ? fmtTanggalId(utcToWib(a.publish_date + ' 00:00:00')) : '',
+    tanggal_mulai: formatTanggalServer(a.publish_date),
+    created_at_human: formatTanggalServer(a.publish_date),
+    created_at_formatted: formatTanggalServer(a.publish_date),
+    // Fitur pengumuman kaya: tanggal rilis/expired format lokal.
+    // release_date kosong -> fallback publish_date (server lama).
+    tanggal_rilis: formatTanggalServer(a.release_date || a.publish_date),
+    tanggal_expired: formatTanggalServer(a.expiry_date),
+    release_date: a.release_date || null,
+    expiry_date: a.expiry_date || null,
     is_pinned: !!a.pinned,
     // Status baca dari server (ag 1.2.20: per user pemanggil); server
     // lama tidak mengirimnya -> default false (perilaku lama).
@@ -989,10 +1022,53 @@ function mapAnnouncement(a) {
     // Server lama tidak mengirim lampiran -> false secara jujur.
     has_lampiran: !!a.has_lampiran,
     lampiran_id: a.lampiran_id ?? a.attachment_id ?? null,
+    // Penanda ada-gambar dari server (list tidak membawa URL gambar;
+    // gambar tampil di detail lewat body_html ter-embed).
+    has_image: !!a.has_image,
     gambar_url: null,
     pembuat: a.pembuat || a.author || a.author_name || 'HRD',
     konten: bodyText,
     _raw: a,
+  };
+}
+
+// Mapper KHUSUS endpoint detail baru (POST /announcement/detail):
+// body_html adalah HTML lengkap dengan gambar ter-embed data URI —
+// view merendernya HANYA sesudah sanitizeHtml. body_text di sini
+// hanya dipakai sebagai ringkasan/snippet, bukan isi detail.
+function mapAnnouncementDetail(d) {
+  const bodyHtml = d.body_html || d.body || '';
+  const bodyText = d.body_text
+    ? String(d.body_text).replace(/\s+/g, ' ').trim()
+    : stripHtmlToText(bodyHtml);
+  const tipe = d.tipe || (d.pinned ? 'penting' : 'informasi');
+  return {
+    id: d.id,
+    judul: d.title || '',
+    ringkasan: bodyText.slice(0, 140),
+    isi: bodyText,
+    body_text: bodyText,
+    body_html: bodyHtml,
+    konten: bodyText,
+    konten_html: bodyHtml,
+    tipe,
+    label_tipe: d.label_tipe || (tipe === 'penting' ? 'Penting' : 'Informasi'),
+    tanggal_mulai: formatTanggalServer(d.publish_date),
+    created_at_human: formatTanggalServer(d.publish_date),
+    created_at_formatted: formatTanggalServer(d.publish_date),
+    tanggal_rilis: formatTanggalServer(d.release_date || d.publish_date),
+    tanggal_expired: formatTanggalServer(d.expiry_date),
+    release_date: d.release_date || null,
+    expiry_date: d.expiry_date || null,
+    is_pinned: !!d.pinned,
+    is_dibaca: !!d.is_dibaca,
+    is_khusus: false,
+    has_lampiran: !!d.has_lampiran,
+    lampiran_id: d.lampiran_id ?? d.attachment_id ?? null,
+    has_image: !!d.has_image,
+    gambar_url: null,
+    pembuat: d.pembuat || d.author || d.author_name || 'HRD',
+    _raw: d,
   };
 }
 
@@ -1723,20 +1799,27 @@ export const api = {
   },
 
   async getPengumumanDetail(id) {
-    const res = await odooCall('/announcement/list', { limit: 100 });
-    const items = (res.data && res.data.items) || [];
-    const found = items.find((a) => String(a.id) === String(id));
-    if (!found) throw new Error('Pengumuman tidak ditemukan.');
-    // Tandai dibaca di server (ag 1.2.20: POST /announcement/mark_read).
-    // Kegagalan mark-read tidak boleh menggagalkan pembukaan detail,
-    // TAPI juga tidak boleh diklaim berhasil (PNG-5): is_dibaca hanya
-    // true bila server mengonfirmasi atau item memang sudah dibaca.
+    // Fitur pengumuman kaya: detail WAJIB dari endpoint detail baru
+    // (POST /announcement/detail), BUKAN lagi dari list limit 100 —
+    // hanya endpoint ini yang mengirim body_html lengkap dengan gambar
+    // ter-embed data URI. Pengumuman tak tampil -> server menjawab
+    // 404 dan odooCall melempar Error-nya (view menampilkan pesan itu,
+    // bukan fallback teks polos dari list).
+    const res = await odooCall('/announcement/detail', { announcement_id: id });
+    const data = res.data && !Array.isArray(res.data) ? res.data : null;
+    const raw = data ? (data.item || data.announcement || data) : null;
+    if (!raw || raw.id == null) throw new Error('Pengumuman tidak ditemukan.');
+    // Tandai dibaca di server (POST /announcement/mark_read, TIDAK
+    // BERUBAH). Kegagalan mark-read tidak boleh menggagalkan
+    // pembukaan detail, TAPI juga tidak boleh diklaim berhasil
+    // (PNG-5): is_dibaca hanya true bila server mengonfirmasi atau
+    // item memang sudah dibaca.
     const mr = await safe(odooCall('/announcement/mark_read', { announcement_id: id }));
     // S-K1 (audit 5): envelope server tidak punya mr.success; yang
     // menentukan adalah flag data.marked (false bila model baca tak
     // tersedia, walau envelope-nya sukses).
     const marked = !!(mr && mr.data && mr.data.marked);
-    const mapped = mapAnnouncement(found);
+    const mapped = mapAnnouncementDetail(raw);
     return { success: true, data: { ...mapped, is_dibaca: mapped.is_dibaca || marked } };
   },
 

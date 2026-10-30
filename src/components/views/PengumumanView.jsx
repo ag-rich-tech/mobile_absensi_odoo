@@ -1,10 +1,11 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import {
   ArrowLeft, Megaphone, Bell, CheckCircle2, Clock, AlertCircle,
   FileText, Calendar, ChevronRight, RefreshCw, Eye,
-  Sparkles, Pin, Flame, ShieldAlert, Download, X, ExternalLink
+  Sparkles, Pin, Flame, ShieldAlert, Download, X, ExternalLink, Image as ImageIcon
 } from 'lucide-react';
 import api from '../../services/api';
+import { sanitizeHtml } from '../../services/sanitizeHtml';
 
 
 export default function PengumumanView({ onBack }) {
@@ -18,6 +19,26 @@ export default function PengumumanView({ onBack }) {
   // State Modal Detail
   const [selectedItem, setSelectedItem] = useState(null);
   const [isDetailLoading, setIsDetailLoading] = useState(false);
+  // Fitur pengumuman kaya: isi detail HANYA dari endpoint detail baru
+  // (detailItem), bukan dari item list. Selama detail belum kembali,
+  // modal menampilkan loading — TIDAK PERNAH teks polos list sebagai
+  // isi detail. detailError = detail gagal (mis. 404 pengumuman tak
+  // tampil): modal menampilkan pesan error, bukan isi lama.
+  const [detailItem, setDetailItem] = useState(null);
+  const [detailError, setDetailError] = useState('');
+
+  const closeDetail = () => {
+    setSelectedItem(null);
+    setDetailItem(null);
+    setDetailError('');
+  };
+
+  // HTML detail tersanitasi (useMemo: sanitasi jalan sekali per detail,
+  // bukan tiap render). Sumber: endpoint detail -> body_html.
+  const htmlPengumuman = useMemo(
+    () => (detailItem ? sanitizeHtml(detailItem.body_html || detailItem.konten_html || '') : ''),
+    [detailItem],
+  );
 
   const loadPengumuman = async (activeFilter = filter) => {
     setIsLoading(true);
@@ -51,10 +72,12 @@ export default function PengumumanView({ onBack }) {
   const handleOpenDetail = async (item) => {
     setIsDetailLoading(true);
     setSelectedItem(item);
+    setDetailItem(null);
+    setDetailError('');
     try {
       const res = await api.getPengumumanDetail(item.id);
       if (res && res.success) {
-        setSelectedItem(res.data);
+        setDetailItem(res.data);
         // PNG-4/5: badge berkurang HANYA bila item sebelumnya belum
         // dibaca DAN server mengonfirmasi mark_read (bukan tiap buka
         // detail, bukan saat mark_read gagal).
@@ -67,6 +90,7 @@ export default function PengumumanView({ onBack }) {
       }
     } catch (err) {
       console.error('Error load detail pengumuman:', err);
+      setDetailError(err.message || 'Gagal memuat detail pengumuman.');
     } finally {
       setIsDetailLoading(false);
     }
@@ -501,6 +525,26 @@ export default function PengumumanView({ onBack }) {
                             Khusus
                           </span>
                         )}
+
+                        {/* Penanda ada-gambar (list tidak membawa URL
+                            gambar; gambarnya tampil di detail kaya). */}
+                        {item.has_image && !item.gambar_url && (
+                          <span style={{
+                            display: 'inline-flex',
+                            alignItems: 'center',
+                            gap: '3px',
+                            backgroundColor: '#f1f5f9',
+                            color: '#475569',
+                            fontSize: '9px',
+                            fontWeight: '700',
+                            padding: '2px 6px',
+                            borderRadius: '6px',
+                            border: '1px solid #e2e8f0'
+                          }}>
+                            <ImageIcon size={10} />
+                            Ada gambar
+                          </span>
+                        )}
                       </div>
 
                       {/* Status Dibaca */}
@@ -578,10 +622,16 @@ export default function PengumumanView({ onBack }) {
                       fontSize: '10px',
                       color: '#94a3b8'
                     }}>
-                      <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-                        <span>{item.created_at_human || item.tanggal_mulai}</span>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '6px', flexWrap: 'wrap' }}>
+                        <span>Rilis {item.tanggal_rilis || item.created_at_human || item.tanggal_mulai}</span>
                         <span>•</span>
                         <span>{item.pembuat}</span>
+                        {item.tanggal_expired && (
+                          <>
+                            <span>•</span>
+                            <span>Berlaku s.d. {item.tanggal_expired}</span>
+                          </>
+                        )}
                       </div>
                     </div>
                   </div>
@@ -644,14 +694,17 @@ export default function PengumumanView({ onBack }) {
                     Detail Pengumuman
                   </h4>
                   <span style={{ fontSize: '10px', color: '#64748b' }}>
-                    {selectedItem.tanggal_mulai || 'Resmi'}
+                    {(detailItem && (detailItem.tanggal_rilis || detailItem.tanggal_mulai))
+                      || selectedItem.tanggal_rilis
+                      || selectedItem.tanggal_mulai
+                      || 'Resmi'}
                   </span>
                 </div>
               </div>
 
               <button
                 type="button"
-                onClick={() => setSelectedItem(null)}
+                onClick={closeDetail}
                 style={{
                   width: '32px',
                   height: '32px',
@@ -675,111 +728,165 @@ export default function PengumumanView({ onBack }) {
               overflowY: 'auto',
               flex: 1
             }}>
-              {/* Gambar Flyer Banner Besar (Jika ada) */}
-              {selectedItem.gambar_url && (
+              {/* Selama detail dimuat: spinner saja — JANGAN tampilkan
+                  teks polos item list sebagai isi detail. */}
+              {isDetailLoading && !detailItem && (
+                <div style={{ padding: '40px 20px', textAlign: 'center' }}>
+                  <div style={{
+                    width: '36px',
+                    height: '36px',
+                    margin: '0 auto 12px',
+                    borderRadius: '50%',
+                    border: '3px solid #e2e8f0',
+                    borderTopColor: '#3b82f6',
+                    animation: 'spin 1s linear infinite'
+                  }} />
+                  <p style={{ fontSize: '12px', color: '#64748b', margin: 0, fontWeight: '600' }}>
+                    Memuat detail pengumuman...
+                  </p>
+                </div>
+              )}
+
+              {/* Detail gagal (mis. 404 pengumuman tak tampil): pesan
+                  error, bukan isi lama / teks polos. */}
+              {!isDetailLoading && detailError && (
                 <div style={{
+                  padding: '16px',
                   borderRadius: '16px',
-                  overflow: 'hidden',
-                  marginBottom: '16px',
-                  border: '1px solid #e2e8f0',
-                  backgroundColor: '#0f172a'
+                  backgroundColor: '#fef2f2',
+                  border: '1px solid #fee2e2',
+                  color: '#b91c1c',
+                  fontSize: '12px',
+                  textAlign: 'center'
                 }}>
-                  <img
-                    src={selectedItem.gambar_url}
-                    alt="Flyer Pengumuman"
+                  <AlertCircle size={24} style={{ margin: '0 auto 6px', display: 'block' }} />
+                  <p style={{ margin: 0, fontWeight: '700' }}>{detailError}</p>
+                </div>
+              )}
+
+              {detailItem && (
+                <>
+                  {/* Gambar Flyer Banner Besar (kompat server lama;
+                      endpoint detail baru tidak mengirim gambar_url —
+                      gambarnya ada di dalam body_html ter-embed). */}
+                  {detailItem.gambar_url && (
+                    <div style={{
+                      borderRadius: '16px',
+                      overflow: 'hidden',
+                      marginBottom: '16px',
+                      border: '1px solid #e2e8f0',
+                      backgroundColor: '#0f172a'
+                    }}>
+                      <img
+                        src={detailItem.gambar_url}
+                        alt="Flyer Pengumuman"
+                        style={{
+                          width: '100%',
+                          maxHeight: '260px',
+                          objectFit: 'cover',
+                          display: 'block'
+                        }}
+                      />
+                    </div>
+                  )}
+
+                  {/* Badges Info */}
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '6px', marginBottom: '10px', flexWrap: 'wrap' }}>
+                    {detailItem.is_pinned && (
+                      <span style={{
+                        backgroundColor: '#fef3c7',
+                        color: '#b45309',
+                        fontSize: '9px',
+                        fontWeight: '800',
+                        padding: '2px 8px',
+                        borderRadius: '6px',
+                        border: '1px solid #fde68a'
+                      }}>
+                        PINNED
+                      </span>
+                    )}
+                    <span style={{
+                      backgroundColor: '#e0f2fe',
+                      color: '#0369a1',
+                      fontSize: '9px',
+                      fontWeight: '800',
+                      padding: '2px 8px',
+                      borderRadius: '6px',
+                      border: '1px solid #bae6fd'
+                    }}>
+                      {detailItem.label_tipe || 'Informasi'}
+                    </span>
+                    {detailItem.has_image && (
+                      <span style={{
+                        display: 'inline-flex',
+                        alignItems: 'center',
+                        gap: '3px',
+                        backgroundColor: '#f1f5f9',
+                        color: '#475569',
+                        fontSize: '9px',
+                        fontWeight: '800',
+                        padding: '2px 8px',
+                        borderRadius: '6px',
+                        border: '1px solid #e2e8f0'
+                      }}>
+                        <ImageIcon size={10} />
+                        Ada gambar
+                      </span>
+                    )}
+                  </div>
+
+                  {/* Judul Pengumuman */}
+                  <h2 style={{
+                    fontSize: '16px',
+                    fontWeight: '800',
+                    color: '#0f172a',
+                    lineHeight: 1.35,
+                    margin: '0 0 6px 0'
+                  }}>
+                    {detailItem.judul}
+                  </h2>
+
+                  <p style={{ fontSize: '11px', color: '#94a3b8', margin: '0 0 4px 0' }}>
+                    Diterbitkan oleh <strong style={{ color: '#475569' }}>{detailItem.pembuat}</strong> • {detailItem.created_at_formatted || detailItem.created_at_human}
+                  </p>
+                  <p style={{ fontSize: '11px', color: '#94a3b8', margin: '0 0 14px 0' }}>
+                    Rilis {detailItem.tanggal_rilis || detailItem.tanggal_mulai || '-'}
+                    {detailItem.tanggal_expired && (
+                      <> • Berlaku s.d. {detailItem.tanggal_expired}</>
+                    )}
+                  </p>
+
+                  {/* Isi KAYA: HTML detail tersanitasi (judul/format/
+                      gambar dari body_html). body_text TIDAK dirender
+                      di sini — hanya untuk list/snippet. Bila server
+                      mengirim body_html kosong, tampil placeholder,
+                      bukan fallback teks polos. */}
+                  <style>{`
+                    .pengumuman-rich { font-size: 13px; color: #334155; line-height: 1.65; word-wrap: break-word; overflow-wrap: break-word; }
+                    .pengumuman-rich p { margin: 0 0 10px 0; }
+                    .pengumuman-rich h1, .pengumuman-rich h2, .pengumuman-rich h3, .pengumuman-rich h4 { color: #0f172a; line-height: 1.35; margin: 14px 0 8px 0; }
+                    .pengumuman-rich h1 { font-size: 17px; } .pengumuman-rich h2 { font-size: 16px; }
+                    .pengumuman-rich h3 { font-size: 15px; } .pengumuman-rich h4 { font-size: 14px; }
+                    .pengumuman-rich ul, .pengumuman-rich ol { margin: 0 0 10px 0; padding-left: 20px; }
+                    .pengumuman-rich li { margin-bottom: 4px; }
+                    .pengumuman-rich img { max-width: 100%; height: auto; border-radius: 12px; display: block; margin: 10px auto; }
+                    .pengumuman-rich a { color: #2563eb; text-decoration: underline; }
+                    .pengumuman-rich blockquote { margin: 10px 0; padding: 8px 12px; border-left: 3px solid #3b82f6; background: #f8fafc; border-radius: 0 8px 8px 0; }
+                    .pengumuman-rich table { width: 100%; border-collapse: collapse; margin: 10px 0; font-size: 12px; display: block; overflow-x: auto; }
+                    .pengumuman-rich th, .pengumuman-rich td { border: 1px solid #e2e8f0; padding: 6px 8px; text-align: left; }
+                    .pengumuman-rich th { background: #f8fafc; font-weight: 700; }
+                    .pengumuman-rich hr { border: none; border-top: 1px solid #f1f5f9; margin: 12px 0; }
+                  `}</style>
+                  <div
+                    className="pengumuman-rich"
                     style={{
-                      width: '100%',
-                      maxHeight: '260px',
-                      objectFit: 'cover',
-                      display: 'block'
+                      paddingTop: '10px',
+                      borderTop: '1px solid #f1f5f9'
                     }}
+                    dangerouslySetInnerHTML={{ __html: htmlPengumuman || '<p>Tidak ada isi pengumuman.</p>' }}
                   />
-                </div>
+                </>
               )}
-
-              {/* Badges Info */}
-              <div style={{ display: 'flex', alignItems: 'center', gap: '6px', marginBottom: '10px', flexWrap: 'wrap' }}>
-                {selectedItem.is_pinned && (
-                  <span style={{
-                    backgroundColor: '#fef3c7',
-                    color: '#b45309',
-                    fontSize: '9px',
-                    fontWeight: '800',
-                    padding: '2px 8px',
-                    borderRadius: '6px',
-                    border: '1px solid #fde68a'
-                  }}>
-                    PINNED
-                  </span>
-                )}
-                <span style={{
-                  backgroundColor: '#e0f2fe',
-                  color: '#0369a1',
-                  fontSize: '9px',
-                  fontWeight: '800',
-                  padding: '2px 8px',
-                  borderRadius: '6px',
-                  border: '1px solid #bae6fd'
-                }}>
-                  {selectedItem.label_tipe || 'Informasi'}
-                </span>
-                {selectedItem.is_khusus && (
-                  <span style={{
-                    backgroundColor: '#f3e8ff',
-                    color: '#7e22ce',
-                    fontSize: '9px',
-                    fontWeight: '800',
-                    padding: '2px 8px',
-                    borderRadius: '6px'
-                  }}>
-                    Khusus Karyawan Tertentu
-                  </span>
-                )}
-              </div>
-
-              {/* Judul Pengumuman */}
-              <h2 style={{
-                fontSize: '16px',
-                fontWeight: '800',
-                color: '#0f172a',
-                lineHeight: 1.35,
-                margin: '0 0 6px 0'
-              }}>
-                {selectedItem.judul}
-              </h2>
-
-              <p style={{ fontSize: '11px', color: '#94a3b8', margin: '0 0 14px 0' }}>
-                Diterbitkan oleh <strong style={{ color: '#475569' }}>{selectedItem.pembuat}</strong> • {selectedItem.created_at_formatted || selectedItem.created_at_human}
-              </p>
-
-              {/* Ringkasan jika ada */}
-              {selectedItem.ringkasan && (
-                <div style={{
-                  padding: '10px 12px',
-                  backgroundColor: '#f8fafc',
-                  borderLeft: '3px solid #3b82f6',
-                  borderRadius: '8px',
-                  fontSize: '11px',
-                  color: '#334155',
-                  fontStyle: 'italic',
-                  marginBottom: '14px',
-                  lineHeight: 1.45
-                }}>
-                  "{selectedItem.ringkasan}"
-                </div>
-              )}
-
-              {/* Konten Lengkap */}
-              <div style={{
-                fontSize: '12px',
-                color: '#334155',
-                lineHeight: 1.6,
-                whiteSpace: 'pre-line',
-                paddingTop: '10px',
-                borderTop: '1px solid #f1f5f9'
-              }}>
-                {selectedItem.konten || 'Tidak ada isi pengumuman.'}
-              </div>
 
             </div>
 
@@ -791,7 +898,7 @@ export default function PengumumanView({ onBack }) {
             }}>
               <button
                 type="button"
-                onClick={() => setSelectedItem(null)}
+                onClick={closeDetail}
                 style={{
                   width: '100%',
                   padding: '10px',
