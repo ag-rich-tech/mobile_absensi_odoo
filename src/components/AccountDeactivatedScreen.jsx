@@ -31,7 +31,8 @@ export default function AccountDeactivatedScreen({ message, onClose }) {
           textAlign: 'center',
           color: '#ffffff',
           position: 'relative',
-          overflow: 'hidden',
+          maxHeight: '90vh',
+          overflowY: 'auto',
         }}
       >
         {/* Glow Ambient Top */}

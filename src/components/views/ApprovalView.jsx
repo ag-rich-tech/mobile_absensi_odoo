@@ -868,7 +868,7 @@ export default function ApprovalView({ onBack }) {
           inset: 0,
           backgroundColor: 'rgba(15, 23, 42, 0.65)',
           backdropFilter: 'blur(4px)',
-          zIndex: 50,
+          zIndex: 60,
           display: 'flex',
           alignItems: 'center',
           justifyContent: 'center',
@@ -879,7 +879,8 @@ export default function ApprovalView({ onBack }) {
             borderRadius: '20px',
             maxWidth: '380px',
             width: '100%',
-            overflow: 'hidden',
+            maxHeight: '90vh',
+            overflowY: 'auto',
             boxShadow: '0 20px 25px -5px rgba(0, 0, 0, 0.2)',
             animation: 'zoomIn 0.2s ease-out'
           }}>

@@ -1,0 +1,145 @@
+diff --git a/src/components/AccountDeactivatedScreen.jsx b/src/components/AccountDeactivatedScreen.jsx
+index 08d20d4..a8c734c 100644
+--- a/src/components/AccountDeactivatedScreen.jsx
++++ b/src/components/AccountDeactivatedScreen.jsx
+@@ -31,7 +31,8 @@ export default function AccountDeactivatedScreen({ message, onClose }) {
+           textAlign: 'center',
+           color: '#ffffff',
+           position: 'relative',
+-          overflow: 'hidden',
++          maxHeight: '90vh',
++          overflowY: 'auto',
+         }}
+       >
+         {/* Glow Ambient Top */}
+diff --git a/src/components/views/ApprovalView.jsx b/src/components/views/ApprovalView.jsx
+index 359513b..19cb968 100644
+--- a/src/components/views/ApprovalView.jsx
++++ b/src/components/views/ApprovalView.jsx
+@@ -868,7 +868,7 @@ export default function ApprovalView({ onBack }) {
+           inset: 0,
+           backgroundColor: 'rgba(15, 23, 42, 0.65)',
+           backdropFilter: 'blur(4px)',
+-          zIndex: 50,
++          zIndex: 60,
+           display: 'flex',
+           alignItems: 'center',
+           justifyContent: 'center',
+@@ -879,7 +879,8 @@ export default function ApprovalView({ onBack }) {
+             borderRadius: '20px',
+             maxWidth: '380px',
+             width: '100%',
+-            overflow: 'hidden',
++            maxHeight: '90vh',
++            overflowY: 'auto',
+             boxShadow: '0 20px 25px -5px rgba(0, 0, 0, 0.2)',
+             animation: 'zoomIn 0.2s ease-out'
+           }}>
+diff --git a/src/components/views/PengumumanView.jsx b/src/components/views/PengumumanView.jsx
+index ab74f8a..0f86f42 100644
+--- a/src/components/views/PengumumanView.jsx
++++ b/src/components/views/PengumumanView.jsx
+@@ -649,7 +649,7 @@ export default function PengumumanView({ onBack }) {
+           inset: 0,
+           backgroundColor: 'rgba(15, 23, 42, 0.65)',
+           backdropFilter: 'blur(4px)',
+-          zIndex: 50,
++          zIndex: 60,
+           display: 'flex',
+           alignItems: 'flex-end',
+           justifyContent: 'center'
+@@ -725,8 +725,10 @@ export default function PengumumanView({ onBack }) {
+             {/* Modal Body (Scrollable) */}
+             <div style={{
+               padding: '16px',
++              paddingBottom: 'calc(16px + env(safe-area-inset-bottom, 0px))',
+               overflowY: 'auto',
+-              flex: 1
++              flex: 1,
++              minHeight: 0
+             }}>
+               {/* Selama detail dimuat: spinner saja — JANGAN tampilkan
+                   teks polos item list sebagai isi detail. */}
+@@ -869,7 +871,7 @@ export default function PengumumanView({ onBack }) {
+                     .pengumuman-rich h3 { font-size: 15px; } .pengumuman-rich h4 { font-size: 14px; }
+                     .pengumuman-rich ul, .pengumuman-rich ol { margin: 0 0 10px 0; padding-left: 20px; }
+                     .pengumuman-rich li { margin-bottom: 4px; }
+-                    .pengumuman-rich img { max-width: 100%; height: auto; border-radius: 12px; display: block; margin: 10px auto; }
++                    .pengumuman-rich img { width: auto !important; max-width: 100% !important; height: auto !important; border-radius: 12px; display: block; margin: 10px auto; }
+                     .pengumuman-rich a { color: #2563eb; text-decoration: underline; }
+                     .pengumuman-rich blockquote { margin: 10px 0; padding: 8px 12px; border-left: 3px solid #3b82f6; background: #f8fafc; border-radius: 0 8px 8px 0; }
+                     .pengumuman-rich table { width: 100%; border-collapse: collapse; margin: 10px 0; font-size: 12px; display: block; overflow-x: auto; }
+diff --git a/src/components/views/TugasView.jsx b/src/components/views/TugasView.jsx
+index 62f105d..adc44a9 100644
+--- a/src/components/views/TugasView.jsx
++++ b/src/components/views/TugasView.jsx
+@@ -761,6 +761,8 @@ export default function TugasView({ onBack }) {
+             <div style={{
+               padding: '20px',
+               overflowY: 'auto',
++              flex: 1,
++              minHeight: 0,
+               display: 'flex',
+               flexDirection: 'column',
+               gap: '16px',
+diff --git a/src/components/views/TukarShiftModal.jsx b/src/components/views/TukarShiftModal.jsx
+index 714e3ea..f816596 100644
+--- a/src/components/views/TukarShiftModal.jsx
++++ b/src/components/views/TukarShiftModal.jsx
+@@ -435,7 +435,7 @@ export default function TukarShiftModal({ isOpen, onClose, onSuccess }) {
+         </div>
+ 
+         {/* Content Body Scrollable */}
+-        <div style={{ flex: 1, overflowY: 'auto', padding: '16px 20px', backgroundColor: '#fafbfc' }}>
++        <div style={{ flex: 1, minHeight: 0, overflowY: 'auto', padding: '16px 20px', backgroundColor: '#fafbfc' }}>
+           {feedback.message && (
+             <div style={{
+               padding: '12px 14px',
+@@ -1073,6 +1073,8 @@ export default function TukarShiftModal({ isOpen, onClose, onSuccess }) {
+             padding: '20px',
+             width: '100%',
+             maxWidth: '360px',
++            maxHeight: '90vh',
++            overflowY: 'auto',
+             boxShadow: '0 10px 30px rgba(0,0,0,0.2)'
+           }}>
+             <h4 style={{ margin: '0 0 6px 0', fontSize: '15px', fontWeight: '800', color: 'var(--text-main)' }}>
+diff --git a/src/pages/AttendanceCapturePage.jsx b/src/pages/AttendanceCapturePage.jsx
+index 83ec584..fa9d617 100644
+--- a/src/pages/AttendanceCapturePage.jsx
++++ b/src/pages/AttendanceCapturePage.jsx
+@@ -1084,6 +1084,8 @@ export default function AttendanceCapturePage({
+           <div style={{
+             width: '100%',
+             maxWidth: '340px',
++            maxHeight: '90vh',
++            overflowY: 'auto',
+             backgroundColor: '#ffffff',
+             borderRadius: '24px',
+             padding: '24px 20px',
+diff --git a/src/pages/LocationCheckPage.jsx b/src/pages/LocationCheckPage.jsx
+index bb0e045..e5ae1f0 100644
+--- a/src/pages/LocationCheckPage.jsx
++++ b/src/pages/LocationCheckPage.jsx
+@@ -919,6 +919,8 @@ export default function LocationCheckPage({
+             maxWidth: '430px',
+             boxShadow: '0 25px 50px -12px rgba(0, 0, 0, 0.25)',
+             border: '1px solid rgba(254, 202, 202, 0.8)',
++            maxHeight: '90vh',
++            overflowY: 'auto',
+             display: 'flex',
+             flexDirection: 'column',
+             gap: '16px',
+diff --git a/src/pages/WelcomePage.jsx b/src/pages/WelcomePage.jsx
+index 268656b..376c7d5 100644
+--- a/src/pages/WelcomePage.jsx
++++ b/src/pages/WelcomePage.jsx
+@@ -445,6 +445,8 @@ export default function WelcomePage({ onStartLogin }) {
+             maxWidth: '430px',
+             boxShadow: '0 25px 50px -12px rgba(0, 0, 0, 0.25)',
+             border: '1px solid rgba(226, 232, 240, 0.8)',
++            maxHeight: '90vh',
++            overflowY: 'auto',
+             display: 'flex',
+             flexDirection: 'column',
+             gap: '16px',

@@ -445,6 +445,8 @@ export default function WelcomePage({ onStartLogin }) {
             maxWidth: '430px',
             boxShadow: '0 25px 50px -12px rgba(0, 0, 0, 0.25)',
             border: '1px solid rgba(226, 232, 240, 0.8)',
+            maxHeight: '90vh',
+            overflowY: 'auto',
             display: 'flex',
             flexDirection: 'column',
             gap: '16px',

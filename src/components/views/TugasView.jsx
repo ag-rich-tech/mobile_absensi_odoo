@@ -761,6 +761,8 @@ export default function TugasView({ onBack }) {
             <div style={{
               padding: '20px',
               overflowY: 'auto',
+              flex: 1,
+              minHeight: 0,
               display: 'flex',
               flexDirection: 'column',
               gap: '16px',

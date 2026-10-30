@@ -1084,6 +1084,8 @@ export default function AttendanceCapturePage({
           <div style={{
             width: '100%',
             maxWidth: '340px',
+            maxHeight: '90vh',
+            overflowY: 'auto',
             backgroundColor: '#ffffff',
             borderRadius: '24px',
             padding: '24px 20px',

@@ -435,7 +435,7 @@ export default function TukarShiftModal({ isOpen, onClose, onSuccess }) {
         </div>
 
         {/* Content Body Scrollable */}
-        <div style={{ flex: 1, overflowY: 'auto', padding: '16px 20px', backgroundColor: '#fafbfc' }}>
+        <div style={{ flex: 1, minHeight: 0, overflowY: 'auto', padding: '16px 20px', backgroundColor: '#fafbfc' }}>
           {feedback.message && (
             <div style={{
               padding: '12px 14px',
@@ -1073,6 +1073,8 @@ export default function TukarShiftModal({ isOpen, onClose, onSuccess }) {
             padding: '20px',
             width: '100%',
             maxWidth: '360px',
+            maxHeight: '90vh',
+            overflowY: 'auto',
             boxShadow: '0 10px 30px rgba(0,0,0,0.2)'
           }}>
             <h4 style={{ margin: '0 0 6px 0', fontSize: '15px', fontWeight: '800', color: 'var(--text-main)' }}>

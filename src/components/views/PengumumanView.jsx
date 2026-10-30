@@ -649,7 +649,7 @@ export default function PengumumanView({ onBack }) {
           inset: 0,
           backgroundColor: 'rgba(15, 23, 42, 0.65)',
           backdropFilter: 'blur(4px)',
-          zIndex: 50,
+          zIndex: 60,
           display: 'flex',
           alignItems: 'flex-end',
           justifyContent: 'center'
@@ -725,8 +725,10 @@ export default function PengumumanView({ onBack }) {
             {/* Modal Body (Scrollable) */}
             <div style={{
               padding: '16px',
+              paddingBottom: 'calc(16px + env(safe-area-inset-bottom, 0px))',
               overflowY: 'auto',
-              flex: 1
+              flex: 1,
+              minHeight: 0
             }}>
               {/* Selama detail dimuat: spinner saja — JANGAN tampilkan
                   teks polos item list sebagai isi detail. */}
@@ -869,7 +871,7 @@ export default function PengumumanView({ onBack }) {
                     .pengumuman-rich h3 { font-size: 15px; } .pengumuman-rich h4 { font-size: 14px; }
                     .pengumuman-rich ul, .pengumuman-rich ol { margin: 0 0 10px 0; padding-left: 20px; }
                     .pengumuman-rich li { margin-bottom: 4px; }
-                    .pengumuman-rich img { max-width: 100%; height: auto; border-radius: 12px; display: block; margin: 10px auto; }
+                    .pengumuman-rich img { width: auto !important; max-width: 100% !important; height: auto !important; border-radius: 12px; display: block; margin: 10px auto; }
                     .pengumuman-rich a { color: #2563eb; text-decoration: underline; }
                     .pengumuman-rich blockquote { margin: 10px 0; padding: 8px 12px; border-left: 3px solid #3b82f6; background: #f8fafc; border-radius: 0 8px 8px 0; }
                     .pengumuman-rich table { width: 100%; border-collapse: collapse; margin: 10px 0; font-size: 12px; display: block; overflow-x: auto; }
