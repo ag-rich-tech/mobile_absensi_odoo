@@ -573,8 +573,15 @@ function computeAttendanceStatus(inD, outD, shift) {
   const res = {};
   if (inD) {
     const [h, m] = shift.jam_masuk.split(':').map(Number);
+    // Toleransi keterlambatan (ag 1.2.33): server mengirim
+    // toleransi_menit di tiap shift (Settings -> Attendances ->
+    // Pengaturan Aplikasi Mobile, default 15). Deadline bergeser
+    // menjadi jam_masuk + toleransi; melewati itu, Terlambat
+    // sebesar kelebihan di atas deadline tersebut. Server lama
+    // tanpa field ini -> 0 (perilaku lama, tanpa toleransi).
+    const tol = Number(shift.toleransi_menit) || 0;
     const deadline = new Date(Date.UTC(
-      inD.getUTCFullYear(), inD.getUTCMonth(), inD.getUTCDate(), h, m));
+      inD.getUTCFullYear(), inD.getUTCMonth(), inD.getUTCDate(), h, m) + tol * 60000);
     const diff = Math.round((inD - deadline) / 60000);
     res.status_masuk = diff > 0 ? 'terlambat' : 'tepat_waktu';
     res.menit_terlambat = diff > 0 ? diff : 0;
