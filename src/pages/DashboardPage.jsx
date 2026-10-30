@@ -2,7 +2,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import {
   MapPin, Clock, Camera, LogOut, Calendar, User, Briefcase,
   CheckCircle2, AlertTriangle, ArrowRight, ShieldCheck, RefreshCw,
-  ChevronRight, Building, Award, History, CalendarDays, FileText,
+  ChevronRight, Building, Award, History, CalendarDays, CalendarClock, FileText,
   PlaneTakeoff, Timer, CircleDollarSign, ChevronLeft, Info, ShieldAlert,
   Receipt, HelpCircle, Coffee, Sparkles, CheckCheck, Megaphone, Bell, Wallet, Users
 } from 'lucide-react';
@@ -31,6 +31,7 @@ import RiwayatView from '../components/views/RiwayatView';
 import IzinView from '../components/views/IzinView';
 import DinasView from '../components/views/DinasView';
 import LemburView from '../components/views/LemburView';
+import PengajuanAbsensiView, { FEATURE_CODE } from '../components/views/PengajuanAbsensiView';
 import JadwalView from '../components/views/JadwalView';
 import DendaView from '../components/views/DendaView';
 import SlipGajiView from '../components/views/SlipGajiView';
@@ -294,7 +295,7 @@ export default function DashboardPage({ user: initialUser, onLogout, onStartAtte
   // dihitung karena kartunya ada di grid ini.
   const FEATURE_CODES = ['attendance', 'history', 'leave', 'dinas', 'overtime',
     'payslip', 'ticket', 'task', 'approval', 'announcement',
-    'reimbursement', 'team', 'karyawan'];
+    'reimbursement', 'team', 'karyawan', 'attendance_request'];
 
   // Penjaga navigasi: subview aktif yang fiturnya baru dinonaktifkan
   // (toggle berubah saat user sedang di tab itu, deep link / state lama
@@ -1877,6 +1878,44 @@ export default function DashboardPage({ user: initialUser, onLogout, onStartAtte
                 </button>
 )}
 
+                {/* Pengajuan Absensi (karyawan kelupaan absensi) —
+                    digerbang isOn(FEATURE_CODE) seperti kartu lain
+                    (kode 'attendance_request'); hilang bila fitur
+                    dimatikan dari Odoo. */}
+                {isOn(FEATURE_CODE) && (
+<button
+                  type="button"
+                  onClick={() => setActiveNav('pengajuan_absensi')}
+                  style={{
+                    display: 'flex',
+                    flexDirection: 'column',
+                    alignItems: 'center',
+                    background: 'none',
+                    border: 'none',
+                    cursor: 'pointer',
+                    padding: '2px'
+                  }}
+                >
+                  <div style={{
+                    width: '46px',
+                    height: '46px',
+                    borderRadius: '14px',
+                    background: 'linear-gradient(135deg, #f5f3ff 0%, #ede9fe 100%)',
+                    border: '1px solid #ddd6fe',
+                    color: '#6d28d9',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    boxShadow: '0 4px 10px rgba(109, 40, 217, 0.12)'
+                  }}>
+                    <CalendarClock size={22} strokeWidth={2.2} />
+                  </div>
+                  <span style={{ fontSize: '11px', fontWeight: '700', color: 'var(--text-main)', marginTop: '6px' }}>
+                    Pengajuan Absensi
+                  </span>
+                </button>
+)}
+
                 {/* 7. Slip Gaji */}
                 {isOn('payslip') && (
 <button
@@ -2337,6 +2376,11 @@ export default function DashboardPage({ user: initialUser, onLogout, onStartAtte
             {/* Tab: Lembur Karyawan */}
             {activeNav === 'lembur' && (
               <LemburView onBack={() => handleNavBack('home')} />
+            )}
+
+            {/* Tab: Pengajuan Absensi (kelupaan absensi) */}
+            {activeNav === 'pengajuan_absensi' && (
+              <PengajuanAbsensiView onBack={() => handleNavBack('home')} />
             )}
 
             {/* Tab: Informasi Aturan Denda */}

@@ -44,7 +44,7 @@ import { getToken } from './api.js';
 export const MOBILE_FEATURE_CODES = [
   'attendance', 'history', 'leave', 'overtime', 'payslip', 'approval',
   'announcement', 'reimbursement', 'team', 'shift', 'task', 'dinas',
-  'ticket',
+  'ticket', 'attendance_request',
 ];
 
 // Subview DashboardPage -> kode fitur kontrak. null = selalu tampil
@@ -67,6 +67,7 @@ export const NAV_FEATURE_MAP = {
   pengumuman: 'announcement',
   reimbursement: 'reimbursement',
   kehadiran_bawahan: 'team',
+  pengajuan_absensi: 'attendance_request',
   karyawan: null,
   jadwal: 'shift',
   denda: null,

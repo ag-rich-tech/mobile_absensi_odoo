@@ -723,7 +723,12 @@ function mapApprovalStatus(lv, modul) {
     return m[lv.state] || 'menunggu';
   }
   const m = { confirm: 'menunggu', validate1: 'menunggu', validate: 'disetujui',
-    refuse: 'ditolak', cancel: 'dibatalkan', draft: 'menunggu' };
+    refuse: 'ditolak', cancel: 'dibatalkan', draft: 'menunggu',
+    // Status kontrak pengajuan absensi (menunggu/disetujui/ditolak)
+    // lolos apa adanya bila server mengirimnya sebagai state mentah
+    // (tanpa ini, 'disetujui'/'ditolak' jatuh ke default 'menunggu').
+    menunggu: 'menunggu', disetujui: 'disetujui', ditolak: 'ditolak',
+    dibatalkan: 'dibatalkan' };
   return m[lv.state] || 'menunggu';
 }
 
@@ -742,6 +747,40 @@ function mapApprovalSteps(lv) {
   return { step_ke: null, total_step: null };
 }
 
+// Pengajuan absensi milik sendiri (hrms.attendance.request, kontrak
+// endpoint ag /attendance-request/*). Pemetaan dibuat toleran terhadap
+// nama field: kontrak mengunci nama field submit, bukan bentuk balikan
+// list/detail — alias di bawah menampung varian penamaan server tanpa
+// mengubah bentuk yang dipakai PengajuanAbsensiView.
+function normalizeJamAbsensi(v) {
+  if (v == null || v === '') return null;
+  const s = String(v).trim();
+  // Datetime ('2026-10-29 08:00:00' / ISO) -> 'HH:MM'; 'HH:MM:SS' -> 'HH:MM'.
+  const m = s.match(/(\d{2}):(\d{2})/);
+  return m ? `${m[1]}:${m[2]}` : s;
+}
+function mapAttendanceRequestState(v) {
+  const m = { menunggu: 'menunggu', disetujui: 'disetujui', ditolak: 'ditolak',
+    dibatalkan: 'dibatalkan', draft: 'menunggu', confirm: 'menunggu',
+    validate: 'disetujui', validate1: 'menunggu', refuse: 'ditolak',
+    cancel: 'dibatalkan' };
+  return m[String(v || '').toLowerCase()] || 'menunggu';
+}
+function mapAttendanceRequest(r) {
+  if (!r || typeof r !== 'object') return null;
+  return {
+    id: r.id,
+    request_date: r.request_date || r.date || r.tanggal || '',
+    check_in_time: normalizeJamAbsensi(r.check_in_time ?? r.jam_masuk ?? r.check_in),
+    check_out_time: normalizeJamAbsensi(r.check_out_time ?? r.jam_pulang ?? r.check_out),
+    reason: r.reason || r.alasan || r.keterangan || r.name || '',
+    status: mapAttendanceRequestState(r.state || r.status || r.status_app),
+    rejection_reason: r.rejection_reason || r.alasan_tolak
+      || r.catatan_penolakan || r.reject_reason || r.refuse_reason || '',
+    _raw: r,
+  };
+}
+
 function mapApprovalItem(lv) {
   // C16 (K1/APR-B1/B2): klasifikasi dari server `tipe`
   // (cuti/dinas/lembur/reimbursement) — JANGAN `lv.modul` (tidak pernah
@@ -752,10 +791,11 @@ function mapApprovalItem(lv) {
   // nama tipe (mis. 'Dinas Luar Kota') bila keduanya tak ada.
   const dinasByName = /dinas/i.test(`${lv.jenis_izin || ''} ${lv.label_jenis || ''} ${lv.type_name || ''} ${lv.name || ''}`);
   const tipe = lv.tipe
-    || (lv.kategori === 'dinas' ? 'dinas'
-      : (lv.kategori === 'reimbursement' ? 'reimbursement'
-        : (lv.kategori === 'lembur' ? 'lembur'
-          : (dinasByName ? 'dinas' : 'cuti'))));
+    || (lv.kategori === 'attendance_request' ? 'attendance_request'
+      : (lv.kategori === 'dinas' ? 'dinas'
+        : (lv.kategori === 'reimbursement' ? 'reimbursement'
+          : (lv.kategori === 'lembur' ? 'lembur'
+            : (dinasByName ? 'dinas' : 'cuti')))));
   const status = mapApprovalStatus(lv, tipe === 'reimbursement' ? 'reimbursement' : tipe);
   const steps = mapApprovalSteps(lv);
   // C29: jangan buang field server — pemohon lengkap, dokumen, dan
@@ -771,6 +811,45 @@ function mapApprovalItem(lv) {
   };
   const dokumenAda = !!lv.dokumen_ada;
   const dokumenId = lv.dokumen_id ?? lv.attachment_id ?? null;
+  if (tipe === 'attendance_request') {
+    // Pengajuan absensi (hrms.attendance.request): tanggal + jam dari
+    // kontrak endpoint, alasan tolak dari server bila ada. Cabang ini
+    // WAJIB sebelum cabang default cuti/dinas — tanpa itu item jatuh
+    // ke bentuk cuti dengan periode '- s/d -' dan aksi salah rute.
+    const reqDate = lv.request_date || lv.tanggal || '';
+    const tanggalPengajuan = reqDate
+      ? fmtTanggalId(utcToWib(`${String(reqDate).slice(0, 10)} 00:00:00`))
+      : '';
+    return {
+      id: lv.id,
+      tipe: 'attendance_request',
+      pengajuan_id: lv.pengajuan_id || lv.id,
+      modul: 'attendance_request',
+      label_modul: 'Pengajuan Absensi',
+      pemohon: pemohonOut,
+      created_at: lv.create_date ? fmtTanggalId(utcToWib(lv.create_date)) : '',
+      status,
+      validation_type: lv.validation_type || null,
+      dokumen_ada: false,
+      dokumen_id: null,
+      detail: {
+        jenis_pengajuan: 'Pengajuan Absensi',
+        tanggal_pengajuan: tanggalPengajuan,
+        request_date: reqDate,
+        jam_masuk: lv.check_in_time || lv.jam_masuk || null,
+        jam_pulang: lv.check_out_time || lv.jam_pulang || null,
+        keterangan: lv.reason || lv.alasan || lv.keterangan || '',
+        alasan: lv.reason || lv.alasan || lv.keterangan || '',
+        alasan_tolak: lv.rejection_reason || lv.alasan_tolak
+          || lv.catatan_penolakan || lv.reject_reason || '',
+      },
+      alur_steps: [],
+      catatan_saya: lv.catatan_saya || '',
+      step_ke: steps.step_ke,
+      total_step: steps.total_step,
+      _raw: lv,
+    };
+  }
   if (tipe === 'reimbursement') {
     const produk = lv.product
       ? (Array.isArray(lv.product) ? (lv.product[1] || lv.product[0]) : lv.product)
@@ -1495,7 +1574,7 @@ export const api = {
       // lintas halaman butuh sort server sebelum slice).
       const stamp = (it) => {
         const raw = (it && it._raw) || {};
-        const v = raw.date_from || raw.tanggal || raw.tanggal_lembur || null;
+        const v = raw.date_from || raw.tanggal || raw.tanggal_lembur || raw.request_date || null;
         const t = v ? Date.parse(v) : NaN;
         return Number.isNaN(t) ? -Infinity : t;
       };
@@ -1520,7 +1599,24 @@ export const api = {
     const item = (idOrItem && typeof idOrItem === 'object') ? idOrItem : null;
     const tipe = item ? (item.tipe || item.modul) : 'cuti';
     let res;
-    if (tipe === 'lembur') {
+    if (tipe === 'attendance_request') {
+      // Pengajuan absensi memakai jalur aksi approvals generik (tidak
+      // ada endpoint approve khusus di kontrak fitur ini). Sengaja
+      // TANPA leave_id: id ini bukan id cuti, dan mengirimnya bisa
+      // membuat server salah mengira item ini cuti. Kunci id ganda +
+      // `tipe` eksplisit agar dispatcher server dapat merutekan ke
+      // hrms.attendance.request. Bila agen server menyediakan endpoint
+      // approve khusus, ganti SATU blok ini saja.
+      res = await odooCall('/approvals/act', {
+        attendance_request_id: item.pengajuan_id || item.id,
+        request_id: item.pengajuan_id || item.id,
+        id: item.pengajuan_id || item.id,
+        tipe: 'attendance_request',
+        action: aksi,
+        aksi,
+        ...catatan,
+      });
+    } else if (tipe === 'lembur') {
       res = await odooCall('/overtime/approve', {
         overtime_id: item.pengajuan_id || item.id,
         id: item.pengajuan_id || item.id,
@@ -1552,6 +1648,54 @@ export const api = {
   async cancelTimeoff(id) {
     const res = await odooCall('/timeoff/cancel', { leave_id: id, id });
     return { success: true, message: res.message || 'Pengajuan dibatalkan.' };
+  },
+
+  // ---- Pengajuan Absensi (karyawan kelupaan absensi) ----
+  // Semua lewat odooCall (POST Bearer ke {API_BASE}/attendance-request/*,
+  // pola yang sama dengan endpoint ag lain — "GET" kontrak tetap POST
+  // di transport ini, seperti /approvals/inbox). Server yang menjaga:
+  // list hanya mengembalikan pengajuan milik pemanggil.
+  async getPengajuanAbsensi(opts = {}) {
+    const limit = opts.limit || 50;
+    const offset = opts.offset || 0;
+    const res = await odooCall('/attendance-request/list', { limit, offset });
+    const raw = res.data && res.data.items
+      ? res.data.items
+      : (Array.isArray(res.data) ? res.data : []);
+    const count = (res.data && typeof res.data.count === 'number') ? res.data.count : null;
+    return {
+      success: true,
+      data: raw.map(mapAttendanceRequest).filter(Boolean),
+      count,
+      has_more: count != null ? (offset + raw.length < count) : raw.length >= limit,
+    };
+  },
+
+  async ajukanPengajuanAbsensi(payload) {
+    // Kontrak submit: {request_date: "YYYY-MM-DD",
+    // check_in_time: "HH:MM"|null, check_out_time: "HH:MM"|null, reason}.
+    // View sudah memvalidasi + menormalisasi; di sini diteruskan apa adanya.
+    const res = await odooCall('/attendance-request/submit', {
+      request_date: payload.request_date,
+      check_in_time: payload.check_in_time ?? null,
+      check_out_time: payload.check_out_time ?? null,
+      reason: payload.reason,
+    });
+    return { success: true, message: res.message || 'Pengajuan absensi terkirim.', data: res.data };
+  },
+
+  async getPengajuanAbsensiDetail(id) {
+    const res = await odooCall('/attendance-request/detail', { id });
+    const raw = (res.data && (res.data.item || res.data.request || res.data))
+      || null;
+    const mapped = raw && !Array.isArray(raw) ? mapAttendanceRequest(raw) : null;
+    return { success: true, data: mapped, message: res.message };
+  },
+
+  // Batalkan pengajuan MILIK SENDIRI yang masih menunggu.
+  async batalkanPengajuanAbsensi(id) {
+    const res = await odooCall('/attendance-request/cancel', { id });
+    return { success: true, message: res.message || 'Pengajuan absensi dibatalkan.' };
   },
 
   // ---- Pengumuman ----

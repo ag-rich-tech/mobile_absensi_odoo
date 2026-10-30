@@ -52,6 +52,7 @@ export const DRAFT_KEYS = {
   izin: (userId) => `izin:${userId}`,
   dinas: (userId) => `dinas:${userId}`,
   lembur: (userId) => `lembur:${userId}`,
+  pengajuan_absensi: (userId) => `pengajuan_absensi:${userId}`,
   reimbursement: (userId) => `reimbursement:${userId}`,
   // Catatan review tugas (textarea detail tugas) + form masalah.
   tugas_review: (userId) => `tugas_review:${userId}`,

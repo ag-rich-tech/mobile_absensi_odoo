@@ -204,6 +204,13 @@ export default function ApprovalView({ onBack }) {
           text: '#15803d',
           label: 'Klaim Reimbursement',
         };
+      case 'attendance_request':
+        return {
+          bg: '#ede9fe',
+          border: '#ddd6fe',
+          text: '#6d28d9',
+          label: 'Pengajuan Absensi',
+        };
       default:
         return {
           bg: '#f8fafc',
@@ -381,6 +388,7 @@ export default function ApprovalView({ onBack }) {
             { id: 'lembur', label: 'Lembur' },
             { id: 'dinas', label: 'Dinas Luar' },
             { id: 'reimbursement', label: 'Reimbursement' },
+            { id: 'attendance_request', label: 'Pengajuan Absensi' },
           ].map(f => (
             <button
               key={f.id}
@@ -489,7 +497,7 @@ export default function ApprovalView({ onBack }) {
                 {items.length > 0 && filteredItems.length === 0
                   ? 'Ubah filter modul di atas untuk melihat pengajuan lain.'
                   : (activeTab === 'menunggu'
-                    ? 'Saat ini tidak ada pengajuan izin, cuti, lembur, dinas, atau reimbursement yang menugaskan Anda sebagai approver aktif.'
+                    ? 'Saat ini tidak ada pengajuan izin, cuti, lembur, dinas, reimbursement, atau pengajuan absensi yang menugaskan Anda sebagai approver aktif.'
                     : 'Pengajuan yang telah Anda setujui atau tolak akan tercatat rapi di halaman ini.')}
               </p>
             </div>
@@ -613,8 +621,8 @@ export default function ApprovalView({ onBack }) {
                   flexDirection: 'column',
                   gap: '6px'
                 }}>
-                  {/* Tanggal / Periode (jika bukan reimbursement) */}
-                  {item.modul !== 'reimbursement' && (
+                  {/* Tanggal / Periode (jika bukan reimbursement / pengajuan absensi) */}
+                  {item.modul !== 'reimbursement' && item.tipe !== 'attendance_request' && (
                     <div style={{ display: 'flex', justifyContent: 'space-between' }}>
                       <span style={{ color: '#64748b' }}>Waktu Pelaksanaan:</span>
                       <span style={{ fontWeight: '700', color: '#0f172a' }}>
@@ -625,6 +633,24 @@ export default function ApprovalView({ onBack }) {
                         )}
                       </span>
                     </div>
+                  )}
+
+                  {/* Khusus Pengajuan Absensi: tanggal + jam yang diajukan */}
+                  {item.tipe === 'attendance_request' && (
+                    <>
+                      <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                        <span style={{ color: '#64748b' }}>Tanggal Absensi:</span>
+                        <span style={{ fontWeight: '700', color: '#0f172a' }}>{detail.tanggal_pengajuan || detail.request_date || '-'}</span>
+                      </div>
+                      <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                        <span style={{ color: '#64748b' }}>Jam Diajukan:</span>
+                        <span style={{ fontWeight: '700', color: '#0f172a' }}>
+                          {detail.jam_masuk ? `${detail.jam_masuk} WIB` : '-'}
+                          {' – '}
+                          {detail.jam_pulang ? `${detail.jam_pulang} WIB` : '-'}
+                        </span>
+                      </div>
+                    </>
                   )}
 
                   {/* Khusus Reimbursement */}
@@ -690,6 +716,16 @@ export default function ApprovalView({ onBack }) {
                       "{detail.keterangan || '-'}"
                     </p>
                   </div>
+
+                  {/* Alasan penolakan pengajuan absensi (riwayat aksi) */}
+                  {item.tipe === 'attendance_request' && item.status === 'ditolak' && detail.alasan_tolak && (
+                    <div style={{ marginTop: '2px', paddingTop: '6px', borderTop: '1px dashed #e2e8f0' }}>
+                      <span style={{ color: '#b91c1c', display: 'block', marginBottom: '2px', fontWeight: '700' }}>Alasan Penolakan:</span>
+                      <p style={{ margin: 0, color: '#7f1d1d', fontWeight: '500', lineHeight: 1.4 }}>
+                        {detail.alasan_tolak}
+                      </p>
+                    </div>
+                  )}
 
                   {/* Lampiran Dokumen — hanya modul yang dikenal route
                       preview server (cuti/dinas/reimbursement/masalah);
