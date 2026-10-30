@@ -34,6 +34,8 @@ const DEEP_LINK_MAP = {
   profil: 'profile', profile: 'profile',
   izin: 'izin', cuti: 'izin',
   pengajuan_absensi: 'pengajuan_absensi',
+  // R-A6 (audit 5): segmen nama kode fitur -> subview yang sama.
+  attendance_request: 'pengajuan_absensi',
   jadwal: 'jadwal',
   dinas: 'dinas',
   lembur: 'lembur',

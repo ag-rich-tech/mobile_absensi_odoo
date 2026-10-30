@@ -242,17 +242,6 @@ async function safe(promise) {
 // ---------------------------------------------------------------------------
 let featureFlagsCache = null;
 
-export async function getFeatureFlags() {
-  if (featureFlagsCache) return featureFlagsCache;
-  try {
-    const cfg = await odooCall('/config/public');
-    featureFlagsCache = (cfg.data && cfg.data.features) || {};
-  } catch {
-    featureFlagsCache = {};
-  }
-  return featureFlagsCache;
-}
-
 export function clearFeatureFlagsCache() {
   featureFlagsCache = null;
 }
@@ -271,6 +260,7 @@ export async function odooCall(path, params = {}, { timeoutMs = 30000 } = {}) {
   }
 
   let json;
+  let httpStatus = 0;
   try {
     const ctrl = new AbortController();
     const timer = setTimeout(() => ctrl.abort(), timeoutMs);
@@ -295,6 +285,7 @@ export async function odooCall(path, params = {}, { timeoutMs = 30000 } = {}) {
         body: JSON.stringify(params || {}),
         signal: ctrl.signal,
       });
+      httpStatus = res.status;
       // Baca body sebagai teks dulu: bila server menjawab HTML (mis.
       // error validasi Odoo yang lolos tanpa amplop JSON), pesan aslinya
       // masih bisa diekstrak alih-alih hilang jadi pesan generik.
@@ -312,6 +303,7 @@ export async function odooCall(path, params = {}, { timeoutMs = 30000 } = {}) {
       if (res.ok && !parsedOk) {
         const htmlErr = new Error('Server mengembalikan halaman web, bukan data (sesi mungkin kedaluwarsa).');
         htmlErr.status = res.status;
+        htmlErr.httpStatus = res.status;
         htmlErr.code = 'HTML_RESPONSE';
         htmlErr.data = { html_response: true };
         throw htmlErr;
@@ -347,6 +339,7 @@ export async function odooCall(path, params = {}, { timeoutMs = 30000 } = {}) {
         : 'Gagal terhubung ke server Odoo. Periksa koneksi internet.'
     );
     e.status = 0;
+    e.httpStatus = 0;
     e.timeout = isTimeout;
     throw e;
   }
@@ -360,6 +353,10 @@ export async function odooCall(path, params = {}, { timeoutMs = 30000 } = {}) {
     // mengirim field itu (_err hanya {status, code, message}), jadi
     // cabang itu dormant tapi hidup begitu agen server menambahkannya.
     err.data = result;
+    // S-K3 (audit 5): status HTTP mentah, agar getDashboard bisa
+    // membedakan penolakan envelope (mis. 500) dari endpoint yang
+    // memang tidak ada (404 tanpa kode envelope).
+    err.httpStatus = httpStatus;
     // Token hilang / salah / kedaluwarsa -> bersihkan auth lokal agar
     // app kembali ke layar login. NO_SESSION dipertahankan untuk
     // kompatibilitas dengan server lama (pra-1.2.3) selama transisi.
@@ -714,13 +711,15 @@ function mapLeave(lv) {
 
 // Pemetaan state Odoo -> state app untuk menu Approval.
 // Server (ag 1.2.20) mengirim status_app; server lama hanya state mentah.
+// R-A3 (audit 5): state tak dikenal -> 'unknown', BUKAN 'menunggu' —
+// default 'menunggu' bisa memunculkan tombol aksi untuk state baru.
 function mapApprovalStatus(lv, modul) {
   if (lv.status_app) return lv.status_app;
   if (modul === 'reimbursement') {
     const m = { draft: 'menunggu', reported: 'menunggu', submitted: 'menunggu',
       approved: 'disetujui', refused: 'ditolak', cancelled: 'ditolak',
       done: 'dicairkan', paid: 'dicairkan' };
-    return m[lv.state] || 'menunggu';
+    return m[lv.state] || 'unknown';
   }
   const m = { confirm: 'menunggu', validate1: 'menunggu', validate: 'disetujui',
     refuse: 'ditolak', cancel: 'dibatalkan', draft: 'menunggu',
@@ -729,7 +728,7 @@ function mapApprovalStatus(lv, modul) {
     // (tanpa ini, 'disetujui'/'ditolak' jatuh ke default 'menunggu').
     menunggu: 'menunggu', disetujui: 'disetujui', ditolak: 'ditolak',
     dibatalkan: 'dibatalkan' };
-  return m[lv.state] || 'menunggu';
+  return m[lv.state] || 'unknown';
 }
 
 // Tahap persetujuan: dari info server bila ada; dari validation_type
@@ -759,12 +758,14 @@ function normalizeJamAbsensi(v) {
   const m = s.match(/(\d{2}):(\d{2})/);
   return m ? `${m[1]}:${m[2]}` : s;
 }
+// R-A3 (audit 5): state tak dikenal -> 'unknown' (label "Status baru",
+// tombol Batalkan tidak muncul), BUKAN 'menunggu'.
 function mapAttendanceRequestState(v) {
   const m = { menunggu: 'menunggu', disetujui: 'disetujui', ditolak: 'ditolak',
     dibatalkan: 'dibatalkan', draft: 'menunggu', confirm: 'menunggu',
     validate: 'disetujui', validate1: 'menunggu', refuse: 'ditolak',
     cancel: 'dibatalkan' };
-  return m[String(v || '').toLowerCase()] || 'menunggu';
+  return m[String(v || '').toLowerCase()] || 'unknown';
 }
 function mapAttendanceRequest(r) {
   if (!r || typeof r !== 'object') return null;
@@ -1205,7 +1206,10 @@ export const api = {
     } catch {
       try {
         const me = await odooCall('/auth/me');
-        pegawai = mapPegawai(me.data && me.data.user, me.data && me.data.employee, null);
+        // R-K1 (audit 5): me.data.employee SUDAH _emp_profile, jadi
+        // ia argumen ke-3 (profile), bukan employeeBrief (ke-2) —
+        // mapPegawai hanya membaca field lengkap dari profile.
+        pegawai = mapPegawai(me.data && me.data.user, null, me.data && me.data.employee);
       } catch {
         pegawai = mapPegawai(tokRes.data && tokRes.data.user, null, null);
       }
@@ -1329,6 +1333,16 @@ export const api = {
       // layar login — fallback legacy menampilkan dashboard kosong
       // sukses-palsu dan menelan 401.
       if (isAuthError(err)) throw err;
+      // S-K3 (audit 5): penolakan envelope dari /dashboard/summary
+      // (NO_EMPLOYEE, 500, ...) WAJIB dilempar ulang — fallback legacy
+      // HANYA untuk "endpoint tidak ada": 404 tanpa kode envelope
+      // (server lama menjawab 404 HTML yang ditulis ulang jadi kode
+      // ERROR), halaman HTML, gagal parse, atau jaringan. Error tanpa
+      // amplop (mis. 'summary kosong') tetap jatuh ke legacy.
+      if (err && err.data && err.data.status === 'error' && err.code
+        && !(err.httpStatus === 404 && err.code === 'ERROR')) {
+        throw err;
+      }
       return this.getDashboardLegacy();
     }
   },
@@ -1564,24 +1578,10 @@ export const api = {
     const items = (res.data && res.data.items) || [];
     const count = (res.data && typeof res.data.count === 'number') ? res.data.count : null;
     const mapped = items.map(mapApprovalItem);
-    if (tab === 'riwayat') {
-      // Urut global berdasarkan tanggal acuan tiap item (bukan per-grup
-      // tipe seperti urutan server): cuti = date_from, reimbursement =
-      // tanggal (create_date), lembur = tanggal (date_from). Server tidak
-      // mengirim stempel waktu keputusan, jadi ini urutan tanggal item,
-      // bukan tanggal keputusan — dan hanya berlaku dalam satu halaman
-      // (paginasi server memotong sebelum sort; urutan global penuh
-      // lintas halaman butuh sort server sebelum slice).
-      const stamp = (it) => {
-        const raw = (it && it._raw) || {};
-        const v = raw.date_from || raw.tanggal || raw.tanggal_lembur || raw.request_date || null;
-        const t = v ? Date.parse(v) : NaN;
-        return Number.isNaN(t) ? -Infinity : t;
-      };
-      // Array.sort stabil (ES2019+): item tanpa tanggal tetap di urutan
-      // relatif semula di akhir daftar.
-      mapped.sort((a, b) => stamp(b) - stamp(a));
-    }
+    // R-K2 (audit 5): JANGAN urut ulang di client — server sudah
+    // mengurut global create_date desc SEBELUM slice; sort client
+    // menimpa urutan itu (dan hanya berlaku dalam satu halaman).
+    // Urutan server ditampilkan apa adanya.
     return {
       success: true,
       data: mapped,
@@ -1732,7 +1732,10 @@ export const api = {
     // TAPI juga tidak boleh diklaim berhasil (PNG-5): is_dibaca hanya
     // true bila server mengonfirmasi atau item memang sudah dibaca.
     const mr = await safe(odooCall('/announcement/mark_read', { announcement_id: id }));
-    const marked = !!(mr && mr.status !== 'error' && mr.success !== false);
+    // S-K1 (audit 5): envelope server tidak punya mr.success; yang
+    // menentukan adalah flag data.marked (false bila model baca tak
+    // tersedia, walau envelope-nya sukses).
+    const marked = !!(mr && mr.data && mr.data.marked);
     const mapped = mapAnnouncement(found);
     return { success: true, data: { ...mapped, is_dibaca: mapped.is_dibaca || marked } };
   },
@@ -1893,11 +1896,6 @@ export const api = {
       pegawai: getStoredUser(),
       data: res.data || {},
     };
-  },
-
-  async getFaceStatus() {
-    const res = await odooCall('/face/status');
-    return { success: true, ...(res.data || {}) };
   },
 
   // ---- Live Tracking ----

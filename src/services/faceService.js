@@ -111,14 +111,44 @@ export function checkBlink(landmarks, baselineEAR = 0.30) {
   };
 }
 
+// Normalisasi satu descriptor ke array angka, atau null bila tak bisa
+// dipakai (R-A4 audit 5): string JSON di-parse dulu — Object.values
+// atas string menghasilkan array karakter yang membuat euclideanDistance
+// mengembalikan NaN (UI menampilkan "NaN%").
+function toDescriptorArray(desc) {
+  if (Array.isArray(desc)) return desc;
+  if (typeof desc === 'string') {
+    try {
+      const parsed = JSON.parse(desc.trim());
+      return Array.isArray(parsed) ? parsed : null;
+    } catch {
+      return null;
+    }
+  }
+  if (desc && typeof desc === 'object') {
+    const vals = Object.values(desc);
+    return vals.length && vals.every((v) => typeof v === 'number' && Number.isFinite(v)) ? vals : null;
+  }
+  return null;
+}
+
 /**
- * Hitung Euclidean Distance antara 2 vektor deskriptor wajah
+ * Hitung Euclidean Distance antara 2 vektor deskriptor wajah.
+ * Gagal normalisasi / panjang tak sama / hasil tak finite -> null
+ * (bukan NaN); pemanggil (verifyFaceMatch) mengubahnya jadi gagal
+ * pencocokan yang bersih.
  */
 export function computeDistance(desc1, desc2) {
   if (!desc1 || !desc2) return 1.0;
-  const arr1 = Array.isArray(desc1) ? desc1 : Object.values(desc1);
-  const arr2 = Array.isArray(desc2) ? desc2 : Object.values(desc2);
-  return faceapi.euclideanDistance(arr1, arr2);
+  const arr1 = toDescriptorArray(desc1);
+  const arr2 = toDescriptorArray(desc2);
+  if (!arr1 || !arr2 || arr1.length !== arr2.length) return null;
+  try {
+    const d = faceapi.euclideanDistance(arr1, arr2);
+    return Number.isFinite(d) ? d : null;
+  } catch {
+    return null;
+  }
 }
 
 /**
@@ -131,6 +161,11 @@ export function verifyFaceMatch(liveDescriptor, masterDescriptor, threshold = 0.
   }
 
   const distance = computeDistance(liveDescriptor, masterDescriptor);
+  // Gagal parse / gagal hitung -> gagal pencocokan yang bersih
+  // (isMatch false, skor 0), BUKAN "Wajah tidak sesuai (NaN%)".
+  if (distance == null) {
+    return { isMatch: false, distance: 1.0, similarityScore: 0 };
+  }
   const isMatch = distance <= threshold;
 
   // Estimasi persentase kemiripan (0 - 100%)

@@ -49,6 +49,10 @@ export default function TugasView({ onBack }) {
   useEffect(() => {
     if (!selectedTugas || !draftReviewKey) return;
     saveDraft(draftReviewKey, { catatan: catatanReview });
+    // Disengaja (audit 5 R-A5): dep memakai selectedTugas?.id, bukan
+    // objeknya — simpan draf hanya saat id/catatan berubah, bukan
+    // tiap identitas objek berganti.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [catatanReview, draftReviewKey, selectedTugas?.id]);
 
   const loadData = async () => {
@@ -82,7 +86,10 @@ export default function TugasView({ onBack }) {
         setShowTeamTab(false);
         if (activeTab === 'tim') setActiveTab('berjalan');
       }
+    // Mount-only disengaja (audit 5 R-A5): loader didefinisikan ulang
+    // tiap render; mendaftarkannya sebagai dep memicu fetch berulang.
     });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const handleAjukanReview = async (tugasId) => {

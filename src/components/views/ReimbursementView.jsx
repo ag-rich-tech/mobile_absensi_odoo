@@ -79,6 +79,9 @@ export default function ReimbursementView({ onBack }) {
 
   useEffect(() => {
     loadData();
+    // Mount-only disengaja (audit 5 R-A5): loader didefinisikan ulang
+    // tiap render; mendaftarkannya sebagai dep memicu fetch berulang.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const handleRefresh = () => {

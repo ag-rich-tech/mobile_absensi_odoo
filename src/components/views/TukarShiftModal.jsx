@@ -45,6 +45,9 @@ export default function TukarShiftModal({ isOpen, onClose, onSuccess }) {
       loadInisiasi();
       loadRiwayat();
     }
+    // Disengaja (audit 5 R-A5): muat saat modal dibuka saja; loader
+    // didefinisikan ulang tiap render, bukan dep.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isOpen]);
 
   const loadInisiasi = async () => {

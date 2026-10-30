@@ -93,6 +93,9 @@ export default function ApprovalView({ onBack }) {
 
   useEffect(() => {
     loadApprovals(activeTab);
+    // Mount-per-tab disengaja (audit 5 R-A5): loader didefinisikan
+    // ulang tiap render; mendaftarkannya sebagai dep memicu loop.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeTab]);
 
   const handleRefresh = () => {
@@ -562,11 +565,14 @@ export default function ApprovalView({ onBack }) {
                         ? `Tahap ${item.step_ke} dari ${item.total_step}`
                         : 'Menunggu Persetujuan')
                       : (item.status === 'disetujui' ? 'Telah Disetujui'
+                        // R-A3 (audit 5): status tak dikenal JANGAN
+                        // tampil sebagai Ditolak (cabang else lama).
+                        : (item.status === 'unknown' ? 'Status baru'
                         // Riwayat lembur 'ditolak' bisa berarti ditolak
                         // approver ATAU dibatalkan pemilik (cancel lembur
                         // dipetakan ke refused dan model tidak mencatat
                         // aktor) — label netral, bukan atribusi palsu.
-                        : (activeTab === 'riwayat' && (item.tipe || item.modul) === 'lembur' ? 'Ditolak / Dibatalkan' : 'Telah Ditolak'))}
+                        : (activeTab === 'riwayat' && (item.tipe || item.modul) === 'lembur' ? 'Ditolak / Dibatalkan' : 'Telah Ditolak')))}
                   </span>
                 </div>
 

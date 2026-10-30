@@ -60,7 +60,10 @@ export default function FaceEnrollmentPage({ user, onBack, onSuccess }) {
     return () => {
       isMounted = false;
       stopCamera();
+    // Mount-only disengaja (audit 5 R-A5): init kamera/model sekali;
+    // startCamera didefinisikan ulang tiap render, bukan dep.
     };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const stopCamera = () => {

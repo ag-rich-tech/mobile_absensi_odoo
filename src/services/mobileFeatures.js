@@ -51,8 +51,9 @@ export const MOBILE_FEATURE_CODES = [
 // (bukan fitur yang bisa dimatikan): 'home' dan 'profile' sesuai
 // kontrak. 'karyawan' (Daftar Karyawan) dan 'denda' (tanpa entri UI —
 // prop onOpenDenda di ProfileView tidak dirender) TIDAK punya kode
-// kontrak, jadi dipetakan null: selalu tampil sampai server menambah
-// kodenya (cukup tambah satu baris di peta ini + satu isOn di UI).
+// kontrak, jadi dipetakan null: selalu tampil. Kartu karyawan sengaja
+// tanpa gerbang isOn (S-A1 audit 5); bila server menambah kodenya,
+// cukup tambah satu baris di peta ini + satu isOn di UI.
 export const NAV_FEATURE_MAP = {
   home: null,
   profile: null,
@@ -153,8 +154,9 @@ export async function fetchMobileFeatures() {
 }
 
 // Nama lama dari objek fitur dashboard summary -> kode kontrak.
-// Hanya dipakai untuk kode yang TIDAK ada di peta kontrak (saat ini
-// 'karyawan'), agar perilaku lama untuk kartu itu tidak hilang diam-diam.
+// Hanya dipakai untuk kode yang TIDAK ada di peta kontrak. Entri
+// legacy 'karyawan' yang ikut tergabung kini tidak dibaca UI mana pun
+// (kartu Daftar Karyawan selalu tampil, S-A1 audit 5).
 const LEGACY_FEATURE_ALIASES = {
   helpdesk: 'ticket',
   tasks: 'task',

@@ -166,10 +166,18 @@ export default function IzinView({ onBack }) {
             <XCircle size={12} /> Dibatalkan
           </span>
         );
-      default:
+      case 'menunggu':
         return (
           <span style={{ fontSize: '10px', fontWeight: '700', color: '#d97706', backgroundColor: '#fef3c7', padding: '3px 8px', borderRadius: '999px', display: 'flex', alignItems: 'center', gap: '4px' }}>
             <Clock size={12} /> Menunggu
+          </span>
+        );
+      // R-A3 (audit 5): status tak dikenal JANGAN tampil sebagai Menunggu.
+      case 'unknown':
+      default:
+        return (
+          <span style={{ fontSize: '10px', fontWeight: '700', color: '#64748b', backgroundColor: '#f1f5f9', padding: '3px 8px', borderRadius: '999px', display: 'flex', alignItems: 'center', gap: '4px' }}>
+            <Clock size={12} /> Status baru
           </span>
         );
     }
@@ -652,8 +660,11 @@ export default function IzinView({ onBack }) {
                         isOpen: true, 
                         id: item.id, 
                         title: `Dokumen ${item.label_jenis}`,
-                        // Koreksi C1: cuti -> id leave, modul 'cuti'.
-                        modul: 'cuti'
+                        // R-K3 (audit 5): modul sesuai jenis item —
+                        // dinas -> 'dinas', cuti -> 'cuti' (server
+                        // memperlakukan keduanya identik hari ini, tapi
+                        // kiriman harus benar). kategori dari mapLeave.
+                        modul: item.kategori === 'dinas' ? 'dinas' : 'cuti'
                       })}
                       style={{
                         display: 'inline-flex',

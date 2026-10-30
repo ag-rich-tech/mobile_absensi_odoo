@@ -37,6 +37,9 @@ export default function RiwayatView({ onBack }) {
 
   useEffect(() => {
     loadRiwayat();
+    // Disengaja (audit 5 R-A5): muat ulang saat bulan/tahun berubah
+    // saja; loader didefinisikan ulang tiap render, bukan dep.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedBulan, selectedTahun]);
 
   // Statistik bulan ini

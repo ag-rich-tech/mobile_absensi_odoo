@@ -486,6 +486,9 @@ export default function KehadiranBawahanView({ onBack }) {
 
   useEffect(() => {
     loadDataBawahan();
+    // Disengaja (audit 5 R-A5): muat ulang saat bulan/tahun berubah
+    // saja; loader didefinisikan ulang tiap render, bukan dep.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedBulan, selectedTahun]);
 
   // Efek ganti bulan di view kalender

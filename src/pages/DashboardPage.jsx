@@ -291,11 +291,14 @@ export default function DashboardPage({ user: initialUser, onLogout, onStartAtte
   // tidak dikenal (fail-open: tidak ada menu hilang misterius).
   const isOn = (code) => isMobileFeatureOn(mobileFeatures, code);
   // Kode kartu grid Menu Utama — dipakai penghitung "Menu Layanan".
-  // 'shift' bukan kartu grid (entrinya di Profil), 'karyawan' ikut
-  // dihitung karena kartunya ada di grid ini.
+  // 'shift' bukan kartu grid (entrinya di Profil). 'karyawan' TIDAK
+  // ikut dihitung: kartu Daftar Karyawan selalu tampil (tanpa kode
+  // kontrak, NAV_FEATURE_MAP null), jadi menghitungnya lewat isOn
+  // akan membuat angka berkurang saat objek legacy mengirim
+  // karyawan=false padahal kartunya tetap tampil (S-A1 audit 5).
   const FEATURE_CODES = ['attendance', 'history', 'leave', 'dinas', 'overtime',
     'payslip', 'ticket', 'task', 'approval', 'announcement',
-    'reimbursement', 'team', 'karyawan', 'attendance_request'];
+    'reimbursement', 'team', 'attendance_request'];
 
   // Penjaga navigasi: subview aktif yang fiturnya baru dinonaktifkan
   // (toggle berubah saat user sedang di tab itu, deep link / state lama
@@ -339,7 +342,8 @@ export default function DashboardPage({ user: initialUser, onLogout, onStartAtte
         hasDashboardDataRef.current = true;
         setDashboardLoadError(null);
         // Peta kontrak otoritatif; objek fitur legacy dashboard summary
-        // hanya melengkapi kode yang tak ada di kontrak ('karyawan').
+        // hanya melengkapi kode yang tak ada di kontrak. Entri legacy
+        // 'karyawan' kini tidak dibaca UI mana pun (kartu selalu tampil).
         // Bila fetch kontrak gagal, merged = null (fail-open) walau
         // dashboard sukses — legacy tidak boleh menyembunyikan menu.
         mobileFeaturesPromise.then((fetched) => {
@@ -357,7 +361,11 @@ export default function DashboardPage({ user: initialUser, onLogout, onStartAtte
         return;
       }
       if (!hasDashboardDataRef.current) {
-        setDashboardLoadError(err.message || 'Gagal memuat data dashboard.');
+        // S-K3 (audit 5): penolakan summary karena user tanpa employee
+        // harus terbaca sebagai itu, bukan pesan generik.
+        setDashboardLoadError(err?.code === 'NO_EMPLOYEE'
+          ? 'Akun Anda tidak terhubung ke data employee. Silakan hubungi HRD atau Administrator.'
+          : (err.message || 'Gagal memuat data dashboard.'));
       }
       // Dashboard gagal bukan berarti fitur ikut gagal: terapkan hasil
       // fetch fitur (null bila gagal -> fail-open, semua menu tampil).
@@ -408,6 +416,9 @@ export default function DashboardPage({ user: initialUser, onLogout, onStartAtte
       window.removeEventListener('pageshow', handleTriggerRefresh);
       document.removeEventListener('visibilitychange', handleTriggerRefresh);
     };
+    // Mount-only disengaja (audit 5 R-A5): loader didefinisikan ulang
+    // tiap render; mendaftarkannya sebagai dep memicu fetch berulang.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   // Selalu segarkan data dashboard setiap kali berpindah kembali ke tab Beranda (home)
@@ -416,6 +427,9 @@ export default function DashboardPage({ user: initialUser, onLogout, onStartAtte
       loadDashboardData(false);
       loadStatusBawahan();
     }
+    // Disengaja (audit 5 R-A5): refresh saat kembali ke Beranda saja;
+    // loader didefinisikan ulang tiap render, bukan dep.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeNav]);
 
   // 2. Deteksi GPS pengguna dan hitung jarak ke lokasi TERDEKAT dari
@@ -1500,7 +1514,7 @@ export default function DashboardPage({ user: initialUser, onLogout, onStartAtte
             {/* Titik masuk approval: disembunyikan bila approval off. */}
             {isOn('approval') && pendingApprovalCount > 0 && (
               <div
-                onClick={() => setActiveNav('approval')}
+                onClick={() => handleNavChange('approval')}
                 style={{
                   padding: '12px 14px',
                   borderRadius: 'var(--radius-md)',
@@ -1557,7 +1571,7 @@ export default function DashboardPage({ user: initialUser, onLogout, onStartAtte
             {/* Titik masuk pengumuman: disembunyikan bila announcement off. */}
             {isOn('announcement') && unreadPengumumanCount > 0 && (
               <div
-                onClick={() => setActiveNav('pengumuman')}
+                onClick={() => handleNavChange('pengumuman')}
                 style={{
                   background: urgentPengumumanCount > 0
                     ? 'linear-gradient(135deg, #fff1f2 0%, #fee2e2 100%)'
@@ -1742,7 +1756,7 @@ export default function DashboardPage({ user: initialUser, onLogout, onStartAtte
                 {isOn('history') && (
 <button
                   type="button"
-                  onClick={() => setActiveNav('history')}
+                  onClick={() => handleNavChange('history')}
                   style={{
                     display: 'flex',
                     flexDirection: 'column',
@@ -1777,7 +1791,7 @@ export default function DashboardPage({ user: initialUser, onLogout, onStartAtte
                 {isOn('leave') && (
 <button
                   type="button"
-                  onClick={() => setActiveNav('izin')}
+                  onClick={() => handleNavChange('izin')}
                   style={{
                     display: 'flex',
                     flexDirection: 'column',
@@ -1812,7 +1826,7 @@ export default function DashboardPage({ user: initialUser, onLogout, onStartAtte
                 {isOn('dinas') && (
 <button
                   type="button"
-                  onClick={() => setActiveNav('dinas')}
+                  onClick={() => handleNavChange('dinas')}
                   style={{
                     display: 'flex',
                     flexDirection: 'column',
@@ -1847,7 +1861,7 @@ export default function DashboardPage({ user: initialUser, onLogout, onStartAtte
                 {isOn('overtime') && (
 <button
                   type="button"
-                  onClick={() => setActiveNav('lembur')}
+                  onClick={() => handleNavChange('lembur')}
                   style={{
                     display: 'flex',
                     flexDirection: 'column',
@@ -1885,7 +1899,7 @@ export default function DashboardPage({ user: initialUser, onLogout, onStartAtte
                 {isOn(FEATURE_CODE) && (
 <button
                   type="button"
-                  onClick={() => setActiveNav('pengajuan_absensi')}
+                  onClick={() => handleNavChange('pengajuan_absensi')}
                   style={{
                     display: 'flex',
                     flexDirection: 'column',
@@ -1920,7 +1934,7 @@ export default function DashboardPage({ user: initialUser, onLogout, onStartAtte
                 {isOn('payslip') && (
 <button
                   type="button"
-                  onClick={() => setActiveNav('slip_gaji')}
+                  onClick={() => handleNavChange('slip_gaji')}
                   style={{
                     display: 'flex',
                     flexDirection: 'column',
@@ -1955,7 +1969,7 @@ export default function DashboardPage({ user: initialUser, onLogout, onStartAtte
                 {isOn('ticket') && (
 <button
                   type="button"
-                  onClick={() => setActiveNav('masalah')}
+                  onClick={() => handleNavChange('masalah')}
                   style={{
                     display: 'flex',
                     flexDirection: 'column',
@@ -1990,7 +2004,7 @@ export default function DashboardPage({ user: initialUser, onLogout, onStartAtte
                 {isOn('task') && (
 <button
                   type="button"
-                  onClick={() => setActiveNav('tugas')}
+                  onClick={() => handleNavChange('tugas')}
                   style={{
                     display: 'flex',
                     flexDirection: 'column',
@@ -2025,7 +2039,7 @@ export default function DashboardPage({ user: initialUser, onLogout, onStartAtte
                 {isOn('approval') && (
 <button
                   type="button"
-                  onClick={() => setActiveNav('approval')}
+                  onClick={() => handleNavChange('approval')}
                   style={{
                     display: 'flex',
                     flexDirection: 'column',
@@ -2079,7 +2093,7 @@ export default function DashboardPage({ user: initialUser, onLogout, onStartAtte
                 {isOn('announcement') && (
 <button
                   type="button"
-                  onClick={() => setActiveNav('pengumuman')}
+                  onClick={() => handleNavChange('pengumuman')}
                   style={{
                     display: 'flex',
                     flexDirection: 'column',
@@ -2133,7 +2147,7 @@ export default function DashboardPage({ user: initialUser, onLogout, onStartAtte
                 {isOn('reimbursement') && (
 <button
                   type="button"
-                  onClick={() => setActiveNav('reimbursement')}
+                  onClick={() => handleNavChange('reimbursement')}
                   style={{
                     display: 'flex',
                     flexDirection: 'column',
@@ -2170,7 +2184,7 @@ export default function DashboardPage({ user: initialUser, onLogout, onStartAtte
                 {isOn('team') && (
 <button
                   type="button"
-                  onClick={() => setActiveNav('kehadiran_bawahan')}
+                  onClick={() => handleNavChange('kehadiran_bawahan')}
                   style={{
                     display: 'flex',
                     flexDirection: 'column',
@@ -2219,10 +2233,10 @@ export default function DashboardPage({ user: initialUser, onLogout, onStartAtte
                 </button>
               )}
                 {/* 14. Daftar Karyawan */}
-                {isOn('karyawan') && (
+                {(
                 <button
                   type='button'
-                  onClick={() => setActiveNav('karyawan')}
+                  onClick={() => handleNavChange('karyawan')}
                   style={{
                     display: 'flex',
                     flexDirection: 'column',

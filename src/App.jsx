@@ -5,7 +5,6 @@ import DashboardPage from './pages/DashboardPage';
 import LocationCheckPage from './pages/LocationCheckPage';
 import AttendanceCapturePage from './pages/AttendanceCapturePage';
 import FaceEnrollmentPage from './pages/FaceEnrollmentPage';
-import NotchBar from './components/NotchBar';
 import AccountDeactivatedScreen from './components/AccountDeactivatedScreen';
 import { getToken, getStoredUser, setStoredUser, clearAuth } from './services/api';
 import api from './services/api';
@@ -36,7 +35,6 @@ function App() {
     message: '',
   });
 
-  const [isFullScreen, setIsFullScreen] = useState(false);
 
   // Alur Presensi Baru
   const [attendanceType, setAttendanceType] = useState('masuk'); // 'masuk' | 'pulang'

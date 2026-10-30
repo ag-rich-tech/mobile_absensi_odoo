@@ -70,10 +70,18 @@ function getStatusPill(status) {
           <XCircle size={12} /> Dibatalkan
         </span>
       );
-    default:
+    case 'menunggu':
       return (
         <span style={{ fontSize: '10px', fontWeight: '700', color: '#d97706', backgroundColor: '#fef3c7', padding: '3px 8px', borderRadius: '999px', display: 'flex', alignItems: 'center', gap: '4px' }}>
           <Clock size={12} /> Menunggu
+        </span>
+      );
+    // R-A3 (audit 5): status tak dikenal JANGAN tampil sebagai Menunggu.
+    case 'unknown':
+    default:
+      return (
+        <span style={{ fontSize: '10px', fontWeight: '700', color: '#64748b', backgroundColor: '#f1f5f9', padding: '3px 8px', borderRadius: '999px', display: 'flex', alignItems: 'center', gap: '4px' }}>
+          <Clock size={12} /> Status baru
         </span>
       );
   }
@@ -167,7 +175,7 @@ export default function PengajuanAbsensiView({ onBack }) {
   };
 
   const handleCancel = async (item) => {
-    if (!window.confirm('Batalkan pengajuan absensi ini? Pengajuan yang dibatalkan tidak dapat diajukan ulang dari riwayat.')) return;
+    if (!window.confirm('Batalkan pengajuan absensi ini? Pengajuan akan dihapus dari riwayat, dan Anda tetap bisa mengajukan baru untuk tanggal yang sama.')) return;
     setCancellingId(item.id);
     setCancelMessage({ type: '', text: '' });
     try {
@@ -179,7 +187,19 @@ export default function PengajuanAbsensiView({ onBack }) {
       }
       loadData(false);
     } catch (err) {
-      setCancelMessage({ type: 'error', text: err.message || 'Gagal membatalkan pengajuan.' });
+      // R-S2 (audit 5): cancel MENGHAPUS record di server, jadi cancel
+      // ulang (atau race dua ketukan) menjawab 404/NOT_FOUND — itu
+      // artinya sudah dibatalkan, bukan error.
+      if (err && (err.code === 'NOT_FOUND' || err.httpStatus === 404)) {
+        setCancelMessage({ type: 'success', text: 'Pengajuan sudah dibatalkan.' });
+        if (detailId === item.id) {
+          setDetailId(null);
+          setDetailData(null);
+        }
+        loadData(false);
+      } else {
+        setCancelMessage({ type: 'error', text: err.message || 'Gagal membatalkan pengajuan.' });
+      }
     } finally {
       setCancellingId(null);
     }

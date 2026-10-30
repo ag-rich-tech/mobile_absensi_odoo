@@ -61,6 +61,9 @@ export default function DocumentPreviewModal({ isOpen, onClose, modul, id, title
       setZoomLevel(1);
       setRotation(0);
     }
+    // Disengaja (audit 5 R-A5): muat saat target preview berubah saja;
+    // loader didefinisikan ulang tiap render, bukan dep.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isOpen, modul, id]);
 
   const loadDocument = async () => {
