@@ -60,10 +60,10 @@ A stock Odoo installation provides **neither** backend module — on any version
 
 <!-- Testers — @ag-rich-tech first: this section is yours. Setup, what you tried, errors you hit, what worked — a few honest lines are exactly what future users need. -->
 
-- **Setup:** _TODO — Odoo 18 Community or Enterprise? Self-hosted or Odoo Online?_
-- **What I tried:** _TODO_
-- **Errors / blockers found:** _TODO_
-- **What already works:** _TODO_
+- **Setup:** _TODO — Odoo 18 Community
+- **What I tried:** nothing, all good
+- **Errors / blockers found:** what do u think?
+- **What already works:** yes
 
 ## FAQ
 
