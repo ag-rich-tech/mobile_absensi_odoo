@@ -62,6 +62,9 @@ No — the `/api/hris/v1/*` endpoints come from the custom backend module. Until
 **Does Community vs Enterprise matter?**
 The app relies on the HR apps (Employees, Attendances, Time Off) plus the custom module. If your edition provides those, the porting work above is the same; note your edition in the field notes so it gets verified.
 
+#tester
+doe tester
+
 ---
 
 *Co-authored by @ghozali25 (Odoo 14 architecture and API inventory) and @ag-rich-tech (Odoo 18 testing and field notes).*
