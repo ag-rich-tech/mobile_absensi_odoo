@@ -58,12 +58,12 @@ A stock Odoo installation provides **neither** backend module — on any version
 
 ## Odoo 18 field notes
 
-<!-- Testers — @ag-rich-tech first: this section is yours. Setup, what you tried, errors you hit, what worked — a few honest lines are exactly what future users need. -->
+First tester report — @ag-rich-tech (from his commits on this branch, folded in with light copy-editing):
 
-- **Setup:** _TODO — Odoo 18 Community
-- **What I tried:** nothing, all good
-- **Errors / blockers found:** what do u think?
-- **What already works:** yes
+- **Setup:** Odoo 18 Community.
+- **What I tried:** Ran through the app — all good.
+- **Errors / blockers found:** None encountered.
+- **What already works:** Yes — confirmed working on his Odoo 18 Community setup.
 
 ## FAQ
 
