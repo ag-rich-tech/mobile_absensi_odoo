@@ -76,6 +76,9 @@ No — `master` speaks to the Odoo 14 module's `/api/hris/v1/*` endpoints, which
 **Does Community vs Enterprise matter?**
 The app relies on the HR apps (Employees, Attendances, Time Off) plus the custom backend module. If your edition provides those, the steps above are the same; note your edition in the field notes so it gets verified.
 
+## test
+done tester, nothing problem
+
 ---
 
 *Maintained by @ghozali25 (adapters and API inventory) with field testing by @ag-rich-tech and other Odoo 18 testers.*
